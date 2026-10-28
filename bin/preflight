@@ -142,6 +142,10 @@ check_env_variables() {
             echo "${var_name} ('${actual_val}') does not match expected value ('${expected_val}')"
             return 1
         fi
+        if ! declare -p "${var_name}" 2>/dev/null | grep -q -- "-x"; then
+            echo "${var_name} is set but not exported. Ensure 'export ${var_name}' is in ${ENV_FILE}"
+            return 1
+        fi
     done
 
     return 0
@@ -153,6 +157,11 @@ check_env_variables() {
 check_active_gcloud_project() {
     if ! command -v gcloud >/dev/null 2>&1; then
         echo "gcloud CLI is not installed or not in PATH."
+        return 1
+    fi
+
+    if [[ -z "${PROJECT_ID:-}" ]] || [[ "${PROJECT_ID}" == *"your-"* ]]; then
+        echo "PROJECT_ID is unset or contains placeholder value in ${ENV_FILE}."
         return 1
     fi
 
@@ -172,6 +181,15 @@ check_active_gcloud_project() {
         return 1
     fi
 
+    # Check active compute region if configured in gcloud
+    local active_region
+    active_region=$(env -u CLOUDSDK_COMPUTE_REGION gcloud config configurations list --filter="is_active=true" --format="value(properties.compute.region)" 2>/dev/null || true)
+    if [[ -n "${active_region}" ]] && [[ "${active_region}" != "${REGION}" ]]; then
+        echo "Active gcloud compute/region ('${active_region}') does not match environment file REGION ('${REGION}')."
+        echo "Run: gcloud config set compute/region ${REGION}"
+        return 1
+    fi
+
     return 0
 }
 
@@ -181,6 +199,11 @@ check_active_gcloud_project() {
 check_adc_quota_project() {
     if ! command -v gcloud >/dev/null 2>&1; then
         echo "gcloud CLI is not installed or not in PATH."
+        return 1
+    fi
+
+    if [[ -z "${PROJECT_ID:-}" ]] || [[ "${PROJECT_ID}" == *"your-"* ]]; then
+        echo "PROJECT_ID is unset or contains placeholder value in ${ENV_FILE}."
         return 1
     fi
 
@@ -211,25 +234,25 @@ except Exception as e:
 
     if [[ "${adc_quota}" != "${PROJECT_ID}" ]]; then
         echo "ADC quota project ('${adc_quota}') does not match environment file PROJECT_ID ('${PROJECT_ID}')."
+        echo "A mismatched quota project is the cause of BigQuery MCP's opaque Forbidden errors."
         echo "Run: gcloud auth application-default set-quota-project ${PROJECT_ID}"
         return 1
     fi
 
     # Check whether the quota project is active or stale/deleted
     local project_state
-    local describe_err
     if ! project_state=$(gcloud projects describe "${adc_quota}" --project "${PROJECT_ID}" --format="value(lifecycleState)" 2>&1); then
-        echo "ADC quota project ('${adc_quota}') is inaccessible, stale, or does not exist."
-        echo "BigQuery MCP will fail with an opaque Forbidden error."
+        echo "ADC quota project ('${adc_quota}') is inaccessible, stale, or deleted."
+        echo "A stale or deleted quota project is the cause of BigQuery MCP's opaque Forbidden errors."
         echo "Error details: ${project_state}"
-        echo "Run: gcloud auth application-default set-quota-project ${PROJECT_ID}"
+        echo "Verify that project '${adc_quota}' exists and is accessible to your account, or update PROJECT_ID in ${ENV_FILE}."
         return 1
     fi
 
     if [[ "${project_state}" != "ACTIVE" ]]; then
         echo "ADC quota project ('${adc_quota}') lifecycle state is '${project_state}' (expected ACTIVE)."
-        echo "BigQuery MCP will fail with an opaque Forbidden error."
-        echo "Run: gcloud auth application-default set-quota-project ${PROJECT_ID}"
+        echo "A stale or deleted quota project is the cause of BigQuery MCP's opaque Forbidden errors."
+        echo "Verify that project '${adc_quota}' is active in Google Cloud Console."
         return 1
     fi
 
@@ -249,18 +272,20 @@ main() {
     # Check 1: File exists
     run_check "Environment file exists" check_env_file_exists
 
-    # Sourcing & variables check (only if file exists)
+    # Sourcing environment file if present
     if [[ -f "${ENV_FILE}" ]]; then
         # shellcheck disable=SC1090
         source "${ENV_FILE}"
-        run_check "Environment variables and overrides configured" check_env_variables
-
-        # Project and ADC pinning checks (only if PROJECT_ID is available and valid)
-        if [[ -n "${PROJECT_ID:-}" ]] && [[ "${PROJECT_ID}" != *"your-"* ]]; then
-            run_check "Active gcloud project matches PROJECT_ID" check_active_gcloud_project
-            run_check "ADC quota project matches PROJECT_ID and is active" check_adc_quota_project
-        fi
     fi
+
+    # Check 2: Environment variables and exported overrides
+    run_check "Environment variables and overrides configured" check_env_variables
+
+    # Check 3: Active gcloud project and region pinning
+    run_check "Active gcloud project and region match environment" check_active_gcloud_project
+
+    # Check 4: ADC quota project pinning and validity
+    run_check "ADC quota project matches PROJECT_ID and is active" check_adc_quota_project
 
     echo ""
     echo "--------------------------------------------------"
