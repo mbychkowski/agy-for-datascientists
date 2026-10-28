@@ -59,11 +59,11 @@ The demonstration lands three foundational messages:
 
 * **Goal**: Unpack the Spike, run parallel triage subagents, conduct peer review with `stats-reviewer`, approve a PySpark deduplication fix, and execute it on Dataproc Serverless.
 * **Timing**:
-  * **12:00 – 17:00 (Profiling, Heatmap & Concentration)**:
+  * **12:00 – 19:00 (Profiling, Heatmap & Concentration - 7 min)**:
     * Query the defective `staging.hospital_flu` table via BigQuery MCP.
     * Generate a hospital-by-week heatmap and concentration metric.
     * The visualization reveals that the Spike is not uniform: certain hospitals exhibit extreme swings while others follow standard seasonal patterns.
-  * **17:00 – 24:00 (Parallel Subagent Dispatch & Attribution Table)**:
+  * **19:00 – 29:00 (Parallel Subagent Dispatch & Attribution Table - 10 min)**:
     * Prompt the Command Center to launch three parallel triage subagents:
       1. *Distribution Subagent*: Analyzes spatial concentration and hospital variances.
       2. *Sampling Subagent*: Compares test volume to Positivity. Identifies ~6 hospitals with steeply increased test volume but flat Positivity (Sampling Artifact contributing ~8 points).
@@ -73,11 +73,11 @@ The demonstration lands three foundational messages:
       * **Sampling Artifact**: ~8 points
       * **Outbreak**: ~7 points (3 neighboring hospitals with true Positivity rises)
       * **Seasonal Ramp**: ~5 points (expected baseline increase across all facilities)
-  * **24:00 – 28:00 (Adversarial Challenge: `stats-reviewer`)**:
+  * **29:00 – 36:00 (Adversarial Challenge: `stats-reviewer` - 7 min)**:
     * Dispatch the custom `stats-reviewer` subagent to audit the Attribution table.
     * The reviewer challenges the team on counts vs rates, small-sample hospitals with erratic swings, and tests for Simpson's Paradox across regional aggregations.
     * *Message 2 landed*: Demonstrates multi-agent peer review before human sign-off.
-  * **28:00 – 35:00 (Human-Reviewed PySpark Fix & Dataproc Serverless Execution)**:
+  * **36:00 – 47:00 (Human-Reviewed PySpark Fix & Dataproc Serverless Execution - 11 min)**:
     * Request a remediation fix in the PySpark pipeline code (`pipeline_v1.py` → `pipeline_v2.py`).
     * The agent proposes window-function deduplication (`ROW_NUMBER() OVER (PARTITION BY hospital_id, feed_date ORDER BY ingested_at DESC)`) and adds Positivity calculation.
     * Presenter carefully reviews the git diff on screen and explicitly approves the change.
@@ -91,22 +91,22 @@ The demonstration lands three foundational messages:
 
 * **Goal**: Engineer seasonal features, cluster hospitals into Cohorts with BQML K-means, benchmark ARIMA_PLUS against zero-shot TimesFM, log trials, codify a reusable skill, and execute the Reveal.
 * **Timing**:
-  * **47:00 – 53:00 (Feature Engineering & BQML K-means Cohorts)**:
+  * **47:00 – 54:00 (Feature Engineering & BQML K-means Cohorts - 7 min)**:
     * Generate per-hospital seasonal features in BigQuery SQL: peak arrival week, peak volume, curve width, and baseline trend.
     * Train a BQML K-means model to cluster the 90 hospitals into four seasonal **Cohorts**.
     * The Outbreak hospitals cluster into an anomalous Cohort, confirming that segmentation captures genuine clinical differences.
-  * **53:00 – 62:00 (Forecasting Benchmark: ARIMA_PLUS vs TimesFM)**:
+  * **54:00 – 63:00 (Forecasting Benchmark: ARIMA_PLUS vs TimesFM - 9 min)**:
     * Train BQML ARIMA_PLUS per Cohort as multiple time series on both clean and uncleaned data.
     * Run zero-shot foundation model forecasting using TimesFM via `AI.FORECAST`.
     * Every run writes metadata and metrics to `ml.experiment_trials` (model family, Cohort, training data version, backtest WAPE, runtime).
     * Query the experiment leaderboard:
       * Models trained on clean data consistently achieve lower backtest WAPE.
       * TimesFM delivers competitive zero-shot performance without manual hyperparameter tuning.
-  * **62:00 – 67:00 (Codifying the `cohort-forecast-refresh` Skill)**:
+  * **63:00 – 68:00 (Codifying the `cohort-forecast-refresh` Skill - 5 min)**:
     * Instruct Antigravity to codify the entire multi-step modeling process (feature generation, Cohort assignment, forecasting, and trial logging) into a reusable skill.
     * Show that the new skill is saved as a markdown specification in `.gemini/skills/cohort-forecast-refresh/SKILL.md`.
     * A fresh subagent is dispatched to execute the skill for the next period, demonstrating push-button workflow repeatability.
-  * **67:00 – 75:00 (The Finale: The Reveal)**:
+  * **68:00 – 75:00 (The Finale: The Reveal - 7 min)**:
     * Explain that six weeks of true data after the Cutoff (through mid-December) were withheld by the Data Generator and stored only in a separate GCS bucket (ADR 0001).
     * Supply the bucket path at runtime; load the withheld data and overlay it on the forecasts.
     * **The Punchline**:
@@ -120,9 +120,9 @@ The demonstration lands three foundational messages:
 
 * **Goal**: Address audience questions and technical pushback using the [Data Science Primer](data-science-primer.md).
 * **Timing**:
-  * **75:00 – 85:00 (Moderated Technical Q&A)**:
+  * **75:00 – 85:00 (Moderated Technical Q&A - 10 min)**:
     * Address questions on Positivity normalization, Simpson's Paradox, WAPE vs MAPE, zero-shot TimesFM limits, and Dataproc Serverless cost/performance.
-  * **85:00 – 90:00 (Closing Takeaway & Call to Action)**:
+  * **85:00 – 90:00 (Closing Takeaway & Call to Action - 5 min)**:
     * Reiterate the three core messages.
     * Direct the audience to the repository to try the demo in their own GCP projects.
 
@@ -202,10 +202,9 @@ When session time is constrained (e.g., a 45-minute executive briefing or 60-min
 
 ---
 
-## 5. Presenter Readiness Checklist
+## 5. References & Companion Materials
 
-- [ ] **Preflight Check**: Run `preflight` script to confirm BigQuery MCP identity, Dataproc Serverless batch permissions, BQML capabilities, and project/quota pinning.
-- [ ] **Start Point**: Verify current branch is `workstream-1-start` and the defective `staging.hospital_flu` table is present.
-- [ ] **Answer Key Isolation**: Ensure the Answer Key and Reveal data GCS bucket exists and is accessible only at runtime via CLI argument (ADR 0001).
-- [ ] **Timing Clock**: Position a countdown timer visible from the presenter workstation to hit each milestone accurately.
-- [ ] **Primer Handy**: Keep the [Data Science Primer](data-science-primer.md) open in a secondary window for quick reference during Q&A.
+* **[Data Science Primer](data-science-primer.md)**: Intuitions, methodological justifications, skeptic challenges, and Q&A-ready responses covering Positivity, Sampling Artifacts, Simpson's Paradox, K-means, ARIMA_PLUS, TimesFM, backtesting, and WAPE.
+* **[Domain Glossary](../GLOSSARY.md)**: Canonical terminology and vocabulary rules for all demo narratives, documentation, and agent prompts.
+* **[Architecture Decision Records (ADRs)](adr/)**: Foundational architectural decisions, including ADR 0001 (Answer Key Isolation) and repo design standards.
+* **Presenter Runbook & Execution Scripts**: Detailed operational step-by-step instructions, preflight verification checks, and live speaker staging checklists are documented in the companion presenter runbook (Issue #20).
