@@ -135,7 +135,7 @@ The +35.0% Spike decomposes across four planted causes:
 | Cause | Target Share of Spike | Affected Hospitals | Date Range | Primary Data Footprint |
 | :--- | :---: | :--- | :--- | :--- |
 | **Pipeline Defect** | ~15 percentage points | ~8 Northeast hospitals | 2026-10-26 to 2026-10-30 (~5 days) | Re-sent duplicate feeds in `raw.hospital_flu_feeds`; matching `backfill` run in `ops.pipeline_run_log`. |
-| **Sampling Artifact** | ~8 percentage points | ~6 Northeast hospitals | 2026-10-25 to 2026-10-31 (Spike week) | ~40–50% surge in `total_flu_tests` with flat `Positivity`. |
+| **Sampling Artifact** | ~8 percentage points | ~6 Northeast hospitals | 2026-10-25 to 2026-10-31 (Spike week) | ~40–50% rise in `total_flu_tests` with flat `Positivity`. |
 | **Outbreak** | ~7 percentage points | 3 neighbouring NE hospitals | 2026-10-25 to 2026-10-31 (and into Reveal) | Sharp rise in `Positivity` (~6% $\to$ ~16–18%) with stable test volume. |
 | **Seasonal Ramp** | ~5 percentage points | All 90 hospitals | 2026-10-25 to 2026-10-31 (ongoing in Oct) | Normal early-season rise of ~5% week-over-week across all regions. |
 | **Total Spike** | **+35.0 percentage points** | — | — | **Northeast positive test count +35% WoW** |
