@@ -141,31 +141,37 @@ export TF_VAR_subnet="${{SUBNET}}"
         env_file.write_text(env_content)
         return env_file
 
+    def _setup_mock_gcloud_and_adc(self, tmpdir, active_project, quota_project, describe_state="ACTIVE", describe_fails=False):
+        bin_dir = Path(tmpdir) / "bin"
+        bin_dir.mkdir(exist_ok=True)
+        fake_gcloud = bin_dir / "gcloud"
+        
+        describe_script = 'echo "ERROR: project not found or deleted" >&2; exit 1' if describe_fails else f'echo "{describe_state}"; exit 0'
+        fake_gcloud.write_text(f"""#!/usr/bin/env bash
+if [[ "$*" == *"configurations list"* ]]; then
+    echo "{active_project}"
+    exit 0
+fi
+if [[ "$*" == *"projects describe"* ]]; then
+    {describe_script}
+fi
+exit 0
+""")
+        fake_gcloud.chmod(0o755)
+
+        adc_file = Path(tmpdir) / "adc.json"
+        adc_file.write_text(f'{{"quota_project_id": "{quota_project}"}}')
+
+        env = os.environ.copy()
+        env["PATH"] = f"{bin_dir}:{env['PATH']}"
+        env["GOOGLE_APPLICATION_CREDENTIALS"] = str(adc_file)
+        return env
+
     def test_preflight_fails_when_gcloud_project_mismatches(self):
         """preflight must fail with clear message when active gcloud project doesn't match."""
         with tempfile.TemporaryDirectory() as tmpdir:
             env_file = self._create_env_file(tmpdir, project_id="expected-project")
-            bin_dir = Path(tmpdir) / "bin"
-            bin_dir.mkdir()
-            
-            # Fake gcloud script returning a mismatched active project
-            fake_gcloud = bin_dir / "gcloud"
-            fake_gcloud.write_text("""#!/usr/bin/env bash
-if [[ "$*" == *"configurations list"* ]]; then
-    echo "different-active-project"
-    exit 0
-fi
-exit 0
-""")
-            fake_gcloud.chmod(0o755)
-
-            # Fake ADC file matching expected-project
-            adc_file = Path(tmpdir) / "adc.json"
-            adc_file.write_text('{"quota_project_id": "expected-project"}')
-
-            env = os.environ.copy()
-            env["PATH"] = f"{bin_dir}:{env['PATH']}"
-            env["GOOGLE_APPLICATION_CREDENTIALS"] = str(adc_file)
+            env = self._setup_mock_gcloud_and_adc(tmpdir, active_project="different-active-project", quota_project="expected-project")
 
             proc = subprocess.run(
                 [str(PREFLIGHT_BIN), "--env", str(env_file)],
@@ -183,27 +189,7 @@ exit 0
         """preflight must fail with clear message when ADC quota project doesn't match."""
         with tempfile.TemporaryDirectory() as tmpdir:
             env_file = self._create_env_file(tmpdir, project_id="expected-project")
-            bin_dir = Path(tmpdir) / "bin"
-            bin_dir.mkdir()
-            
-            # Fake gcloud returning expected project
-            fake_gcloud = bin_dir / "gcloud"
-            fake_gcloud.write_text("""#!/usr/bin/env bash
-if [[ "$*" == *"configurations list"* ]]; then
-    echo "expected-project"
-    exit 0
-fi
-exit 0
-""")
-            fake_gcloud.chmod(0o755)
-
-            # Fake ADC file with a different quota project
-            adc_file = Path(tmpdir) / "adc.json"
-            adc_file.write_text('{"quota_project_id": "old-stale-project"}')
-
-            env = os.environ.copy()
-            env["PATH"] = f"{bin_dir}:{env['PATH']}"
-            env["GOOGLE_APPLICATION_CREDENTIALS"] = str(adc_file)
+            env = self._setup_mock_gcloud_and_adc(tmpdir, active_project="expected-project", quota_project="old-stale-project")
 
             proc = subprocess.run(
                 [str(PREFLIGHT_BIN), "--env", str(env_file)],
@@ -221,30 +207,7 @@ exit 0
         """preflight must fail when quota project exists in ADC but is stale or deleted."""
         with tempfile.TemporaryDirectory() as tmpdir:
             env_file = self._create_env_file(tmpdir, project_id="stale-project")
-            bin_dir = Path(tmpdir) / "bin"
-            bin_dir.mkdir()
-            
-            # Fake gcloud returning matching project for config, but error on projects describe
-            fake_gcloud = bin_dir / "gcloud"
-            fake_gcloud.write_text("""#!/usr/bin/env bash
-if [[ "$*" == *"configurations list"* ]]; then
-    echo "stale-project"
-    exit 0
-fi
-if [[ "$*" == *"projects describe"* ]]; then
-    echo "ERROR: project not found or deleted" >&2
-    exit 1
-fi
-exit 0
-""")
-            fake_gcloud.chmod(0o755)
-
-            adc_file = Path(tmpdir) / "adc.json"
-            adc_file.write_text('{"quota_project_id": "stale-project"}')
-
-            env = os.environ.copy()
-            env["PATH"] = f"{bin_dir}:{env['PATH']}"
-            env["GOOGLE_APPLICATION_CREDENTIALS"] = str(adc_file)
+            env = self._setup_mock_gcloud_and_adc(tmpdir, active_project="stale-project", quota_project="stale-project", describe_fails=True)
 
             proc = subprocess.run(
                 [str(PREFLIGHT_BIN), "--env", str(env_file)],
@@ -262,29 +225,7 @@ exit 0
         """preflight outputs all [PASS] and exits 0 when config, ADC, and project match and are active."""
         with tempfile.TemporaryDirectory() as tmpdir:
             env_file = self._create_env_file(tmpdir, project_id="demo-proj-123")
-            bin_dir = Path(tmpdir) / "bin"
-            bin_dir.mkdir()
-            
-            fake_gcloud = bin_dir / "gcloud"
-            fake_gcloud.write_text("""#!/usr/bin/env bash
-if [[ "$*" == *"configurations list"* ]]; then
-    echo "demo-proj-123"
-    exit 0
-fi
-if [[ "$*" == *"projects describe"* ]]; then
-    echo "ACTIVE"
-    exit 0
-fi
-exit 0
-""")
-            fake_gcloud.chmod(0o755)
-
-            adc_file = Path(tmpdir) / "adc.json"
-            adc_file.write_text('{"quota_project_id": "demo-proj-123"}')
-
-            env = os.environ.copy()
-            env["PATH"] = f"{bin_dir}:{env['PATH']}"
-            env["GOOGLE_APPLICATION_CREDENTIALS"] = str(adc_file)
+            env = self._setup_mock_gcloud_and_adc(tmpdir, active_project="demo-proj-123", quota_project="demo-proj-123", describe_state="ACTIVE")
 
             proc = subprocess.run(
                 [str(PREFLIGHT_BIN), "--env", str(env_file)],
