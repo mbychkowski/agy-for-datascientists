@@ -66,7 +66,7 @@ The demonstration lands three foundational messages:
   * **17:00 – 24:00 (Parallel Subagent Dispatch & Attribution Table)**:
     * Prompt the Command Center to launch three parallel triage subagents:
       1. *Distribution Subagent*: Analyzes spatial concentration and hospital variances.
-      2. *Sampling Subagent*: Compares test volume to Positivity. Identifies ~6 hospitals with surged test volume but flat Positivity (Sampling Artifact contributing ~8 points).
+      2. *Sampling Subagent*: Compares test volume to Positivity. Identifies ~6 hospitals with steeply increased test volume but flat Positivity (Sampling Artifact contributing ~8 points).
       3. *Pipeline Subagent*: Correlates anomaly timestamps against the `ops.pipeline_run_log`. Discovers a backfill job that re-sent 5 days of Hospital Feeds for ~8 hospitals (Pipeline Defect contributing ~15 points).
     * Synthesize findings into a unified **Attribution** table (+35% total Spike):
       * **Pipeline Defect**: ~15 points
@@ -168,10 +168,10 @@ flowchart TD
 * **Presenter Focus**:
   * Double down on the **Attribution** table in Workstream 1 and the **Reveal** finale.
   * Point out how declaring a false outbreak due to a Sampling Artifact or Pipeline Defect would lead to wasted clinical spend.
-  * Emphasize the speed of root-cause investigation: resolving in 20 minutes what previously took three days of data profiling.
+  * Emphasize the speed of Attribution investigation: resolving in 20 minutes what previously took three days of data profiling.
 
 #### Profile D: C-Suite & AI Transformation Executives
-* **Their Skepticism**: "Is this just another chatbot, or does it deliver tangible productivity and team leverage?"
+* **Their Skepticism**: "Is this just another conversational tool, or does it deliver tangible productivity and team leverage?"
 * **Presenter Focus**:
   * Emphasize the leverage ratio: one data scientist directing three parallel subagents and an adversarial reviewer.
   * Highlight **Message 3**: everything is a versioned, team-owned file—skills, subagents, rules—protecting institutional knowledge.
@@ -183,7 +183,7 @@ flowchart TD
 
 Presenters can immediately translate the demo's healthcare narrative to other industry domains during the Opening and Reveal without changing a single line of SQL, Python, or data:
 
-| Industry Domain | The Anomaly (+35% Headline Spike) | Pipeline Defect (~15 pts) | Sampling Artifact (~8 pts) | True Event (~7 pts) | Seasonal Baseline (~5 pts) |
+| Industry Domain | The Anomaly (+35% Headline Spike) | Pipeline Defect (~15 pts) | Sampling Artifact (~8 pts) | True Event (~7 pts) | Seasonal Ramp (~5 pts) |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | **Healthcare (Default)** | Northeast flu positive test count spike | Batch backfill duplicated 5 days of feeds | Walk-in clinics expanded testing volume | Genuine localized flu Outbreak | Early-season autumn flu ramp |
 | **Financial Services** | Suspicious credit card transaction alert spike | Ingestion retry duplicated gateway transaction events | Enhanced fraud detection rules flagged low-risk transactions | Coordinated card-skimming fraud ring | Pre-holiday retail shopping volume ramp |

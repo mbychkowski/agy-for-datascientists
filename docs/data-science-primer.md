@@ -65,7 +65,7 @@ Without isolating sampling artifacts, a health system or public health agency mi
 **Simpson's Paradox** is a statistical phenomenon where a trend appears in several different groups of data but disappears or reverses when these groups are combined into an aggregate total.
 
 #### Role in the Demo
-In **Workstream 1**, the custom `stats-reviewer` subagent explicitly challenges the preliminary findings of the triage subagents. It tests whether the regional Northeast surge is an artifact of aggregation—for example, if high-volume urban medical centers with naturally lower positivity are masking severe localized outbreaks in smaller rural community hospitals, or vice versa.
+In **Workstream 1**, the custom `stats-reviewer` subagent explicitly challenges the preliminary findings of the triage subagents. It tests whether the regional Northeast Spike is an artifact of aggregation—for example, if high-volume urban medical centers with naturally lower positivity are masking severe localized outbreaks in smaller rural community hospitals, or vice versa.
 
 #### Why Is That the Right Check?
 Aggregation weights groups by their total volume. If high-testing hospitals have low positivity, and low-testing hospitals have high positivity, shifts in which hospitals submit data can create the illusion of a rising or falling regional rate even when individual hospital rates haven't changed.
@@ -76,7 +76,7 @@ Aggregation weights groups by their total volume. If high-testing hospitals have
 > Because an aggregate rate can rise even if Positivity at every single individual hospital fell, purely due to a compositional shift in patient testing volumes across facilities.
 
 #### Q&A-Ready Answer
-> **"Simpson's Paradox warns that aggregate trends can completely reverse when broken down into subgroups due to shifting volume weights. We check both hospital-level and regional distributions to ensure an aggregate spike isn't an optical illusion caused by shifts in reporting mix."**
+> **"Simpson's Paradox warns that aggregate trends can completely reverse when broken down into subgroups due to shifting volume weights. We check both hospital-level and regional distributions to ensure an aggregate Spike isn't an optical illusion caused by shifts in reporting mix."**
 
 ---
 
@@ -104,7 +104,7 @@ Training 90 separate hospital models leads to high variance and overfitting on s
 ### 2.5 ARIMA_PLUS
 
 #### Plain-Language Intuition
-**ARIMA_PLUS** is BigQuery ML's production-grade statistical forecasting algorithm. It builds upon classical Auto-Regressive Integrated Moving Average (ARIMA) modeling by automating trend decomposition, holiday effect adjustments, multiple seasonalities (weekly, annual), and outlier/anomaly handling.
+**ARIMA_PLUS** is BigQuery ML's production-grade statistical forecasting algorithm. It builds upon classical Auto-Regressive Integrated Moving Average (ARIMA) modeling by automating trend extraction, holiday effect adjustments, multiple seasonalities (weekly, annual), and outlier/anomaly handling.
 
 #### Role in the Demo
 In **Workstream 2**, ARIMA_PLUS is trained per Cohort across multiple time series to provide a rigorous, transparent classical baseline against which modern foundation models are evaluated.

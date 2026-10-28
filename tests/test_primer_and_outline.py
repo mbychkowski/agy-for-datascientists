@@ -19,11 +19,15 @@ TOPICS = [
 ]
 
 AVOID_TERMS = [
-    ("copilot", "Command Center"),
-    ("hit rate", "Positivity"),
-    ("as-of date", "Cutoff"),
-    ("root cause", "Attribution"),
-    ("validation set", "Reveal"),
+    (r"copilot", "Command Center"),
+    (r"chatbot", "Command Center"),
+    (r"hit[- ]rate", "Positivity"),
+    (r"positive[- ]rate", "Positivity"),
+    (r"as-of date", "Cutoff"),
+    (r"root[- ]cause", "Attribution"),
+    (r"validation set", "Reveal"),
+    (r"\bholdout\b", "Reveal"),
+    (r"\bsnapshot\b", "Start Point"),
 ]
 
 FORBIDDEN_ID_PATTERNS = [
@@ -41,6 +45,12 @@ class TestPrimerAndOutline(unittest.TestCase):
                 with open(path, "r", encoding="utf-8") as f:
                     cls.docs[path] = f.read()
 
+    def _get_doc(self, path: str) -> str:
+        content = self.docs.get(path)
+        if content is None:
+            self.skipTest(f"Document missing: {path}")
+        return content
+
     def test_primer_file_exists(self):
         msg = f"Primer file missing: {PRIMER_PATH}"
         self.assertTrue(os.path.isfile(PRIMER_PATH), msg)
@@ -50,9 +60,7 @@ class TestPrimerAndOutline(unittest.TestCase):
         self.assertTrue(os.path.isfile(OUTLINE_PATH), msg)
 
     def test_primer_covers_required_topics_with_qa(self):
-        content = self.docs.get(PRIMER_PATH)
-        if content is None:
-            self.skipTest("Primer file does not exist yet")
+        content = self._get_doc(PRIMER_PATH)
 
         for topic in TOPICS:
             pattern = re.compile(re.escape(topic), re.IGNORECASE)
@@ -72,30 +80,28 @@ class TestPrimerAndOutline(unittest.TestCase):
         )
 
     def test_outline_covers_three_messages_structure_and_reveal(self):
-        content = self.docs.get(OUTLINE_PATH)
-        if content is None:
-            self.skipTest("Outline file does not exist yet")
+        content = self._get_doc(OUTLINE_PATH)
 
         # Three messages
-        m1 = r"fits how you work today"
-        m2 = (
+        pattern_fits_work_today = r"fits how you work today"
+        pattern_directs_army_agents = (
             r"one data scientist directs an army of agents and "
             r"reviews the evidence"
         )
-        m3 = (
+        pattern_team_owned_files = (
             r"skills, subagents, hooks and MCP wiring are files your "
             r"team owns, versions and shares"
         )
         self.assertTrue(
-            re.search(m1, content, re.IGNORECASE),
+            re.search(pattern_fits_work_today, content, re.IGNORECASE),
             "Outline must include message 1: 'fits how you work today'",
         )
         self.assertTrue(
-            re.search(m2, content, re.IGNORECASE),
+            re.search(pattern_directs_army_agents, content, re.IGNORECASE),
             "Outline must include message 2: 'one data scientist...'",
         )
         self.assertTrue(
-            re.search(m3, content, re.IGNORECASE),
+            re.search(pattern_team_owned_files, content, re.IGNORECASE),
             "Outline must include message 3: 'skills, subagents...'",
         )
 
@@ -123,16 +129,14 @@ class TestPrimerAndOutline(unittest.TestCase):
         self.assertIn("Reveal", content)
 
     def test_tailoring_needs_no_core_content_edits(self):
-        content = self.docs.get(OUTLINE_PATH)
-        if content is None:
-            self.skipTest("Outline file does not exist yet")
+        content = self._get_doc(OUTLINE_PATH)
 
-        pat = (
+        pattern_zero_edits = (
             r"without (?:any )?edits? to (?:the )?repo(?:'s)? core content|"
             r"needs no edits"
         )
         self.assertTrue(
-            re.search(pat, content, re.IGNORECASE),
+            re.search(pattern_zero_edits, content, re.IGNORECASE),
             "Outline must explain tailoring needs no edits to core content",
         )
 
@@ -154,12 +158,11 @@ class TestPrimerAndOutline(unittest.TestCase):
             if content is None:
                 continue
 
-            for avoid, preferred in AVOID_TERMS:
-                matches = re.findall(
-                    rf"\b{re.escape(avoid)}\b", content, re.IGNORECASE
-                )
+            for pattern, preferred in AVOID_TERMS:
+                regex = re.compile(rf"\b{pattern}\b", re.IGNORECASE)
+                matches = regex.findall(content)
                 msg = (
-                    f"Found forbidden term '{avoid}' in {path}. "
+                    f"Found forbidden term '{pattern}' in {path}. "
                     f"Use '{preferred}' instead."
                 )
                 self.assertEqual(len(matches), 0, msg)
