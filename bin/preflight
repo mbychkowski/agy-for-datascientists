@@ -16,16 +16,7 @@ while [[ -h "${SOURCE}" ]]; do
     [[ "${SOURCE}" != /* ]] && SOURCE="${DIR}/${SOURCE}"
 done
 SCRIPT_DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
-
-if [[ -f "${SCRIPT_DIR}/demo.env.example" ]]; then
-    REPO_ROOT="${SCRIPT_DIR}"
-elif [[ -f "${SCRIPT_DIR}/../demo.env.example" ]]; then
-    REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-elif [[ -f "$(pwd)/demo.env.example" ]]; then
-    REPO_ROOT="$(pwd)"
-else
-    REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-fi
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 # Color formatting if connected to a terminal
 if [[ -t 1 ]]; then
@@ -133,38 +124,25 @@ check_env_variables() {
     done
 
     # Verify required overrides are exported and match core variables
-    if [[ "${CLOUDSDK_CORE_PROJECT:-}" != "${PROJECT_ID}" ]]; then
-        echo "CLOUDSDK_CORE_PROJECT ('${CLOUDSDK_CORE_PROJECT:-}') does not match PROJECT_ID ('${PROJECT_ID}')"
-        return 1
-    fi
-    if [[ "${CLOUDSDK_COMPUTE_REGION:-}" != "${REGION}" ]]; then
-        echo "CLOUDSDK_COMPUTE_REGION ('${CLOUDSDK_COMPUTE_REGION:-}') does not match REGION ('${REGION}')"
-        return 1
-    fi
-    if [[ "${GOOGLE_CLOUD_PROJECT:-}" != "${PROJECT_ID}" ]]; then
-        echo "GOOGLE_CLOUD_PROJECT ('${GOOGLE_CLOUD_PROJECT:-}') does not match PROJECT_ID ('${PROJECT_ID}')"
-        return 1
-    fi
-    if [[ "${GOOGLE_CLOUD_QUOTA_PROJECT:-}" != "${PROJECT_ID}" ]]; then
-        echo "GOOGLE_CLOUD_QUOTA_PROJECT ('${GOOGLE_CLOUD_QUOTA_PROJECT:-}') does not match PROJECT_ID ('${PROJECT_ID}')"
-        return 1
-    fi
-    if [[ "${TF_VAR_project_id:-}" != "${PROJECT_ID}" ]]; then
-        echo "TF_VAR_project_id ('${TF_VAR_project_id:-}') does not match PROJECT_ID ('${PROJECT_ID}')"
-        return 1
-    fi
-    if [[ "${TF_VAR_region:-}" != "${REGION}" ]]; then
-        echo "TF_VAR_region ('${TF_VAR_region:-}') does not match REGION ('${REGION}')"
-        return 1
-    fi
-    if [[ "${TF_VAR_staging_bucket:-}" != "${STAGING_BUCKET}" ]]; then
-        echo "TF_VAR_staging_bucket ('${TF_VAR_staging_bucket:-}') does not match STAGING_BUCKET ('${STAGING_BUCKET}')"
-        return 1
-    fi
-    if [[ "${TF_VAR_state_bucket:-}" != "${STATE_BUCKET}" ]]; then
-        echo "TF_VAR_state_bucket ('${TF_VAR_state_bucket:-}') does not match STATE_BUCKET ('${STATE_BUCKET}')"
-        return 1
-    fi
+    local overrides=(
+        "CLOUDSDK_CORE_PROJECT:${PROJECT_ID}"
+        "CLOUDSDK_COMPUTE_REGION:${REGION}"
+        "GOOGLE_CLOUD_PROJECT:${PROJECT_ID}"
+        "GOOGLE_CLOUD_QUOTA_PROJECT:${PROJECT_ID}"
+        "TF_VAR_project_id:${PROJECT_ID}"
+        "TF_VAR_region:${REGION}"
+        "TF_VAR_staging_bucket:${STAGING_BUCKET}"
+        "TF_VAR_state_bucket:${STATE_BUCKET}"
+    )
+    for entry in "${overrides[@]}"; do
+        local var_name="${entry%%:*}"
+        local expected_val="${entry#*:}"
+        local actual_val="${!var_name:-}"
+        if [[ "${actual_val}" != "${expected_val}" ]]; then
+            echo "${var_name} ('${actual_val}') does not match expected value ('${expected_val}')"
+            return 1
+        fi
+    done
 
     return 0
 }
