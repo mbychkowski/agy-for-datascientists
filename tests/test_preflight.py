@@ -1,0 +1,306 @@
+import os
+import subprocess
+import tempfile
+import unittest
+from pathlib import Path
+
+WORKTREE_ROOT = Path(__file__).resolve().parent.parent
+PREFLIGHT_BIN = WORKTREE_ROOT / "bin" / "preflight"
+PREFLIGHT_SYMLINK = WORKTREE_ROOT / "preflight"
+
+class TestEnvironmentTemplate(unittest.TestCase):
+    def test_environment_template_exists_and_no_real_ids(self):
+        """demo.env.example must exist, and contain no real project IDs or bucket names."""
+        template_path = WORKTREE_ROOT / "demo.env.example"
+        self.assertTrue(template_path.exists(), "demo.env.example must exist in repository root")
+        
+        content = template_path.read_text()
+        
+        required_vars = [
+            "PROJECT_ID",
+            "REGION",
+            "STAGING_BUCKET",
+            "STATE_BUCKET",
+            "CLOUDSDK_CORE_PROJECT",
+            "CLOUDSDK_COMPUTE_REGION",
+            "GOOGLE_CLOUD_PROJECT",
+            "GOOGLE_CLOUD_QUOTA_PROJECT",
+            "TF_VAR_project_id",
+            "TF_VAR_region",
+            "TF_VAR_staging_bucket",
+            "TF_VAR_state_bucket",
+        ]
+        for var in required_vars:
+            self.assertIn(var, content, f"demo.env.example must define {var}")
+            
+        self.assertNotIn("prj-", content)
+        self.assertNotIn("altostrat", content)
+        self.assertNotIn("mbychkowski", content)
+
+    def test_demo_env_is_gitignored(self):
+        """demo.env must be ignored by git."""
+        gitignore_path = WORKTREE_ROOT / ".gitignore"
+        self.assertTrue(gitignore_path.exists(), ".gitignore must exist")
+        lines = [line.strip() for line in gitignore_path.read_text().splitlines()]
+        self.assertIn("demo.env", lines, "demo.env must be in .gitignore")
+
+    def test_env_file_exports_in_subshell(self):
+        """Sourcing demo.env.example in bash must export all required overrides."""
+        cmd = """
+        source demo.env.example
+        echo "CORE_PROJECT=$CLOUDSDK_CORE_PROJECT"
+        echo "COMPUTE_REGION=$CLOUDSDK_COMPUTE_REGION"
+        echo "GOOGLE_PROJECT=$GOOGLE_CLOUD_PROJECT"
+        echo "QUOTA_PROJECT=$GOOGLE_CLOUD_QUOTA_PROJECT"
+        echo "TF_PROJECT=$TF_VAR_project_id"
+        echo "TF_REGION=$TF_VAR_region"
+        echo "TF_STAGING=$TF_VAR_staging_bucket"
+        echo "TF_STATE=$TF_VAR_state_bucket"
+        """
+        proc = subprocess.run(
+            ["bash", "-c", cmd],
+            cwd=WORKTREE_ROOT,
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        self.assertIn("CORE_PROJECT=your-project-id", proc.stdout)
+        self.assertIn("COMPUTE_REGION=us-central1", proc.stdout)
+        self.assertIn("GOOGLE_PROJECT=your-project-id", proc.stdout)
+        self.assertIn("QUOTA_PROJECT=your-project-id", proc.stdout)
+        self.assertIn("TF_PROJECT=your-project-id", proc.stdout)
+        self.assertIn("TF_REGION=us-central1", proc.stdout)
+        self.assertIn("TF_STAGING=your-dataproc-staging-bucket", proc.stdout)
+        self.assertIn("TF_STATE=your-terraform-state-bucket", proc.stdout)
+
+class TestPreflightCLI(unittest.TestCase):
+    def test_preflight_executable_exists(self):
+        """preflight and bin/preflight must exist and be executable."""
+        self.assertTrue(PREFLIGHT_BIN.exists(), "bin/preflight must exist")
+        self.assertTrue(os.access(PREFLIGHT_BIN, os.X_OK), "bin/preflight must be executable")
+        self.assertTrue(PREFLIGHT_SYMLINK.exists(), "preflight symlink must exist")
+        self.assertTrue(os.access(PREFLIGHT_SYMLINK, os.X_OK), "preflight symlink must be executable")
+
+    def test_preflight_fails_when_env_file_missing(self):
+        """preflight should report [FAIL] and non-zero exit when demo.env is missing."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fake_env = Path(tmpdir) / "nonexistent.env"
+            proc = subprocess.run(
+                [str(PREFLIGHT_BIN), "--env", str(fake_env)],
+                cwd=WORKTREE_ROOT,
+                capture_output=True,
+                text=True
+            )
+            self.assertNotEqual(proc.returncode, 0, "preflight must exit non-zero when env file is missing")
+            self.assertIn("[FAIL]", proc.stdout)
+            self.assertIn("Environment file not found", proc.stdout)
+
+    def test_preflight_fails_on_unconfigured_placeholders(self):
+        """preflight should report [FAIL] if variables still have placeholder values."""
+        with tempfile.NamedTemporaryFile("w", delete=False) as f:
+            f.write(Path(WORKTREE_ROOT / "demo.env.example").read_text())
+            tmp_env_path = f.name
+        try:
+            proc = subprocess.run(
+                [str(PREFLIGHT_BIN), "--env", tmp_env_path],
+                cwd=WORKTREE_ROOT,
+                capture_output=True,
+                text=True
+            )
+            self.assertNotEqual(proc.returncode, 0, "preflight must exit non-zero on placeholder values")
+            self.assertIn("[FAIL]", proc.stdout)
+            self.assertIn("placeholder", proc.stdout.lower())
+        finally:
+            os.remove(tmp_env_path)
+
+    def _create_env_file(self, tmpdir, project_id="test-demo-project", region="us-central1"):
+        env_content = f"""
+PROJECT_ID="{project_id}"
+REGION="{region}"
+STAGING_BUCKET="test-staging-bucket"
+STATE_BUCKET="test-state-bucket"
+SUBNET=""
+
+export PROJECT_ID
+export REGION
+export STAGING_BUCKET
+export STATE_BUCKET
+export SUBNET
+
+export CLOUDSDK_CORE_PROJECT="${{PROJECT_ID}}"
+export CLOUDSDK_COMPUTE_REGION="${{REGION}}"
+export GOOGLE_CLOUD_PROJECT="${{PROJECT_ID}}"
+export GOOGLE_CLOUD_QUOTA_PROJECT="${{PROJECT_ID}}"
+export TF_VAR_project_id="${{PROJECT_ID}}"
+export TF_VAR_region="${{REGION}}"
+export TF_VAR_staging_bucket="${{STAGING_BUCKET}}"
+export TF_VAR_state_bucket="${{STATE_BUCKET}}"
+export TF_VAR_subnet="${{SUBNET}}"
+"""
+        env_file = Path(tmpdir) / "demo.env"
+        env_file.write_text(env_content)
+        return env_file
+
+    def test_preflight_fails_when_gcloud_project_mismatches(self):
+        """preflight must fail with clear message when active gcloud project doesn't match."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env_file = self._create_env_file(tmpdir, project_id="expected-project")
+            bin_dir = Path(tmpdir) / "bin"
+            bin_dir.mkdir()
+            
+            # Fake gcloud script returning a mismatched active project
+            fake_gcloud = bin_dir / "gcloud"
+            fake_gcloud.write_text("""#!/usr/bin/env bash
+if [[ "$*" == *"configurations list"* ]]; then
+    echo "different-active-project"
+    exit 0
+fi
+exit 0
+""")
+            fake_gcloud.chmod(0o755)
+
+            # Fake ADC file matching expected-project
+            adc_file = Path(tmpdir) / "adc.json"
+            adc_file.write_text('{"quota_project_id": "expected-project"}')
+
+            env = os.environ.copy()
+            env["PATH"] = f"{bin_dir}:{env['PATH']}"
+            env["GOOGLE_APPLICATION_CREDENTIALS"] = str(adc_file)
+
+            proc = subprocess.run(
+                [str(PREFLIGHT_BIN), "--env", str(env_file)],
+                cwd=WORKTREE_ROOT,
+                env=env,
+                capture_output=True,
+                text=True
+            )
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertIn("[FAIL] Active gcloud project matches PROJECT_ID", proc.stdout)
+            self.assertIn("Active gcloud project ('different-active-project') does not match environment file PROJECT_ID ('expected-project')", proc.stdout)
+            self.assertIn("gcloud config set project expected-project", proc.stdout)
+
+    def test_preflight_fails_when_adc_quota_project_mismatches(self):
+        """preflight must fail with clear message when ADC quota project doesn't match."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env_file = self._create_env_file(tmpdir, project_id="expected-project")
+            bin_dir = Path(tmpdir) / "bin"
+            bin_dir.mkdir()
+            
+            # Fake gcloud returning expected project
+            fake_gcloud = bin_dir / "gcloud"
+            fake_gcloud.write_text("""#!/usr/bin/env bash
+if [[ "$*" == *"configurations list"* ]]; then
+    echo "expected-project"
+    exit 0
+fi
+exit 0
+""")
+            fake_gcloud.chmod(0o755)
+
+            # Fake ADC file with a different quota project
+            adc_file = Path(tmpdir) / "adc.json"
+            adc_file.write_text('{"quota_project_id": "old-stale-project"}')
+
+            env = os.environ.copy()
+            env["PATH"] = f"{bin_dir}:{env['PATH']}"
+            env["GOOGLE_APPLICATION_CREDENTIALS"] = str(adc_file)
+
+            proc = subprocess.run(
+                [str(PREFLIGHT_BIN), "--env", str(env_file)],
+                cwd=WORKTREE_ROOT,
+                env=env,
+                capture_output=True,
+                text=True
+            )
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertIn("[FAIL] ADC quota project matches PROJECT_ID and is active", proc.stdout)
+            self.assertIn("ADC quota project ('old-stale-project') does not match environment file PROJECT_ID ('expected-project')", proc.stdout)
+            self.assertIn("gcloud auth application-default set-quota-project expected-project", proc.stdout)
+
+    def test_preflight_fails_when_adc_quota_project_is_stale_or_deleted(self):
+        """preflight must fail when quota project exists in ADC but is stale or deleted."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env_file = self._create_env_file(tmpdir, project_id="stale-project")
+            bin_dir = Path(tmpdir) / "bin"
+            bin_dir.mkdir()
+            
+            # Fake gcloud returning matching project for config, but error on projects describe
+            fake_gcloud = bin_dir / "gcloud"
+            fake_gcloud.write_text("""#!/usr/bin/env bash
+if [[ "$*" == *"configurations list"* ]]; then
+    echo "stale-project"
+    exit 0
+fi
+if [[ "$*" == *"projects describe"* ]]; then
+    echo "ERROR: project not found or deleted" >&2
+    exit 1
+fi
+exit 0
+""")
+            fake_gcloud.chmod(0o755)
+
+            adc_file = Path(tmpdir) / "adc.json"
+            adc_file.write_text('{"quota_project_id": "stale-project"}')
+
+            env = os.environ.copy()
+            env["PATH"] = f"{bin_dir}:{env['PATH']}"
+            env["GOOGLE_APPLICATION_CREDENTIALS"] = str(adc_file)
+
+            proc = subprocess.run(
+                [str(PREFLIGHT_BIN), "--env", str(env_file)],
+                cwd=WORKTREE_ROOT,
+                env=env,
+                capture_output=True,
+                text=True
+            )
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertIn("[FAIL] ADC quota project matches PROJECT_ID and is active", proc.stdout)
+            self.assertIn("inaccessible, stale, or does not exist", proc.stdout)
+            self.assertIn("Forbidden", proc.stdout)
+
+    def test_preflight_passes_when_all_match_and_active(self):
+        """preflight outputs all [PASS] and exits 0 when config, ADC, and project match and are active."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env_file = self._create_env_file(tmpdir, project_id="demo-proj-123")
+            bin_dir = Path(tmpdir) / "bin"
+            bin_dir.mkdir()
+            
+            fake_gcloud = bin_dir / "gcloud"
+            fake_gcloud.write_text("""#!/usr/bin/env bash
+if [[ "$*" == *"configurations list"* ]]; then
+    echo "demo-proj-123"
+    exit 0
+fi
+if [[ "$*" == *"projects describe"* ]]; then
+    echo "ACTIVE"
+    exit 0
+fi
+exit 0
+""")
+            fake_gcloud.chmod(0o755)
+
+            adc_file = Path(tmpdir) / "adc.json"
+            adc_file.write_text('{"quota_project_id": "demo-proj-123"}')
+
+            env = os.environ.copy()
+            env["PATH"] = f"{bin_dir}:{env['PATH']}"
+            env["GOOGLE_APPLICATION_CREDENTIALS"] = str(adc_file)
+
+            proc = subprocess.run(
+                [str(PREFLIGHT_BIN), "--env", str(env_file)],
+                cwd=WORKTREE_ROOT,
+                env=env,
+                capture_output=True,
+                text=True
+            )
+            self.assertEqual(proc.returncode, 0, f"Output was:\n{proc.stdout}\n{proc.stderr}")
+            self.assertIn("[PASS] Environment file exists", proc.stdout)
+            self.assertIn("[PASS] Environment variables and overrides configured", proc.stdout)
+            self.assertIn("[PASS] Active gcloud project matches PROJECT_ID", proc.stdout)
+            self.assertIn("[PASS] ADC quota project matches PROJECT_ID and is active", proc.stdout)
+            self.assertIn("Summary: 4 passed, 0 failed.", proc.stdout)
+
+
+if __name__ == "__main__":
+    unittest.main()
+
