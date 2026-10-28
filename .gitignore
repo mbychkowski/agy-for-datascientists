@@ -1,0 +1,29 @@
+# Private brief: contains client-identifying details. Delete before first push.
+PROBLEM.md
+
+# Per-user environment (copy from demo.env.example)
+demo.env
+
+# Personal agent setup for building this repo (not part of the demo)
+.agents/skills/
+skills-lock.json
+/AGENTS.md
+docs/agents/
+.vscode/
+
+# Data Agent Kit workspace skill install (Google Cloud Software License; install via DAK)
+.gemini/skills/
+
+# Data Agent Kit skills: installed per workspace by the DAK extension,
+# under the Google Cloud Software License, so they must not be published.
+.gemini/skills/
+
+# Terraform local state and caches
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+
+# Python
+__pycache__/
+.venv/
