@@ -7,8 +7,40 @@ DOCS_DIR = os.path.join(REPO_ROOT, "docs")
 PRIMER_PATH = os.path.join(DOCS_DIR, "data-science-primer.md")
 OUTLINE_PATH = os.path.join(DOCS_DIR, "demo-outline.md")
 
+TOPICS = [
+    "Positivity",
+    "Sampling Artifact",
+    "Simpson's paradox",
+    "K-means",
+    "ARIMA_PLUS",
+    "TimesFM",
+    "backtesting",
+    "WAPE",
+]
+
+AVOID_TERMS = [
+    ("copilot", "Command Center"),
+    ("hit rate", "Positivity"),
+    ("as-of date", "Cutoff"),
+    ("root cause", "Attribution"),
+    ("validation set", "Reveal"),
+]
+
+FORBIDDEN_ID_PATTERNS = [
+    r"\bproject-[a-z0-9]{5,}\b",
+    r"\b[a-z0-9-]+\.iam\.gserviceaccount\.com\b",
+]
+
 
 class TestPrimerAndOutline(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.docs = {}
+        for path in [PRIMER_PATH, OUTLINE_PATH]:
+            if os.path.isfile(path):
+                with open(path, "r", encoding="utf-8") as f:
+                    cls.docs[path] = f.read()
+
     def test_primer_file_exists(self):
         msg = f"Primer file missing: {PRIMER_PATH}"
         self.assertTrue(os.path.isfile(PRIMER_PATH), msg)
@@ -18,24 +50,11 @@ class TestPrimerAndOutline(unittest.TestCase):
         self.assertTrue(os.path.isfile(OUTLINE_PATH), msg)
 
     def test_primer_covers_required_topics_with_qa(self):
-        if not os.path.isfile(PRIMER_PATH):
+        content = self.docs.get(PRIMER_PATH)
+        if content is None:
             self.skipTest("Primer file does not exist yet")
 
-        with open(PRIMER_PATH, "r", encoding="utf-8") as f:
-            content = f.read()
-
-        topics = [
-            "Positivity",
-            "Sampling Artifact",
-            "Simpson's paradox",
-            "K-means",
-            "ARIMA_PLUS",
-            "TimesFM",
-            "backtesting",
-            "WAPE",
-        ]
-
-        for topic in topics:
+        for topic in TOPICS:
             pattern = re.compile(re.escape(topic), re.IGNORECASE)
             self.assertTrue(
                 pattern.search(content),
@@ -48,16 +67,14 @@ class TestPrimerAndOutline(unittest.TestCase):
         )
         self.assertGreaterEqual(
             len(qa_matches),
-            8,
+            len(TOPICS),
             "Expected Q&A-ready answers for each required topic",
         )
 
     def test_outline_covers_three_messages_structure_and_reveal(self):
-        if not os.path.isfile(OUTLINE_PATH):
+        content = self.docs.get(OUTLINE_PATH)
+        if content is None:
             self.skipTest("Outline file does not exist yet")
-
-        with open(OUTLINE_PATH, "r", encoding="utf-8") as f:
-            content = f.read()
 
         # Three messages
         m1 = r"fits how you work today"
@@ -106,11 +123,9 @@ class TestPrimerAndOutline(unittest.TestCase):
         self.assertIn("Reveal", content)
 
     def test_tailoring_needs_no_core_content_edits(self):
-        if not os.path.isfile(OUTLINE_PATH):
+        content = self.docs.get(OUTLINE_PATH)
+        if content is None:
             self.skipTest("Outline file does not exist yet")
-
-        with open(OUTLINE_PATH, "r", encoding="utf-8") as f:
-            content = f.read()
 
         pat = (
             r"without (?:any )?edits? to (?:the )?repo(?:'s)? core content|"
@@ -123,39 +138,23 @@ class TestPrimerAndOutline(unittest.TestCase):
 
     def test_company_neutrality(self):
         for path in [PRIMER_PATH, OUTLINE_PATH]:
-            if not os.path.isfile(path):
+            content = self.docs.get(path)
+            if content is None:
                 continue
-            with open(path, "r", encoding="utf-8") as f:
-                content = f.read()
 
-            # Ensure no specific project IDs or real accounts are present
-            forbidden_patterns = [
-                r"\bproject-[a-z0-9]{5,}\b",
-                r"\b[a-z0-9-]+\.iam\.gserviceaccount\.com\b",
-            ]
-            for pat in forbidden_patterns:
+            for pat in FORBIDDEN_ID_PATTERNS:
                 self.assertFalse(
                     re.search(pat, content),
                     f"Found non-neutral identifier matching '{pat}' in {path}",
                 )
 
     def test_glossary_vocabulary_compliance(self):
-        # Explicit terms to avoid from GLOSSARY.md
-        avoid_terms = [
-            ("copilot", "Command Center"),
-            ("hit rate", "Positivity"),
-            ("as-of date", "Cutoff"),
-            ("root cause", "Attribution"),
-            ("validation set", "Reveal"),
-        ]
-
         for path in [PRIMER_PATH, OUTLINE_PATH]:
-            if not os.path.isfile(path):
+            content = self.docs.get(path)
+            if content is None:
                 continue
-            with open(path, "r", encoding="utf-8") as f:
-                content = f.read()
 
-            for avoid, preferred in avoid_terms:
+            for avoid, preferred in AVOID_TERMS:
                 matches = re.findall(
                     rf"\b{re.escape(avoid)}\b", content, re.IGNORECASE
                 )
