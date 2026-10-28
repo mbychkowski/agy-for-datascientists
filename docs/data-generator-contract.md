@@ -1,8 +1,8 @@
 # Data Generator Contract
 
-This document defines the contract for producing synthetic datasets for the Antigravity for Data Scientists demo. Both the external **Data Generator** tool (owned by the presenter) and the internal mock dataset (built for development and testing) conform to this contract. Adherence to this specification guarantees that data generation remains independent of the repository codebase and that the live demonstration storyline resolves predictably and verifiably.
+This document defines the written contract for producing synthetic datasets for the Antigravity for Data Scientists demo. Both the external **Data Generator** tool (owned by the presenter) and the internal mock dataset (built for development and testing) conform to this contract. Adherence to this specification guarantees that data generation remains independent of the repository codebase and that the live demonstration storyline resolves predictably and verifiably.
 
-All terminology strictly adheres to [GLOSSARY.md](../GLOSSARY.md) and respects [ADR 0001](adr/0001-answer-key-outside-agent-reach.md). This contract is completely company-neutral.
+All terminology strictly adheres to [GLOSSARY.md](../GLOSSARY.md) and respects [ADR 0001](adr/0001-answer-key-outside-agent-reach.md). This contract is company-neutral.
 
 ---
 
@@ -14,7 +14,7 @@ The dataset spans daily reporting across three full seasons plus the current sea
 - **Calendar Standard**: CDC Morbidity and Mortality Weekly Report (MMWR) epidemiological weeks.
 - **Week Boundaries**: Each MMWR week begins on Sunday at 00:00:00 UTC and ends on Saturday at 23:59:59 UTC.
 - **Season Definition**: An influenza season runs from MMWR week 40 of year $Y$ through MMWR week 39 of year $Y+1$.
-- **Aggregations**: Hospital Feeds are generated and stored at a daily grain, and analyzed and forecasted at a weekly grain (aggregating Sunday through Saturday).
+- **Grain**: Hospital Feeds are generated and stored at a daily grain, and analyzed and forecasted at a weekly grain (aggregating Sunday through Saturday).
 
 ### 1.2 Seasons and Horizons
 1. **Historical Seasons** (3 full seasons):
@@ -23,7 +23,7 @@ The dataset spans daily reporting across three full seasons plus the current sea
    - **2025–26 Season**: 2025-09-28 (MMWR 2025 Week 40) through 2026-10-03 (MMWR 2026 Week 39) — 53 weeks (371 days).
 2. **Current Season up to the Cutoff**:
    - **2026–27 Season (to Cutoff)**: 2026-10-04 (MMWR 2026 Week 40) through 2026-10-31 (MMWR 2026 Week 43) — 4 weeks (28 days).
-   - **Cutoff Date**: Saturday, October 31, 2026. This is the last date visible to agents.
+   - **Cutoff Date**: Saturday, October 31, 2026. This is the last day of data the agents can see.
    - **Total Visible Range**: 2023-10-01 through 2026-10-31 (1,127 days per hospital under normal ingestion).
 3. **The Reveal Horizon** (withheld from agents):
    - **Reveal Period**: Sunday, 2026-11-01 (MMWR 2026 Week 44) through Saturday, 2026-12-12 (MMWR 2026 Week 49) — exactly 6 weeks (42 days, extending through mid-December).
@@ -41,8 +41,8 @@ A reference table containing metadata and geographic attributes for all monitore
 - **Dataset**: `raw`
 - **Table Name**: `hospital_reference`
 - **Grain**: One row per hospital (`hospital_id` unique primary key).
-- **Volume**: Exactly 90 hospitals distributed across multiple geographic regions:
-  - **Northeast**: 25 hospitals (contains the Spike, the Outbreak cluster, and the duplicate backfill).
+- **Volume**: Exactly 90 hospitals distributed across several geographic regions:
+  - **Northeast**: 25 hospitals (contains the Spike, the Outbreak hospitals, and the duplicate backfill).
   - **Midwest**: 25 hospitals.
   - **South**: 25 hospitals.
   - **West**: 15 hospitals.
@@ -65,7 +65,8 @@ The daily raw submission of flu testing data from each hospital.
 - **Dataset**: `raw`
 - **Table Name**: `hospital_flu_feeds`
 - **Grain**: Daily feed per hospital. Logically `(hospital_id, feed_date)`. When duplicate feeds occur, multiple physical rows share the same `(hospital_id, feed_date)` with different `batch_id` and `ingested_at` values.
-- **Volume**: 90 hospitals $\times$ 1,127 days = 101,430 base rows, plus ~40 planted duplicate rows in the Northeast Spike week.
+- **Time Range**: 2023-10-01 through 2026-10-31.
+- **Volume**: 90 hospitals $\times$ 1,127 days = 101,430 base rows, plus 40 planted duplicate rows in the Northeast Spike week (8 hospitals $\times$ 5 dates).
 - **Labels**: Carries `demo: true`.
 
 #### Column Specifications
@@ -85,18 +86,20 @@ Operational log recording batch ingestion runs. Used by the pipeline triage suba
 - **Dataset**: `ops`
 - **Table Name**: `pipeline_run_log`
 - **Grain**: One row per pipeline execution run (`run_id` unique primary key).
+- **Time Range**: 2023-10-01 through 2026-10-31.
+- **Frequency and Volume**: Daily scheduled ingestion runs (1 run per calendar day = 1,127 scheduled runs covering daily feeds for all 90 hospitals), plus ad-hoc backfill runs, including the errant backfill run `RUN-20261031-BF01` executed on the morning of 2026-10-31.
 - **Labels**: Carries `demo: true`.
 
 #### Column Specifications
 | Column Name | BigQuery Type | Mode | Description | Example |
 | :--- | :--- | :--- | :--- | :--- |
-| `run_id` | `STRING` | `REQUIRED` | Unique execution run identifier. | `RUN-20261028-BF01` |
+| `run_id` | `STRING` | `REQUIRED` | Unique execution run identifier. | `RUN-20261031-BF01` |
 | `pipeline_name` | `STRING` | `REQUIRED` | Pipeline job name (`hospital_flu_daily_ingest` or `hospital_flu_backfill`). | `hospital_flu_backfill` |
 | `run_type` | `STRING` | `REQUIRED` | Execution type: `scheduled` (daily cron) or `backfill` (re-sent / correction run). | `backfill` |
 | `date_range_start` | `DATE` | `REQUIRED` | Earliest observation date covered by the batch run. | `2026-10-26` |
 | `date_range_end` | `DATE` | `REQUIRED` | Latest observation date covered by the batch run. | `2026-10-30` |
-| `started_at` | `TIMESTAMP` | `REQUIRED` | UTC timestamp when the pipeline execution started. | `2026-10-28 11:30:00 UTC` |
-| `finished_at` | `TIMESTAMP` | `REQUIRED` | UTC timestamp when the pipeline execution finished. | `2026-10-28 11:34:22 UTC` |
+| `started_at` | `TIMESTAMP` | `REQUIRED` | UTC timestamp when the pipeline execution started. | `2026-10-31 06:15:00 UTC` |
+| `finished_at` | `TIMESTAMP` | `REQUIRED` | UTC timestamp when the pipeline execution finished. | `2026-10-31 06:18:42 UTC` |
 | `status` | `STRING` | `REQUIRED` | Run status: `SUCCESS` or `FAILED`. | `SUCCESS` |
 | `rows_written` | `INT64` | `REQUIRED` | Count of feed rows appended to `raw.hospital_flu_feeds`. | `40` |
 
@@ -107,27 +110,16 @@ Operational log recording batch ingestion runs. Used by the pipeline triage suba
 ### 3.1 Duplicate Feed Characteristics
 - **Count Invariance**: Duplicated feeds carry **identical counts**. When a feed for hospital $H$ and feed date $D$ is duplicated, both records share identical values for `total_flu_tests` and `positive_flu_tests`.
 - **Metadata Variation**: The duplicate record differs only in its operational metadata:
-  - `batch_id`: Reflects the backfill batch identifier (e.g., `BATCH-20261028-BACKFILL-02`) rather than the regular scheduled batch.
-  - `ingested_at`: Carries a later UTC ingestion timestamp than the original record.
+  - `batch_id`: Reflects the backfill batch identifier (e.g., `BATCH-20261031-BACKFILL-01`) rather than the regular scheduled batch (e.g., `BATCH-20261026-01`).
+  - `ingested_at`: Carries a later UTC ingestion timestamp (e.g. `2026-10-31 06:16:00 UTC`) than the original scheduled record (e.g. `2026-10-26 04:10:00 UTC`).
 
 ### 3.2 Deduplication Tie-Break Rule
-A single hospital feed is logically identified by `(hospital_id, feed_date)`. When multiple records exist for the same `(hospital_id, feed_date)`:
+A single Hospital Feed is logically identified by `(hospital_id, feed_date)`. When multiple records exist for the same `(hospital_id, feed_date)`:
 1. **Primary Tie-Break**: Retain the record with the latest `ingested_at` timestamp.
 2. **Secondary Tie-Break**: If multiple records share the identical `ingested_at` timestamp, retain the record with the lexicographically greatest `batch_id` (`ORDER BY batch_id DESC`).
 
-#### Canonical SQL Window Specification
-```sql
-QUALIFY ROW_NUMBER() OVER (
-  PARTITION BY hospital_id, feed_date
-  ORDER BY ingested_at DESC, batch_id DESC
-) = 1
-```
-
-### 3.3 Positivity Metric Definition
-**Positivity** is defined as the proportion of positive flu tests to total tests:
-$$\text{Positivity} = \frac{\text{positive\_flu\_tests}}{\text{total\_flu\_tests}}$$
-
-- **Zero-Test Handling**: When `total_flu_tests = 0`, Positivity is `NULL`. This prevents division-by-zero exceptions under Spark 4 / ANSI SQL mode and BigQuery standard SQL.
+### 3.3 Metric Definition
+- **Positivity**: $\text{Positivity} = \frac{\text{positive\_flu\_tests}}{\text{total\_flu\_tests}}$. When `total_flu_tests = 0`, Positivity is null.
 
 ---
 
@@ -135,7 +127,7 @@ $$\text{Positivity} = \frac{\text{positive\_flu\_tests}}{\text{total\_flu\_tests
 
 ### 4.1 Headline Anomaly
 - **Definition**: In the week ending on the Cutoff (MMWR 2026 Week 43: Sunday, 2026-10-25 through Saturday, 2026-10-31), Northeast region total flu-positive test counts are **+35.0%** over the prior week (MMWR 2026 Week 42: Sunday, 2026-10-18 through Saturday, 2026-10-24).
-- **Metric Formulation**: Measured strictly in **raw counts** on purpose (not test positivity rates or per-capita incidence), ensuring that pipeline duplicate errors and testing volume shifts visibly inflate the headline figure.
+- **Metric Formulation**: Measured strictly in **raw counts** on purpose (not Positivity or population rates), ensuring that pipeline duplicate errors and testing volume shifts visibly inflate the headline figure.
 
 ### 4.2 Target Attribution Breakdown
 The +35.0% Spike decomposes across four planted causes:
@@ -145,35 +137,35 @@ The +35.0% Spike decomposes across four planted causes:
 | **Pipeline Defect** | ~15 percentage points | ~8 Northeast hospitals | 2026-10-26 to 2026-10-30 (~5 days) | Re-sent duplicate feeds in `raw.hospital_flu_feeds`; matching `backfill` run in `ops.pipeline_run_log`. |
 | **Sampling Artifact** | ~8 percentage points | ~6 Northeast hospitals | 2026-10-25 to 2026-10-31 (Spike week) | ~40–50% surge in `total_flu_tests` with flat `Positivity`. |
 | **Outbreak** | ~7 percentage points | 3 neighbouring NE hospitals | 2026-10-25 to 2026-10-31 (and into Reveal) | Sharp rise in `Positivity` (~6% $\to$ ~16–18%) with stable test volume. |
-| **Seasonal Ramp** | ~5 percentage points | All 90 hospitals | Ongoing through October | Baseline ~5% week-over-week seasonal growth across all regions. |
+| **Seasonal Ramp** | ~5 percentage points | All 90 hospitals | 2026-10-25 to 2026-10-31 (ongoing in Oct) | Normal early-season rise of ~5% week-over-week across all regions. |
 | **Total Spike** | **+35.0 percentage points** | — | — | **Northeast positive test count +35% WoW** |
 
 ### 4.3 Planted Cause Mechanics
 
 #### 1. Pipeline Defect (~15 points)
-- **Mechanics**: A defective upstream backfill re-ingests ~5 days of Hospital Feeds (Monday, 2026-10-26 through Friday, 2026-10-30) for ~8 specific Northeast hospitals.
+- **Mechanics**: A defective upstream backfill re-ingests 5 days of Hospital Feeds (Monday, 2026-10-26 through Friday, 2026-10-30) for 8 specific Northeast hospitals.
 - **Data Footprint**:
   - Exactly duplicate records appear in `raw.hospital_flu_feeds` with identical test counts, duplicate `(hospital_id, feed_date)`, distinct backfill `batch_id`, and later `ingested_at`.
-  - An entry is logged in `ops.pipeline_run_log` on 2026-10-28 with `run_type = 'backfill'`, status `SUCCESS`, and `rows_written = 40` (~8 hospitals $\times$ 5 days).
+  - An entry is logged in `ops.pipeline_run_log` on the morning of 2026-10-31 (`started_at: 2026-10-31 06:15:00 UTC`) with `run_type = 'backfill'`, status `SUCCESS`, `date_range_start = '2026-10-26'`, `date_range_end = '2026-10-30'`, and `rows_written = 40` (8 hospitals $\times$ 5 days).
 - **Resolution**: Deduplication (retaining the latest feed per hospital and date) eliminates the duplicate rows, removing ~15 percentage points of the spike.
 
 #### 2. Sampling Artifact (~8 points)
-- **Mechanics**: ~6 Northeast hospitals (distinct from the Outbreak hospitals) sharply ramp up testing volume (e.g., implementing employee return-to-work screening or walk-in testing campaigns).
+- **Mechanics**: ~6 Northeast hospitals (distinct from the Outbreak hospitals) sharply ramp up testing volume (e.g., implementing employee screening or walk-in testing campaigns).
 - **Data Footprint**:
   - `total_flu_tests` increases by ~40% to 50% week-over-week.
-  - `Positivity` ($\text{positive\_flu\_tests} / \text{total\_flu\_tests}$) remains flat and consistent with historical baseline.
-- **Resolution**: The triage subagents identify that volume increased while rate was unchanged, attributing ~8 percentage points to testing expansion.
+  - `Positivity` remains flat and consistent with the historical baseline.
+- **Resolution**: The triage subagents identify that test volume increased while Positivity was unchanged, attributing ~8 percentage points to testing expansion.
 
 #### 3. Outbreak (~7 points)
-- **Mechanics**: A localized epidemiological surge in flu infections among patients at 3 neighbouring hospitals located in adjacent counties within the Northeast.
+- **Mechanics**: A localized rise in flu infections among patients at 3 neighbouring hospitals in adjacent counties within the Northeast.
 - **Data Footprint**:
   - `Positivity` jumps sharply from ~6% to ~16–18% during the Spike week.
   - `total_flu_tests` remains steady or shows minor natural variation.
-  - In Workstream 2, seasonal feature engineering on clean data highlights these 3 hospitals as distinct outliers, forming their own cluster or distinct **Cohort** in BQML K-means.
+  - In Workstream 2, seasonal feature engineering on clean data highlights these 3 hospitals as distinct outliers, forming their own **Cohort** in BQML K-means.
 - **Resolution**: Identified as true patient transmission accounting for ~7 percentage points of the Spike.
 
 #### 4. Seasonal Ramp (~5 points)
-- **Mechanics**: Normal autumn increase in respiratory viral circulation observed across all hospitals and regions.
+- **Mechanics**: Normal early-season rise in flu transmission observed across all hospitals and regions.
 - **Data Footprint**:
   - Positive counts across non-anomaly hospitals increase by ~5% week-over-week, tracking historical seasonal onset curves.
 - **Resolution**: Accounts for the remaining ~5 percentage points of the Spike.
@@ -188,7 +180,7 @@ In accordance with [ADR 0001](adr/0001-answer-key-outside-agent-reach.md), the *
 > Neither this contract nor any file in this repository names or references the private storage location. The presenter supplies the storage path only at runtime via CLI arguments during end-state verification and the finale Reveal.
 
 ### 5.1 Answer Key Format (`answer_key.json`)
-The Answer Key provides the ground-truth attribution values and planted anomaly metadata used to evaluate the agents' attribution.
+The Answer Key records the planted causes and their target shares of the Spike, used by the presenter to check the agents' Attribution.
 
 ```json
 {
@@ -206,7 +198,6 @@ The Answer Key provides the ground-truth attribution values and planted anomaly 
     {
       "cause": "pipeline_defect",
       "target_points": 15.0,
-      "tolerance_points": 2.0,
       "affected_hospitals": [
         "HOSP_NE_003",
         "HOSP_NE_007",
@@ -226,7 +217,6 @@ The Answer Key provides the ground-truth attribution values and planted anomaly 
     {
       "cause": "sampling_artifact",
       "target_points": 8.0,
-      "tolerance_points": 1.5,
       "affected_hospitals": [
         "HOSP_NE_002",
         "HOSP_NE_005",
@@ -244,7 +234,6 @@ The Answer Key provides the ground-truth attribution values and planted anomaly 
     {
       "cause": "outbreak",
       "target_points": 7.0,
-      "tolerance_points": 1.5,
       "affected_hospitals": [
         "HOSP_NE_001",
         "HOSP_NE_004",
@@ -259,13 +248,14 @@ The Answer Key provides the ground-truth attribution values and planted anomaly 
     {
       "cause": "seasonal_ramp",
       "target_points": 5.0,
-      "tolerance_points": 1.0,
-      "affected_hospitals": "all",
+      "affected_hospitals": [
+        "*"
+      ],
       "date_range": {
         "start": "2026-10-25",
         "end": "2026-10-31"
       },
-      "manifestation": "Normal autumn baseline growth across all regions"
+      "manifestation": "Normal early-season rise across all regions"
     }
   ]
 }
@@ -273,14 +263,14 @@ The Answer Key provides the ground-truth attribution values and planted anomaly 
 
 ### 5.2 Reveal Data Format
 
-The **Reveal** dataset contains the true, clean Hospital Feeds for the six weeks following the Cutoff (Sunday, 2026-11-01 through Saturday, 2026-12-12).
+The **Reveal** dataset contains the true data of the six weeks following the Cutoff (Sunday, 2026-11-01 through Saturday, 2026-12-12), withheld from the agents during the live demo.
 
 - **Schema**: Exact match to `raw.hospital_flu_feeds` (`hospital_id`, `feed_date`, `total_flu_tests`, `positive_flu_tests`, `batch_id`, `ingested_at`).
 - **Volume**: 90 hospitals $\times$ 42 days = 3,780 rows.
 - **Characteristics**:
   - Completely free of duplicate feeds or artificial pipeline defects.
   - Follows the true epidemiological trajectory: the 3 Outbreak hospitals continue their elevated curve, while other hospitals follow normal seasonal patterns.
-  - When overlaid on forecasts in the finale, forecasts trained on uncleaned data (inflated by duplicates) visibly overshoot actuals, whereas forecasts trained on deduplicated data track actuals accurately.
+  - In the finale, the true data is shown on screen against the forecasts built from clean and uncleaned data; the uncleaned model visibly overshoots.
 
 ---
 
@@ -306,7 +296,7 @@ The generated dataset is exported in a structured directory format ready for one
     └── pipeline_run_log.csv (or .parquet)
 ```
 
-The withheld bundle (for the presenter's private GCS bucket per ADR 0001) is produced alongside:
+The withheld bundle (for the presenter's private storage location per ADR 0001) is produced alongside:
 ```
 <withheld-root>/
 ├── answer_key.json
@@ -320,26 +310,6 @@ The transport mechanism (e.g., whether files are staged to an ingestion GCS buck
 
 ---
 
-## 8. Glossary Vocabulary Guardrails
+## 8. Glossary Vocabulary and Neutrality
 
-In compliance with repository standards, this contract enforces canonical terminology and explicitly prohibits disallowed synonyms:
-
-| Canonical Term | Required Usage | Prohibited Synonyms |
-| :--- | :--- | :--- |
-| **Command Center** | The unified Antigravity environment | IDE, chatbot, copilot |
-| **Hospital Feed** | Daily flu submission from a hospital | Feed file, upload, hospital data |
-| **Positivity** | $\text{positive\_flu\_tests} / \text{total\_flu\_tests}$ | Positive rate, hit rate |
-| **Spike** | The headline +35% raw Northeast positive count | Surge, outbreak (outbreak is only 1 cause) |
-| **Cutoff** | Saturday, October 31, 2026 | Today, as-of date, now |
-| **Data Generator** | Synthetic feed generation engine | Simulator, faker |
-| **Pipeline Defect** | Duplicated feed ingestion inflation | Data bug, ETL issue |
-| **Sampling Artifact** | Test volume rise with flat positivity | Testing bias, volume effect |
-| **Outbreak** | Genuine localized rise in patient infections | Spike, surge, cluster |
-| **Seasonal Ramp** | Normal early-season increase | Trend, baseline growth |
-| **Attribution** | Percentage point breakdown across causes | Root cause, decomposition |
-| **Answer Key** | True planted cause record (hidden from agents) | Ground truth, solution |
-| **Cohort** | Group of hospitals clustered by seasonal profile | Cluster (in narration), segment, group |
-| **Reveal** | Six post-Cutoff weeks overlaid on forecasts | Holdout, actuals, validation set |
-| **Workstream** | One of two demo acts (WS1 vs WS2) | Section, part, module |
-| **Start Point** | Clean branch and data state for a Workstream | Snapshot, baseline |
-| **Checkpoint** | Fallback result for an individual live step | Backup, cache |
+In compliance with `docs/agents/domain.md`, all terminology in this contract strictly conforms to [GLOSSARY.md](../GLOSSARY.md). Explicit care is taken to avoid prohibited synonyms (such as avoiding *ground truth* for Answer Key, *actuals* or *holdout* for Reveal, *cluster* or *surge* for Outbreak, and *baseline growth* or *trend* for Seasonal Ramp). The contract is neutral and contains no client-, person-, or event-specific information.
