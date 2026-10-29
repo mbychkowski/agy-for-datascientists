@@ -29,3 +29,9 @@ node_modules/
 __pycache__/
 .venv/
 .ruff_cache/
+.ipynb_checkpoints/
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+
