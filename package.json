@@ -1,0 +1,30 @@
+{
+  "name": "agy-for-datascientists",
+  "version": "1.0.0",
+  "description": "Antigravity for Data Scientists Demo",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs",
+    "test": "tests"
+  },
+  "scripts": {
+    "prepare": "husky",
+    "check": "node bin/check-glossary.js && make check",
+    "check:glossary": "node bin/check-glossary.js",
+    "test": "make test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mbychkowski/agy-for-datascientists.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/mbychkowski/agy-for-datascientists/issues"
+  },
+  "homepage": "https://github.com/mbychkowski/agy-for-datascientists#readme",
+  "devDependencies": {
+    "husky": "^9.1.7"
+  }
+}
