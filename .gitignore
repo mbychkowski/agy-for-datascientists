@@ -10,7 +10,6 @@ demo.env
 # Personal agent setup for building this repo (not part of the demo)
 .agents/skills/
 skills-lock.json
-/AGENTS.md
 .vscode/
 
 # Data Agent Kit workspace skill install (Google Cloud Software License; install via DAK)
@@ -29,3 +28,4 @@ node_modules/
 # Python
 __pycache__/
 .venv/
+.ruff_cache/
