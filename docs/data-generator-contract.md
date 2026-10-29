@@ -312,4 +312,4 @@ The transport mechanism (e.g., whether files are staged to an ingestion GCS buck
 
 ## 8. Glossary Vocabulary and Neutrality
 
-In compliance with `docs/agents/domain.md`, all terminology in this contract strictly conforms to [GLOSSARY.md](../GLOSSARY.md). Explicit care is taken to avoid prohibited synonyms (such as avoiding *ground truth* for Answer Key, *actuals* or *holdout* for Reveal, *cluster* or *surge* for Outbreak, and *baseline growth* or *trend* for Seasonal Ramp). The contract is neutral and contains no client-, person-, or event-specific information.
+In compliance with `docs/agents/domain.md`, all terminology in this contract strictly conforms to [GLOSSARY.md](../GLOSSARY.md). Explicit care is taken to avoid prohibited synonyms (such as avoiding *ground truth* for Answer Key, *actuals* or *holdout* for Reveal, *cluster* or *surge* for Outbreak, and *baseline growth* or *trend* for Seasonal Ramp). The contract is neutral and contains no client-, person-, or event-specific information. <!-- glossary-ignore -->
