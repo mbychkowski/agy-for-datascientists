@@ -9,7 +9,13 @@ check: check-glossary
 			*) bash -n "$$f" ;; \
 		esac; \
 	done; fi
-	@if [ -d tests ]; then python3 -m py_compile tests/*.py; fi
+	@if command -v ruff >/dev/null 2>&1; then \
+		ruff check . && ruff format --check .; \
+	elif [ -x /opt/uv/uvx ]; then \
+		/opt/uv/uvx ruff check . && /opt/uv/uvx ruff format --check .; \
+	elif [ -d tests ]; then \
+		python3 -m py_compile tests/*.py; \
+	fi
 
 check-glossary:
 	@node bin/check-glossary.js
