@@ -1,6 +1,9 @@
 # Private brief: contains client-identifying details. Delete before first push.
 PROBLEM.md
 
+# Agent workspace for parallel issue triaging
+.worktree
+
 # Per-user environment (copy from demo.env.example)
 demo.env
 
