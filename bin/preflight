@@ -1,0 +1,301 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# Antigravity Command Center Preflight Check
+#
+# Validates environment configuration, GCP project pinning, ADC identity,
+# and system prerequisites before running the live demo.
+# ==============================================================================
+
+set -uo pipefail
+
+# Resolve real script directory through any symlinks
+SOURCE="${BASH_SOURCE[0]}"
+while [[ -h "${SOURCE}" ]]; do
+    DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
+    SOURCE="$(readlink "${SOURCE}")"
+    [[ "${SOURCE}" != /* ]] && SOURCE="${DIR}/${SOURCE}"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+# Color formatting if connected to a terminal
+if [[ -t 1 ]]; then
+    COLOR_GREEN="\033[0;32m"
+    COLOR_RED="\033[0;31m"
+    COLOR_YELLOW="\033[0;33m"
+    COLOR_BOLD="\033[1m"
+    COLOR_RESET="\033[0m"
+else
+    COLOR_GREEN=""
+    COLOR_RED=""
+    COLOR_YELLOW=""
+    COLOR_BOLD=""
+    COLOR_RESET=""
+fi
+
+ENV_FILE="${REPO_ROOT}/demo.env"
+CHECKS_PASSED=0
+CHECKS_FAILED=0
+FAILED_MESSAGES=()
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --env|-e)
+            ENV_FILE="$2"
+            shift 2
+            ;;
+        --help|-h)
+            echo "Usage: ./preflight [OPTIONS]"
+            echo ""
+            echo "Options:"
+            echo "  -e, --env <path>   Path to environment file (default: demo.env)"
+            echo "  -h, --help         Show this help message"
+            exit 0
+            ;;
+        *)
+            echo "Unknown argument: $1" >&2
+            exit 1
+            ;;
+    esac
+done
+
+# Run a check function and record pass/fail
+run_check() {
+    local title="$1"
+    local check_fn="$2"
+    shift 2
+
+    local output
+    if output=$("$check_fn" "$@" 2>&1); then
+        printf "${COLOR_GREEN}[PASS]${COLOR_RESET} %s\n" "${title}"
+        ((CHECKS_PASSED++))
+    else
+        printf "${COLOR_RED}[FAIL]${COLOR_RESET} %s\n" "${title}"
+        if [[ -n "${output}" ]]; then
+            while IFS= read -r line; do
+                printf "       %s\n" "${line}"
+            done <<< "${output}"
+        fi
+        ((CHECKS_FAILED++))
+        FAILED_MESSAGES+=("${title}")
+    fi
+}
+
+# ------------------------------------------------------------------------------
+# Check 1: Environment File Existence & Loading
+# ------------------------------------------------------------------------------
+check_env_file_exists() {
+    if [[ ! -f "${ENV_FILE}" ]]; then
+        echo "Environment file not found: ${ENV_FILE}"
+        echo "Copy demo.env.example to demo.env and configure your environment:"
+        echo "  cp demo.env.example demo.env"
+        return 1
+    fi
+    return 0
+}
+
+# ------------------------------------------------------------------------------
+# Check 2: Environment Variables & Overrides
+# ------------------------------------------------------------------------------
+check_env_variables() {
+    if [[ ! -f "${ENV_FILE}" ]]; then
+        echo "Environment file missing: ${ENV_FILE}"
+        return 1
+    fi
+
+    # Source the environment file
+    # shellcheck disable=SC1090
+    source "${ENV_FILE}"
+
+    # Verify required core variables are set and not empty
+    local required_core=("PROJECT_ID" "REGION" "STAGING_BUCKET" "STATE_BUCKET")
+    for var in "${required_core[@]}"; do
+        if [[ -z "${!var:-}" ]]; then
+            echo "Required variable '${var}' is unset or empty in ${ENV_FILE}"
+            return 1
+        fi
+        # Check for unconfigured placeholders
+        if [[ "${!var}" == *"your-"* ]] || [[ "${!var}" == "your-project-id" ]]; then
+            echo "Variable '${var}' contains placeholder value '${!var}'."
+            echo "Please set real Google Cloud project and bucket names in ${ENV_FILE}."
+            return 1
+        fi
+    done
+
+    # Verify required overrides are exported and match core variables
+    local overrides=(
+        "CLOUDSDK_CORE_PROJECT:${PROJECT_ID}"
+        "CLOUDSDK_COMPUTE_REGION:${REGION}"
+        "GOOGLE_CLOUD_PROJECT:${PROJECT_ID}"
+        "GOOGLE_CLOUD_QUOTA_PROJECT:${PROJECT_ID}"
+        "TF_VAR_project_id:${PROJECT_ID}"
+        "TF_VAR_region:${REGION}"
+        "TF_VAR_staging_bucket:${STAGING_BUCKET}"
+        "TF_VAR_state_bucket:${STATE_BUCKET}"
+    )
+    for entry in "${overrides[@]}"; do
+        local var_name="${entry%%:*}"
+        local expected_val="${entry#*:}"
+        local actual_val="${!var_name:-}"
+        if [[ "${actual_val}" != "${expected_val}" ]]; then
+            echo "${var_name} ('${actual_val}') does not match expected value ('${expected_val}')"
+            return 1
+        fi
+        if ! declare -p "${var_name}" 2>/dev/null | grep -q -- "-x"; then
+            echo "${var_name} is set but not exported. Ensure 'export ${var_name}' is in ${ENV_FILE}"
+            return 1
+        fi
+    done
+
+    return 0
+}
+
+# ------------------------------------------------------------------------------
+# Check 3: Active gcloud Project Pinning
+# ------------------------------------------------------------------------------
+check_active_gcloud_project() {
+    if ! command -v gcloud >/dev/null 2>&1; then
+        echo "gcloud CLI is not installed or not in PATH."
+        return 1
+    fi
+
+    if [[ -z "${PROJECT_ID:-}" ]] || [[ "${PROJECT_ID}" == *"your-"* ]]; then
+        echo "PROJECT_ID is unset or contains placeholder value in ${ENV_FILE}."
+        return 1
+    fi
+
+    # Read the active configuration's project property, ignoring any environment overrides
+    local active_project
+    active_project=$(env -u CLOUDSDK_CORE_PROJECT gcloud config configurations list --filter="is_active=true" --format="value(properties.core.project)" 2>/dev/null || true)
+
+    if [[ -z "${active_project}" ]]; then
+        echo "No active gcloud project configured."
+        echo "Run: gcloud config set project ${PROJECT_ID}"
+        return 1
+    fi
+
+    if [[ "${active_project}" != "${PROJECT_ID}" ]]; then
+        echo "Active gcloud project ('${active_project}') does not match environment file PROJECT_ID ('${PROJECT_ID}')."
+        echo "Run: gcloud config set project ${PROJECT_ID}"
+        return 1
+    fi
+
+    # Check active compute region if configured in gcloud
+    local active_region
+    active_region=$(env -u CLOUDSDK_COMPUTE_REGION gcloud config configurations list --filter="is_active=true" --format="value(properties.compute.region)" 2>/dev/null || true)
+    if [[ -n "${active_region}" ]] && [[ "${active_region}" != "${REGION}" ]]; then
+        echo "Active gcloud compute/region ('${active_region}') does not match environment file REGION ('${REGION}')."
+        echo "Run: gcloud config set compute/region ${REGION}"
+        return 1
+    fi
+
+    return 0
+}
+
+# ------------------------------------------------------------------------------
+# Check 4: ADC Quota Project Pinning & Validity
+# ------------------------------------------------------------------------------
+check_adc_quota_project() {
+    if ! command -v gcloud >/dev/null 2>&1; then
+        echo "gcloud CLI is not installed or not in PATH."
+        return 1
+    fi
+
+    if [[ -z "${PROJECT_ID:-}" ]] || [[ "${PROJECT_ID}" == *"your-"* ]]; then
+        echo "PROJECT_ID is unset or contains placeholder value in ${ENV_FILE}."
+        return 1
+    fi
+
+    local adc_file="${GOOGLE_APPLICATION_CREDENTIALS:-${CLOUDSDK_CONFIG:-$HOME/.config/gcloud}/application_default_credentials.json}"
+    if [[ ! -f "${adc_file}" ]]; then
+        echo "Application Default Credentials (ADC) file not found at: ${adc_file}"
+        echo "Run: gcloud auth application-default login"
+        return 1
+    fi
+
+    # Extract quota_project_id from ADC JSON
+    local adc_quota
+    adc_quota=$(python3 -c "
+import json, sys
+try:
+    with open('${adc_file}') as f:
+        data = json.load(f)
+    print(data.get('quota_project_id', ''))
+except Exception as e:
+    sys.exit(1)
+" 2>/dev/null || true)
+
+    if [[ -z "${adc_quota}" ]]; then
+        echo "No quota_project_id configured in ADC credentials (${adc_file})."
+        echo "Run: gcloud auth application-default set-quota-project ${PROJECT_ID}"
+        return 1
+    fi
+
+    if [[ "${adc_quota}" != "${PROJECT_ID}" ]]; then
+        echo "ADC quota project ('${adc_quota}') does not match environment file PROJECT_ID ('${PROJECT_ID}')."
+        echo "A mismatched quota project is the cause of BigQuery MCP's opaque Forbidden errors."
+        echo "Run: gcloud auth application-default set-quota-project ${PROJECT_ID}"
+        return 1
+    fi
+
+    # Check whether the quota project is active or stale/deleted
+    local project_state
+    if ! project_state=$(gcloud projects describe "${adc_quota}" --project "${PROJECT_ID}" --format="value(lifecycleState)" 2>&1); then
+        echo "ADC quota project ('${adc_quota}') is inaccessible, stale, or deleted."
+        echo "A stale or deleted quota project is the cause of BigQuery MCP's opaque Forbidden errors."
+        echo "Error details: ${project_state}"
+        echo "Verify that project '${adc_quota}' exists and is accessible to your account, or update PROJECT_ID in ${ENV_FILE}."
+        return 1
+    fi
+
+    if [[ "${project_state}" != "ACTIVE" ]]; then
+        echo "ADC quota project ('${adc_quota}') lifecycle state is '${project_state}' (expected ACTIVE)."
+        echo "A stale or deleted quota project is the cause of BigQuery MCP's opaque Forbidden errors."
+        echo "Verify that project '${adc_quota}' is active in Google Cloud Console."
+        return 1
+    fi
+
+    return 0
+}
+
+# ------------------------------------------------------------------------------
+# Main Preflight Runner
+# ------------------------------------------------------------------------------
+main() {
+    echo "=================================================="
+    echo "       Command Center Preflight Verification      "
+    echo "=================================================="
+    echo "Environment file: ${ENV_FILE}"
+    echo ""
+
+    # Check 1: File exists
+    run_check "Environment file exists" check_env_file_exists
+
+    # Sourcing environment file if present
+    if [[ -f "${ENV_FILE}" ]]; then
+        # shellcheck disable=SC1090
+        source "${ENV_FILE}"
+    fi
+
+    # Check 2: Environment variables and exported overrides
+    run_check "Environment variables and overrides configured" check_env_variables
+
+    # Check 3: Active gcloud project and region pinning
+    run_check "Active gcloud project and region match environment" check_active_gcloud_project
+
+    # Check 4: ADC quota project pinning and validity
+    run_check "ADC quota project matches PROJECT_ID and is active" check_adc_quota_project
+
+    echo ""
+    echo "--------------------------------------------------"
+    echo "Summary: ${CHECKS_PASSED} passed, ${CHECKS_FAILED} failed."
+    echo "--------------------------------------------------"
+
+    if [[ ${CHECKS_FAILED} -gt 0 ]]; then
+        exit 1
+    fi
+    exit 0
+}
+
+main "$@"
