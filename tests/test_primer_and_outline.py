@@ -18,16 +18,16 @@ TOPICS = [
     "WAPE",
 ]
 
-AVOID_TERMS = [
-    (r"copilot", "Command Center"),
-    (r"chatbot", "Command Center"),
-    (r"hit[- ]rate", "Positivity"),
-    (r"positive[- ]rate", "Positivity"),
-    (r"as-of date", "Cutoff"),
-    (r"root[- ]cause", "Attribution"),
-    (r"validation set", "Reveal"),
-    (r"\bholdout\b", "Reveal"),
-    (r"\bsnapshot\b", "Start Point"),
+AVOID_TERMS = [  # glossary-ignore
+    (r"copilot", "Command Center"),  # glossary-ignore
+    (r"chatbot", "Command Center"),  # glossary-ignore
+    (r"hit[- ]rate", "Positivity"),  # glossary-ignore
+    (r"positive[- ]rate", "Positivity"),  # glossary-ignore
+    (r"as-of date", "Cutoff"),  # glossary-ignore
+    (r"root[- ]cause", "Attribution"),  # glossary-ignore
+    (r"validation set", "Reveal"),  # glossary-ignore
+    (r"\bholdout\b", "Reveal"),  # glossary-ignore
+    (r"\bsnapshot\b", "Start Point"),  # glossary-ignore
 ]
 
 FORBIDDEN_ID_PATTERNS = [
@@ -70,9 +70,7 @@ class TestPrimerAndOutline(unittest.TestCase):
             )
 
         # Check that Q&A-ready answers exist in the primer
-        qa_matches = re.findall(
-            r"(?:Q&A|Question|Answer)", content, re.IGNORECASE
-        )
+        qa_matches = re.findall(r"(?:Q&A|Question|Answer)", content, re.IGNORECASE)
         self.assertGreaterEqual(
             len(qa_matches),
             len(TOPICS),
