@@ -260,6 +260,86 @@ except Exception as e:
 }
 
 # ------------------------------------------------------------------------------
+# Check 5: Dataproc Serverless Runtime 3.0 Hello-World Batch Writes to BigQuery
+# ------------------------------------------------------------------------------
+check_dataproc_hello_world_batch() {
+    if ! command -v gcloud >/dev/null 2>&1; then
+        echo "gcloud CLI is not installed or not in PATH."
+        return 1
+    fi
+
+    if ! command -v bq >/dev/null 2>&1; then
+        echo "bq CLI is not installed or not in PATH."
+        return 1
+    fi
+
+    if [[ -z "${PROJECT_ID:-}" ]] || [[ "${PROJECT_ID}" == *"your-"* ]]; then
+        echo "PROJECT_ID is unset or contains placeholder value in ${ENV_FILE}."
+        echo "Configure PROJECT_ID in ${ENV_FILE} and run: terraform -chdir=infra apply"
+        return 1
+    fi
+
+    if [[ -z "${REGION:-}" ]] || [[ "${REGION}" == *"your-"* ]]; then
+        echo "REGION is unset or contains placeholder value in ${ENV_FILE}."
+        return 1
+    fi
+
+    if [[ -z "${STAGING_BUCKET:-}" ]] || [[ "${STAGING_BUCKET}" == *"your-"* ]]; then
+        echo "STAGING_BUCKET is unset or contains placeholder value in ${ENV_FILE}."
+        echo "Configure STAGING_BUCKET in ${ENV_FILE} and run: terraform -chdir=infra apply"
+        return 1
+    fi
+
+    local hello_script="${REPO_ROOT}/bin/dataproc_hello_world.py"
+    if [[ ! -f "${hello_script}" ]]; then
+        echo "Dataproc hello-world script not found at: ${hello_script}"
+        return 1
+    fi
+
+    local subnet_target="${SUBNET:-demo-dataproc-subnet}"
+    local batch_id="${PREFLIGHT_BATCH_ID:-preflight-hello-$$}"
+    local temp_table="${PREFLIGHT_HELLO_TABLE:-_preflight_hello_$$}"
+    local shielded_props="spark.dataproc.ShieldedVm.enableSecureBoot=true,spark.dataproc.ShieldedVm.enableVtpm=true,spark.dataproc.ShieldedVm.enableIntegrityMonitoring=true"
+
+    cleanup_hello_world() {
+        bq rm -f -t --project_id="${PROJECT_ID}" --location="${REGION}" "${PROJECT_ID}:ops.${temp_table}" >/dev/null 2>&1 || true
+        gcloud dataproc batches delete "${batch_id}" --project="${PROJECT_ID}" --region="${REGION}" --quiet >/dev/null 2>&1 || true
+    }
+
+    local submit_out
+    if ! submit_out=$(gcloud dataproc batches submit pyspark "${hello_script}" \
+        --project="${PROJECT_ID}" \
+        --region="${REGION}" \
+        --batch="${batch_id}" \
+        --version="3.0" \
+        --deps-bucket="gs://${STAGING_BUCKET}" \
+        --subnet="${subnet_target}" \
+        --properties="${shielded_props}" \
+        -- \
+        --project-id "${PROJECT_ID}" \
+        --dataset "ops" \
+        --table "${temp_table}" \
+        --staging-bucket "${STAGING_BUCKET}" 2>&1); then
+        echo "Dataproc Serverless runtime 3.0 hello-world batch failed to execute."
+        echo "Verify that Terraform has been applied ('terraform -chdir=infra apply'), Private Google Access is enabled on '${subnet_target}', and Shielded VM org policy constraints are satisfied."
+        echo "Error details: ${submit_out}"
+        cleanup_hello_world
+        return 1
+    fi
+
+    local bq_out
+    if ! bq_out=$(bq show --project_id="${PROJECT_ID}" --location="${REGION}" "${PROJECT_ID}:ops.${temp_table}" 2>&1); then
+        echo "Dataproc hello-world batch completed, but verification table '${PROJECT_ID}:ops.${temp_table}' was not found in BigQuery."
+        echo "Error details: ${bq_out}"
+        cleanup_hello_world
+        return 1
+    fi
+
+    cleanup_hello_world
+    return 0
+}
+
+# ------------------------------------------------------------------------------
 # Main Preflight Runner
 # ------------------------------------------------------------------------------
 main() {
@@ -286,6 +366,9 @@ main() {
 
     # Check 4: ADC quota project pinning and validity
     run_check "ADC quota project matches PROJECT_ID and is active" check_adc_quota_project
+
+    # Check 5: Dataproc Serverless runtime 3.0 hello-world batch writing to BigQuery
+    run_check "Dataproc Serverless runtime 3.0 hello-world batch writes to BigQuery" check_dataproc_hello_world_batch
 
     echo ""
     echo "--------------------------------------------------"

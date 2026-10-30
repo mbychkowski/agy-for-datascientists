@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# Bootstrap Dedicated Terraform State Bucket & Initialize Backend
+#
+# Creates gs://${STATE_BUCKET} in ${PROJECT_ID} (${REGION}) if it does not
+# already exist, enables object versioning and the demo:true label, and runs
+# `terraform -chdir=infra init -backend-config="bucket=${STATE_BUCKET}"`.
+# ==============================================================================
+
+set -euo pipefail
+
+SOURCE="${BASH_SOURCE[0]}"
+while [[ -h "${SOURCE}" ]]; do
+    DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
+    SOURCE="$(readlink "${SOURCE}")"
+    [[ "${SOURCE}" != /* ]] && SOURCE="${DIR}/${SOURCE}"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+ENV_FILE="${REPO_ROOT}/demo.env"
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --env|-e)
+            ENV_FILE="$2"
+            shift 2
+            ;;
+        --help|-h)
+            echo "Usage: ./bin/bootstrap-tf-state [--env <path>]"
+            exit 0
+            ;;
+        *)
+            echo "Unknown argument: $1" >&2
+            exit 1
+            ;;
+    esac
+done
+
+if [[ ! -f "${ENV_FILE}" ]]; then
+    echo "Error: Environment file not found: ${ENV_FILE}" >&2
+    echo "Copy demo.env.example to demo.env and set PROJECT_ID, REGION, STAGING_BUCKET, and STATE_BUCKET." >&2
+    exit 1
+fi
+
+# shellcheck disable=SC1090
+source "${ENV_FILE}"
+
+for var in PROJECT_ID REGION STATE_BUCKET; do
+    if [[ -z "${!var:-}" ]] || [[ "${!var}" == *"your-"* ]]; then
+        echo "Error: Required variable '${var}' is unset or contains a placeholder in ${ENV_FILE}." >&2
+        exit 1
+    fi
+done
+
+echo "Checking dedicated Terraform state bucket gs://${STATE_BUCKET} in project ${PROJECT_ID} (${REGION})..."
+if ! gcloud storage buckets describe "gs://${STATE_BUCKET}" --project="${PROJECT_ID}" >/dev/null 2>&1; then
+    echo "Creating dedicated state bucket gs://${STATE_BUCKET}..."
+    gcloud storage buckets create "gs://${STATE_BUCKET}" \
+        --project="${PROJECT_ID}" \
+        --location="${REGION}" \
+        --uniform-bucket-level-access \
+        --pap=enforced
+fi
+
+echo "Applying versioning and demo:true label to gs://${STATE_BUCKET}..."
+gcloud storage buckets update "gs://${STATE_BUCKET}" \
+    --project="${PROJECT_ID}" \
+    --versioning \
+    --update-labels="demo=true" >/dev/null
+
+echo "Initializing Terraform backend in ${REPO_ROOT}/infra..."
+terraform -chdir="${REPO_ROOT}/infra" init -reconfigure -backend-config="bucket=${STATE_BUCKET}"
+echo "Terraform state backend ready in gs://${STATE_BUCKET}."

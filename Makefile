@@ -6,6 +6,7 @@ check: check-glossary
 		[ -f "$$f" ] || continue; \
 		case "$$f" in \
 			*.js) node --check "$$f" ;; \
+			*.py) python3 -m py_compile "$$f" ;; \
 			*) bash -n "$$f" ;; \
 		esac; \
 	done; fi
