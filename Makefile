@@ -14,7 +14,7 @@ check: check-glossary
 	elif [ -x /opt/uv/uvx ]; then \
 		/opt/uv/uvx ruff check . && /opt/uv/uvx ruff format --check .; \
 	elif [ -d tests ]; then \
-		python3 -m py_compile tests/*.py; \
+		python3 -m py_compile tests/*.py lib/*.py; \
 	fi
 
 check-glossary:

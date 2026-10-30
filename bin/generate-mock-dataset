@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# Generate Deterministic Mock Dataset
+#
+# Wrapper around lib/mock_dataset_generator.py that defaults to writing the
+# in-repo test fixtures (fixtures/mock_dataset and fixtures/mock_withheld)
+# when --output-dir / --withheld-dir are not explicitly provided.
+# ==============================================================================
+
+set -euo pipefail
+
+# Resolve real script directory through any symlinks
+SOURCE="${BASH_SOURCE[0]}"
+while [[ -h "${SOURCE}" ]]; do
+    DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
+    SOURCE="$(readlink "${SOURCE}")"
+    [[ "${SOURCE}" != /* ]] && SOURCE="${DIR}/${SOURCE}"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+HAS_OUTPUT_DIR=0
+HAS_WITHHELD_DIR=0
+for arg in "$@"; do
+    case "${arg}" in
+        --output-dir|--output-dir=*)
+            HAS_OUTPUT_DIR=1
+            ;;
+        --withheld-dir|--withheld-dir=*)
+            HAS_WITHHELD_DIR=1
+            ;;
+        --help|-h)
+            exec python3 "${REPO_ROOT}/lib/mock_dataset_generator.py" --help
+            ;;
+    esac
+done
+
+DEFAULT_ARGS=()
+if [[ ${HAS_OUTPUT_DIR} -eq 0 ]]; then
+    DEFAULT_ARGS+=(--output-dir "${REPO_ROOT}/fixtures/mock_dataset")
+fi
+if [[ ${HAS_WITHHELD_DIR} -eq 0 ]]; then
+    DEFAULT_ARGS+=(--withheld-dir "${REPO_ROOT}/fixtures/mock_withheld")
+fi
+
+exec python3 "${REPO_ROOT}/lib/mock_dataset_generator.py" ${DEFAULT_ARGS[@]+"${DEFAULT_ARGS[@]}"} "$@"

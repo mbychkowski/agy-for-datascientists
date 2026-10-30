@@ -1,0 +1,70 @@
+{
+  "contract_version": "1.0",
+  "seed": 42,
+  "scale": "mini",
+  "evaluation_window": {
+    "target_region": "Northeast",
+    "baseline_week_start": "2026-10-18",
+    "baseline_week_end": "2026-10-24",
+    "spike_week_start": "2026-10-25",
+    "spike_week_end": "2026-10-31",
+    "headline_spike_pct": 35.0
+  },
+  "attribution": [
+    {
+      "cause": "pipeline_defect",
+      "target_points": 15.0,
+      "affected_hospitals": [
+        "HOSP_NE_003",
+        "HOSP_NE_007",
+        "HOSP_NE_011",
+        "HOSP_NE_014"
+      ],
+      "date_range": {
+        "start": "2026-10-26",
+        "end": "2026-10-30"
+      },
+      "manifestation": "Re-sent backfill duplicate feeds with identical counts and later ingested_at"
+    },
+    {
+      "cause": "sampling_artifact",
+      "target_points": 8.0,
+      "affected_hospitals": [
+        "HOSP_NE_002",
+        "HOSP_NE_005",
+        "HOSP_NE_009"
+      ],
+      "date_range": {
+        "start": "2026-10-25",
+        "end": "2026-10-31"
+      },
+      "manifestation": "Testing volume increased ~48% with Positivity remaining flat"
+    },
+    {
+      "cause": "outbreak",
+      "target_points": 7.0,
+      "affected_hospitals": [
+        "HOSP_NE_001",
+        "HOSP_NE_004",
+        "HOSP_NE_006"
+      ],
+      "date_range": {
+        "start": "2026-10-25",
+        "end": "2026-10-31"
+      },
+      "manifestation": "Positivity jumped from 6% to 16.3% with stable testing volume"
+    },
+    {
+      "cause": "seasonal_ramp",
+      "target_points": 5.0,
+      "affected_hospitals": [
+        "*"
+      ],
+      "date_range": {
+        "start": "2026-10-25",
+        "end": "2026-10-31"
+      },
+      "manifestation": "Normal early-season rise across all regions"
+    }
+  ]
+}
