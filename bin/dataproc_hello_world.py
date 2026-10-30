@@ -9,7 +9,7 @@ import argparse
 from datetime import UTC, datetime
 
 
-def parse_args(argv=None):
+def parse_args():
     parser = argparse.ArgumentParser(
         description="Dataproc Serverless hello-world BigQuery write check"
     )
@@ -25,11 +25,11 @@ def parse_args(argv=None):
         required=True,
         help="GCS staging bucket for the Spark BigQuery connector",
     )
-    return parser.parse_args(argv)
+    return parser.parse_args()
 
 
-def main(argv=None):
-    args = parse_args(argv)
+def main():
+    args = parse_args()
     from pyspark.sql import SparkSession
 
     spark = SparkSession.builder.appName("preflight-dataproc-hello-world").getOrCreate()

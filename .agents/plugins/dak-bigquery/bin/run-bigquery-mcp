@@ -66,6 +66,7 @@ export PROJECT_ID
 export GOOGLE_CLOUD_PROJECT="${PROJECT_ID}"
 export GOOGLE_CLOUD_QUOTA_PROJECT="${PROJECT_ID}"
 export BILLING_QUOTA_PROJECT_ID="${PROJECT_ID}"
+export GOOGLE_APPLICATION_CREDENTIALS="${GOOGLE_APPLICATION_CREDENTIALS:-${CLOUDSDK_CONFIG:-$HOME/.config/gcloud}/application_default_credentials.json}"
 export X_GOOG_PROXY_HEADERS="${X_GOOG_PROXY_HEADERS:-{\"User-Agent\":\"datacloud.antigravity\"}}"
 
 # Ensure the proxy authenticates via presenter user ADC rather than IDE extension cache
@@ -76,6 +77,7 @@ if [[ "${PRINT_ENV}" == "true" ]]; then
     echo "GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT}"
     echo "GOOGLE_CLOUD_QUOTA_PROJECT=${GOOGLE_CLOUD_QUOTA_PROJECT}"
     echo "BILLING_QUOTA_PROJECT_ID=${BILLING_QUOTA_PROJECT_ID}"
+    echo "GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS}"
     echo "PROXY_BUNDLE=${PROXY_BUNDLE}"
     echo "ENDPOINT=${ENDPOINT}"
     exit 0

@@ -4,9 +4,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-WORKTREE_ROOT = Path(__file__).resolve().parent.parent
-PREFLIGHT_BIN = WORKTREE_ROOT / "bin" / "preflight"
-PREFLIGHT_SYMLINK = WORKTREE_ROOT / "preflight"
+from tests.helpers import (
+    PREFLIGHT_BIN,
+    PREFLIGHT_SYMLINK,
+    WORKTREE_ROOT,
+    setup_preflight_test_env,
+)
 
 
 class TestEnvironmentTemplate(unittest.TestCase):
@@ -130,113 +133,13 @@ class TestPreflightCLI(unittest.TestCase):
         finally:
             os.remove(tmp_env_path)
 
-    def _create_env_file(
-        self,
-        tmpdir,
-        project_id="test-demo-project",
-        region="us-central1",
-        exported=True,
-    ):
-        if exported:
-            export_lines = """
-export PROJECT_ID
-export REGION
-export STAGING_BUCKET
-export STATE_BUCKET
-export SUBNET
-
-export CLOUDSDK_CORE_PROJECT="${PROJECT_ID}"
-export CLOUDSDK_COMPUTE_REGION="${REGION}"
-export GOOGLE_CLOUD_PROJECT="${PROJECT_ID}"
-export GOOGLE_CLOUD_QUOTA_PROJECT="${PROJECT_ID}"
-export TF_VAR_project_id="${PROJECT_ID}"
-export TF_VAR_region="${REGION}"
-export TF_VAR_staging_bucket="${STAGING_BUCKET}"
-export TF_VAR_state_bucket="${STATE_BUCKET}"
-export TF_VAR_subnet="${SUBNET}"
-"""
-        else:
-            export_lines = """
-CLOUDSDK_CORE_PROJECT="${PROJECT_ID}"
-CLOUDSDK_COMPUTE_REGION="${REGION}"
-GOOGLE_CLOUD_PROJECT="${PROJECT_ID}"
-GOOGLE_CLOUD_QUOTA_PROJECT="${PROJECT_ID}"
-TF_VAR_project_id="${PROJECT_ID}"
-TF_VAR_region="${REGION}"
-TF_VAR_staging_bucket="${STAGING_BUCKET}"
-TF_VAR_state_bucket="${STATE_BUCKET}"
-TF_VAR_subnet="${SUBNET}"
-"""
-        env_content = f"""
-PROJECT_ID="{project_id}"
-REGION="{region}"
-STAGING_BUCKET="test-staging-bucket"
-STATE_BUCKET="test-state-bucket"
-SUBNET=""
-{export_lines}
-"""
-        env_file = Path(tmpdir) / "demo.env"
-        env_file.write_text(env_content)
-        return env_file
-
-    def _setup_mock_gcloud_and_adc(
-        self,
-        tmpdir,
-        active_project,
-        quota_project,
-        active_region="us-central1",
-        describe_state="ACTIVE",
-        describe_fails=False,
-    ):
-        bin_dir = Path(tmpdir) / "bin"
-        bin_dir.mkdir(exist_ok=True)
-        fake_gcloud = bin_dir / "gcloud"
-
-        describe_script = (
-            'echo "ERROR: project not found or deleted" >&2; exit 1'
-            if describe_fails
-            else f'echo "{describe_state}"; exit 0'
-        )
-        fake_gcloud.write_text(f"""#!/usr/bin/env bash
-if [[ "$*" == *"configurations list"* ]]; then
-    if [[ "$*" == *"properties.compute.region"* ]]; then
-        echo "{active_region}"
-    else
-        echo "{active_project}"
-    fi
-    exit 0
-fi
-if [[ "$*" == *"projects describe"* ]]; then
-    {describe_script}
-fi
-exit 0
-""")
-        fake_gcloud.chmod(0o755)
-
-        fake_bq = bin_dir / "bq"
-        fake_bq.write_text("""#!/usr/bin/env bash
-exit 0
-""")
-        fake_bq.chmod(0o755)
-
-        adc_file = Path(tmpdir) / "adc.json"
-        adc_file.write_text(
-            f'{{"type": "authorized_user", "client_id": "test-client", "client_secret": "test-secret", "refresh_token": "test-refresh", "quota_project_id": "{quota_project}"}}'
-        )
-
-        env = os.environ.copy()
-        env["PATH"] = f"{bin_dir}:{env['PATH']}"
-        env["GOOGLE_APPLICATION_CREDENTIALS"] = str(adc_file)
-        return env
-
     def test_preflight_fails_when_variable_not_exported(self):
         """preflight must fail when required variables are set but not exported."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            env_file = self._create_env_file(tmpdir, exported=False)
-            env = self._setup_mock_gcloud_and_adc(
+            env_file, env, _ = setup_preflight_test_env(
                 tmpdir,
-                active_project="test-demo-project",
-                quota_project="test-demo-project",
+                project_id="test-demo-project",
+                exported=False,
             )
 
             proc = subprocess.run(
@@ -256,9 +159,9 @@ exit 0
     def test_preflight_fails_when_gcloud_project_mismatches(self):
         """preflight must fail with clear message when active gcloud project doesn't match."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            env_file = self._create_env_file(tmpdir, project_id="expected-project")
-            env = self._setup_mock_gcloud_and_adc(
+            env_file, env, _ = setup_preflight_test_env(
                 tmpdir,
+                project_id="expected-project",
                 active_project="different-active-project",
                 quota_project="expected-project",
             )
@@ -284,11 +187,10 @@ exit 0
     def test_preflight_fails_when_gcloud_region_mismatches(self):
         """preflight must fail when active gcloud compute region doesn't match REGION."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            env_file = self._create_env_file(
-                tmpdir, project_id="expected-project", region="us-central1"
-            )
-            env = self._setup_mock_gcloud_and_adc(
+            env_file, env, _ = setup_preflight_test_env(
                 tmpdir,
+                project_id="expected-project",
+                region="us-central1",
                 active_project="expected-project",
                 active_region="us-east1",
                 quota_project="expected-project",
@@ -315,9 +217,9 @@ exit 0
     def test_preflight_fails_when_adc_quota_project_mismatches(self):
         """preflight must fail with clear message when ADC quota project doesn't match."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            env_file = self._create_env_file(tmpdir, project_id="expected-project")
-            env = self._setup_mock_gcloud_and_adc(
+            env_file, env, _ = setup_preflight_test_env(
                 tmpdir,
+                project_id="expected-project",
                 active_project="expected-project",
                 quota_project="old-stale-project",
             )
@@ -347,9 +249,9 @@ exit 0
     def test_preflight_fails_when_adc_quota_project_is_stale_or_deleted(self):
         """preflight must fail when quota project exists in ADC but is stale or deleted."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            env_file = self._create_env_file(tmpdir, project_id="stale-project")
-            env = self._setup_mock_gcloud_and_adc(
+            env_file, env, _ = setup_preflight_test_env(
                 tmpdir,
+                project_id="stale-project",
                 active_project="stale-project",
                 quota_project="stale-project",
                 describe_fails=True,
@@ -373,9 +275,9 @@ exit 0
     def test_preflight_passes_when_all_match_and_active(self):
         """preflight outputs all [PASS] and exits 0 when config, ADC, and project match and are active."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            env_file = self._create_env_file(tmpdir, project_id="demo-proj-123")
-            env = self._setup_mock_gcloud_and_adc(
+            env_file, env, _ = setup_preflight_test_env(
                 tmpdir,
+                project_id="demo-proj-123",
                 active_project="demo-proj-123",
                 quota_project="demo-proj-123",
                 describe_state="ACTIVE",
