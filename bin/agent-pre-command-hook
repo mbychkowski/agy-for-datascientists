@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# Antigravity PreToolUse Guardrail Hook for run_command
+#
+# Enforces repository constraints before shell commands execute:
+#   1. Blocks direct `git push origin main` (requires feature-branch PR flow).
+#   2. Blocks `--service-account` on `gcloud dataproc batches submit` (ADR 0002).
+#   3. Blocks invalid `spark.dataproc.ShieldedVm.*` properties on Dataproc Serverless.
+# ==============================================================================
+
+set -uo pipefail
+
+# Resolve real script directory through any symlinks (CODING_STANDARDS.md §1)
+SOURCE="${BASH_SOURCE[0]}"
+while [[ -h "${SOURCE}" ]]; do
+    DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
+    SOURCE="$(readlink "${SOURCE}")"
+    [[ "${SOURCE}" != /* ]] && SOURCE="${DIR}/${SOURCE}"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+export REPO_ROOT
+
+payload="$(cat)"
+
+python3 -c '
+import json
+import re
+import sys
+
+raw = sys.stdin.read().strip()
+if not raw:
+    print(json.dumps({"decision": "allow"}))
+    sys.exit(0)
+
+try:
+    data = json.loads(raw)
+except Exception:
+    print(json.dumps({"decision": "allow"}))
+    sys.exit(0)
+
+cmd = (
+    data.get("toolCall", {})
+    .get("args", {})
+    .get("CommandLine", "")
+)
+
+# 1. Block direct git push to main
+if re.search(r"\bgit\b[^\n;|&]*\bpush\b[^\n;|&]*\borigin\s+main(\s|$|;|&|\|)", cmd):
+    print(
+        json.dumps(
+            {
+                "decision": "deny",
+                "reason": "Direct push to main is blocked (GH006). Push a feature branch from .worktree/issue-XXX and open a PR with gh pr create.",
+            }
+        )
+    )
+    sys.exit(0)
+
+# 2. Block ADR 0002 --service-account or invalid ShieldedVm properties on Dataproc Serverless batches
+if "dataproc batches submit" in cmd:
+    if "--service-account" in cmd:
+        print(
+            json.dumps(
+                {
+                    "decision": "deny",
+                    "reason": "ADR 0002 violation: Dataproc Serverless batches must run as the presenter identity without --service-account.",
+                }
+            )
+        )
+        sys.exit(0)
+    if "spark.dataproc.ShieldedVm" in cmd:
+        print(
+            json.dumps(
+                {
+                    "decision": "deny",
+                    "reason": "Dataproc Serverless for Spark uses Shielded VMs natively and rejects spark.dataproc.ShieldedVm.* properties.",
+                }
+            )
+        )
+        sys.exit(0)
+
+print(json.dumps({"decision": "allow"}))
+' <<< "${payload}"
