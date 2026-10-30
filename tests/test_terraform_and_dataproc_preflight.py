@@ -6,9 +6,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-WORKTREE_ROOT = Path(__file__).resolve().parent.parent
+from tests.helpers import PREFLIGHT_BIN, WORKTREE_ROOT, setup_preflight_test_env
+
 INFRA_DIR = WORKTREE_ROOT / "infra"
-PREFLIGHT_BIN = WORKTREE_ROOT / "bin" / "preflight"
 BOOTSTRAP_BIN = WORKTREE_ROOT / "bin" / "bootstrap-tf-state"
 HELLO_WORLD_PY = WORKTREE_ROOT / "bin" / "dataproc_hello_world.py"
 
@@ -53,6 +53,9 @@ class TestTerraformFoundation(unittest.TestCase):
             )
         self.assertIn("subnet", var_map)
         self.assertRegex(var_map["subnet"], r'default\s*=\s*""')
+
+        outputs_tf = (INFRA_DIR / "outputs.tf").read_text()
+        self.assertIn("var.state_bucket", outputs_tf)
 
     def test_never_creates_projects_billing_folders_org_policies_or_iam(self):
         """Terraform must never create projects, billing, folders, org policies, or SA grants (ADR 0002)."""
@@ -210,94 +213,12 @@ export PROJECT_ID REGION STAGING_BUCKET STATE_BUCKET
 
 
 class TestDataprocPreflightSeam(unittest.TestCase):
-    def _setup_env_and_mocks(
-        self,
-        tmpdir,
-        subnet="",
-        batch_fails=False,
-        bq_show_fails=False,
-    ):
-        bin_dir = Path(tmpdir) / "bin"
-        bin_dir.mkdir(exist_ok=True)
-        log_file = Path(tmpdir) / "calls.log"
-
-        batch_exit = (
-            "echo 'ERROR: Shielded VM or network error' >&2; exit 1"
-            if batch_fails
-            else "exit 0"
-        )
-        fake_gcloud = bin_dir / "gcloud"
-        fake_gcloud.write_text(f"""#!/usr/bin/env bash
-echo "gcloud $*" >> "{log_file}"
-if [[ "$*" == *"configurations list"* ]]; then
-    if [[ "$*" == *"properties.compute.region"* ]]; then
-        echo "us-central1"
-    else
-        echo "demo-proj-123"
-    fi
-    exit 0
-fi
-if [[ "$*" == *"projects describe"* ]]; then
-    echo "ACTIVE"
-    exit 0
-fi
-if [[ "$*" == *"dataproc batches submit"* ]]; then
-    {batch_exit}
-fi
-exit 0
-""")
-        fake_gcloud.chmod(0o755)
-
-        bq_show_exit = (
-            "echo 'Not found: Table' >&2; exit 1" if bq_show_fails else "exit 0"
-        )
-        fake_bq = bin_dir / "bq"
-        fake_bq.write_text(f"""#!/usr/bin/env bash
-echo "bq $*" >> "{log_file}"
-if [[ "$*" == *"show"* ]]; then
-    {bq_show_exit}
-fi
-exit 0
-""")
-        fake_bq.chmod(0o755)
-
-        adc_file = Path(tmpdir) / "adc.json"
-        adc_file.write_text(
-            '{"type": "authorized_user", "client_id": "test-client", "client_secret": "test-secret", "refresh_token": "test-refresh", "quota_project_id": "demo-proj-123"}'
-        )
-
-        env_file = Path(tmpdir) / "demo.env"
-        env_file.write_text(f"""
-PROJECT_ID="demo-proj-123"
-REGION="us-central1"
-STAGING_BUCKET="demo-staging-bucket"
-STATE_BUCKET="demo-state-bucket"
-SUBNET="{subnet}"
-export PROJECT_ID REGION STAGING_BUCKET STATE_BUCKET SUBNET
-export CLOUDSDK_CORE_PROJECT="${{PROJECT_ID}}"
-export CLOUDSDK_COMPUTE_REGION="${{REGION}}"
-export GOOGLE_CLOUD_PROJECT="${{PROJECT_ID}}"
-export GOOGLE_CLOUD_QUOTA_PROJECT="${{PROJECT_ID}}"
-export TF_VAR_project_id="${{PROJECT_ID}}"
-export TF_VAR_region="${{REGION}}"
-export TF_VAR_staging_bucket="${{STAGING_BUCKET}}"
-export TF_VAR_state_bucket="${{STATE_BUCKET}}"
-export TF_VAR_subnet="${{SUBNET}}"
-""")
-
-        env = os.environ.copy()
-        env["PATH"] = f"{bin_dir}:{env['PATH']}"
-        env["GOOGLE_APPLICATION_CREDENTIALS"] = str(adc_file)
-        env["PREFLIGHT_BATCH_ID"] = "preflight-hello-test"
-        env["PREFLIGHT_HELLO_TABLE"] = "_preflight_hello_test"
-        return env_file, env, log_file
-
-    def test_dataproc_preflight_submits_runtime_3_0_as_presenter_with_shielded_vm_and_cleans_up(
+    def test_dataproc_preflight_submits_runtime_3_0_as_presenter_and_cleans_up(
         self,
     ):
-        """Preflight must submit runtime 3.0 batch with Shielded VM properties, no SA flag, verify BQ write, and clean up."""
+        """Preflight must submit runtime 3.0 batch without invalid ShieldedVm properties or SA flag, verify BQ write, and clean up."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            env_file, env, log_file = self._setup_env_and_mocks(
+            env_file, env, log_file = setup_preflight_test_env(
                 tmpdir,
                 subnet="projects/demo-proj-123/regions/us-central1/subnetworks/custom-sub",
             )
@@ -323,11 +244,8 @@ export TF_VAR_subnet="${{SUBNET}}"
                 "--subnet=projects/demo-proj-123/regions/us-central1/subnetworks/custom-sub",
                 calls,
             )
-            self.assertIn("spark.dataproc.ShieldedVm.enableSecureBoot=true", calls)
-            self.assertIn("spark.dataproc.ShieldedVm.enableVtpm=true", calls)
-            self.assertIn(
-                "spark.dataproc.ShieldedVm.enableIntegrityMonitoring=true", calls
-            )
+            self.assertNotIn("--properties", calls)
+            self.assertNotIn("ShieldedVm", calls)
             self.assertNotIn("--service-account", calls)
             self.assertIn(
                 "bq show --project_id=demo-proj-123 --location=us-central1 demo-proj-123:ops._preflight_hello_test",
@@ -345,9 +263,7 @@ export TF_VAR_subnet="${{SUBNET}}"
     def test_dataproc_preflight_fails_and_cleans_up_when_batch_fails(self):
         """Preflight must report [FAIL] and still run cleanup when batch submission fails."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            env_file, env, log_file = self._setup_env_and_mocks(
-                tmpdir, batch_fails=True
-            )
+            env_file, env, log_file = setup_preflight_test_env(tmpdir, batch_fails=True)
             proc = subprocess.run(
                 [str(PREFLIGHT_BIN), "--env", str(env_file)],
                 cwd=WORKTREE_ROOT,

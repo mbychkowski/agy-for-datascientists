@@ -61,47 +61,44 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Run a check function and record pass/fail
-run_check() {
-    local title="$1"
-    local check_fn="$2"
-    shift 2
+# Shared runner for [PASS] / [FAIL] / [WARN] checks
+_execute_check() {
+    local severity="$1"
+    local title="$2"
+    local check_fn="$3"
+    shift 3
 
     local output
     if output=$("$check_fn" "$@" 2>&1); then
         printf "${COLOR_GREEN}[PASS]${COLOR_RESET} %s\n" "${title}"
         ((CHECKS_PASSED++))
+        return 0
+    fi
+
+    if [[ "${severity}" == "WARN" ]]; then
+        printf "${COLOR_YELLOW}[WARN]${COLOR_RESET} %s\n" "${title}"
+        ((CHECKS_WARNED++))
     else
         printf "${COLOR_RED}[FAIL]${COLOR_RESET} %s\n" "${title}"
-        if [[ -n "${output}" ]]; then
-            while IFS= read -r line; do
-                printf "       %s\n" "${line}"
-            done <<< "${output}"
-        fi
         ((CHECKS_FAILED++))
         FAILED_MESSAGES+=("${title}")
     fi
+
+    if [[ -n "${output}" ]]; then
+        while IFS= read -r line; do
+            printf "       %s\n" "${line}"
+        done <<< "${output}"
+    fi
+}
+
+# Run a check function and record pass/fail
+run_check() {
+    _execute_check "FAIL" "$@"
 }
 
 # Run a warning check function (records [PASS] or [WARN] without failing preflight)
 run_warn_check() {
-    local title="$1"
-    local check_fn="$2"
-    shift 2
-
-    local output
-    if output=$("$check_fn" "$@" 2>&1); then
-        printf "${COLOR_GREEN}[PASS]${COLOR_RESET} %s\n" "${title}"
-        ((CHECKS_PASSED++))
-    else
-        printf "${COLOR_YELLOW}[WARN]${COLOR_RESET} %s\n" "${title}"
-        if [[ -n "${output}" ]]; then
-            while IFS= read -r line; do
-                printf "       %s\n" "${line}"
-            done <<< "${output}"
-        fi
-        ((CHECKS_WARNED++))
-    fi
+    _execute_check "WARN" "$@"
 }
 
 # ------------------------------------------------------------------------------
@@ -303,6 +300,7 @@ check_dataproc_hello_world_batch() {
 
     if [[ -z "${REGION:-}" ]] || [[ "${REGION}" == *"your-"* ]]; then
         echo "REGION is unset or contains placeholder value in ${ENV_FILE}."
+        echo "Configure REGION in ${ENV_FILE} and run: terraform -chdir=infra apply"
         return 1
     fi
 
@@ -321,7 +319,6 @@ check_dataproc_hello_world_batch() {
     local subnet_target="${SUBNET:-demo-dataproc-subnet}"
     local batch_id="${PREFLIGHT_BATCH_ID:-preflight-hello-$$}"
     local temp_table="${PREFLIGHT_HELLO_TABLE:-_preflight_hello_$$}"
-    local shielded_props="spark.dataproc.ShieldedVm.enableSecureBoot=true,spark.dataproc.ShieldedVm.enableVtpm=true,spark.dataproc.ShieldedVm.enableIntegrityMonitoring=true"
 
     cleanup_hello_world() {
         bq rm -f -t --project_id="${PROJECT_ID}" --location="${REGION}" "${PROJECT_ID}:ops.${temp_table}" >/dev/null 2>&1 || true
@@ -336,7 +333,6 @@ check_dataproc_hello_world_batch() {
         --version="3.0" \
         --deps-bucket="gs://${STAGING_BUCKET}" \
         --subnet="${subnet_target}" \
-        --properties="${shielded_props}" \
         -- \
         --project-id "${PROJECT_ID}" \
         --dataset "ops" \
@@ -400,14 +396,22 @@ check_bigquery_mcp_presenter_auth() {
     fi
 
     # Verify active gcloud identity is a presenter user account, not a compute service account
-    if command -v gcloud >/dev/null 2>&1; then
-        local active_account
-        active_account=$(env -u CLOUDSDK_CORE_PROJECT gcloud config configurations list --filter="is_active=true" --format="value(properties.core.account)" 2>/dev/null || true)
-        if [[ "${active_account}" == *".gserviceaccount.com" ]]; then
-            echo "Active gcloud account ('${active_account}') is a service account rather than the presenter's user identity."
-            echo "BigQuery MCP must authenticate as the presenter. Run: gcloud auth login"
-            return 1
-        fi
+    if ! command -v gcloud >/dev/null 2>&1; then
+        echo "gcloud CLI is not installed or not in PATH."
+        return 1
+    fi
+
+    local active_account
+    active_account=$(env -u CLOUDSDK_CORE_ACCOUNT -u CLOUDSDK_CORE_PROJECT gcloud config configurations list --filter="is_active=true" --format="value(properties.core.account)" 2>/dev/null || true)
+    if [[ -z "${active_account}" ]]; then
+        echo "No active gcloud account configured."
+        echo "BigQuery MCP must authenticate as the presenter. Run: gcloud auth login"
+        return 1
+    fi
+    if [[ "${active_account}" == *".gserviceaccount.com" ]]; then
+        echo "Active gcloud account ('${active_account}') is a service account rather than the presenter's user identity."
+        echo "BigQuery MCP must authenticate as the presenter. Run: gcloud auth login"
+        return 1
     fi
 
     # Inspect ADC JSON to ensure user OAuth credentials are present so mcp_proxy_bundle.cjs
@@ -439,6 +443,13 @@ if missing:
         return 1
     fi
 
+    if ! gcloud auth application-default print-access-token >/dev/null 2>&1; then
+        echo "ADC refresh token is expired or revoked and cannot mint an access token."
+        echo "When user ADC token refresh fails, mcp_proxy_bundle.cjs silently falls back to the compute metadata service account identity."
+        echo "Run: gcloud auth application-default login"
+        return 1
+    fi
+
     return 0
 }
 
@@ -457,11 +468,8 @@ check_vendored_proxy_drift() {
     local installed_proxy="${dak_dir}/mcp/bin/mcp_proxy_bundle.cjs"
 
     if [[ ! -f "${installed_proxy}" ]]; then
-        if [[ -n "${DAK_PLUGIN_DIR:-}" ]]; then
-            echo "Installed Data Agent Kit proxy not found at: ${installed_proxy}"
-            return 1
-        fi
-        return 0
+        echo "Installed Data Agent Kit proxy not found at: ${installed_proxy} (skipping SHA-256 comparison; using vendored copy)."
+        return 1
     fi
 
     local drift_msg

@@ -6,7 +6,7 @@ import subprocess
 import tempfile
 import unittest
 from collections import defaultdict
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 from lib.mock_dataset_generator import (
@@ -21,10 +21,11 @@ from lib.mock_dataset_generator import (
     REVEAL_END_DATE,
     REVEAL_START_DATE,
     SPIKE_WEEK_START,
+    _build_hospital_specs,
     generate_dataset,
 )
+from tests.helpers import WORKTREE_ROOT, setup_preflight_test_env
 
-WORKTREE_ROOT = Path(__file__).resolve().parent.parent
 GENERATE_BIN = WORKTREE_ROOT / "bin" / "generate-mock-dataset"
 LOAD_BIN = WORKTREE_ROOT / "bin" / "load-raw-ops"
 MOCK_DATASET_DIR = WORKTREE_ROOT / "fixtures" / "mock_dataset"
@@ -38,6 +39,21 @@ def _sha256(path: Path) -> str:
 def _read_csv(path: Path) -> list[dict[str, str]]:
     with path.open("r", encoding="utf-8", newline="") as f:
         return list(csv.DictReader(f))
+
+
+def _deduplicate_feeds(
+    feeds: list[dict[str, str]],
+) -> dict[tuple[str, str], dict[str, str]]:
+    """Deduplicate feeds by (hospital_id, feed_date) retaining latest (ingested_at, batch_id)."""
+    deduped: dict[tuple[str, str], dict[str, str]] = {}
+    for row in feeds:
+        key = (row["hospital_id"], row["feed_date"])
+        if key not in deduped or (row["ingested_at"], row["batch_id"]) > (
+            deduped[key]["ingested_at"],
+            deduped[key]["batch_id"],
+        ):
+            deduped[key] = row
+    return deduped
 
 
 class TestMockDatasetDeterminismAndFixtures(unittest.TestCase):
@@ -111,6 +127,32 @@ class TestMockDatasetDeterminismAndFixtures(unittest.TestCase):
                     f"Committed fixture {committed.name} drifted from seed=42 generator output",
                 )
 
+    def test_different_seeds_vary_daily_trajectories_including_controlled_windows(self):
+        """Different --seed values must vary daily counts in W42/W43/Reveal while preserving weekly invariants."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out_42 = Path(tmpdir) / "out_42"
+            wh_42 = Path(tmpdir) / "wh_42"
+            out_99 = Path(tmpdir) / "out_99"
+            wh_99 = Path(tmpdir) / "wh_99"
+            generate_dataset(
+                seed=42, scale="mini", output_dir=out_42, withheld_dir=wh_42
+            )
+            generate_dataset(
+                seed=99, scale="mini", output_dir=out_99, withheld_dir=wh_99
+            )
+
+            rev_42 = (
+                wh_42 / "reveal" / "hospital_flu_feeds_reveal" / "reveal.csv"
+            ).read_text()
+            rev_99 = (
+                wh_99 / "reveal" / "hospital_flu_feeds_reveal" / "reveal.csv"
+            ).read_text()
+            self.assertNotEqual(
+                rev_42,
+                rev_99,
+                "Reveal daily trajectories must vary across seeds while keeping weekly totals invariant",
+            )
+
     def test_adr_0001_fixture_exemption_is_documented(self):
         """fixtures/mock_withheld/README.md must explain why ADR 0001 does not apply to test fixtures."""
         readme_path = MOCK_WITHHELD_DIR / "README.md"
@@ -181,6 +223,7 @@ class TestMockDatasetStatisticalInvariants(unittest.TestCase):
             (MOCK_WITHHELD_DIR / "answer_key.json").read_text(encoding="utf-8")
         )
         cls.hosp_by_id = {h["hospital_id"]: h for h in cls.hospitals}
+        cls.deduped = _deduplicate_feeds(cls.feeds)
 
     def test_regions_and_history_span_for_backtest_and_reveal(self):
         """Must have hospitals across >= 2 regions (including Northeast) and full 2025-26 season."""
@@ -220,7 +263,6 @@ class TestMockDatasetStatisticalInvariants(unittest.TestCase):
             fdate = date.fromisoformat(fdate_str)
             self.assertTrue(BACKFILL_START_DATE <= fdate <= BACKFILL_END_DATE)
 
-            # Sort by ingested_at ASC
             ordered = sorted(rows, key=lambda r: r["ingested_at"])
             orig, dup = ordered[0], ordered[1]
             self.assertEqual(orig["total_flu_tests"], dup["total_flu_tests"])
@@ -229,7 +271,6 @@ class TestMockDatasetStatisticalInvariants(unittest.TestCase):
             self.assertEqual(dup["batch_id"], BACKFILL_BATCH_ID)
             self.assertEqual(dup["ingested_at"], BACKFILL_INGESTED_AT)
 
-        # Verify matching backfill entry in ops.pipeline_run_log
         backfill_runs = [r for r in self.run_log if r["run_type"] == "backfill"]
         self.assertEqual(len(backfill_runs), 1)
         bf = backfill_runs[0]
@@ -240,44 +281,44 @@ class TestMockDatasetStatisticalInvariants(unittest.TestCase):
         self.assertEqual(int(bf["rows_written"]), 20)
 
     def test_headline_spike_and_four_planted_causes_attribution(self):
-        """Northeast Spike must be +35.0% raw and decompose into 15 + 8 + 7 + 5 points."""
+        """Northeast Spike must be +35.0% raw and decompose into 15 + 8 + 7 + 5 points with smooth pre-W42 ramp."""
         ne_ids = {
             h["hospital_id"] for h in self.hospitals if h["region"] == "Northeast"
         }
         ak_causes = {a["cause"]: a for a in self.answer_key["attribution"]}
         sampling_ids = set(ak_causes["sampling_artifact"]["affected_hospitals"])
         outbreak_ids = set(ak_causes["outbreak"]["affected_hospitals"])
+        pipeline_ids = set(ak_causes["pipeline_defect"]["affected_hospitals"])
 
+        w41_start = BASELINE_WEEK_START - timedelta(days=7)
+        w41_end = BASELINE_WEEK_START - timedelta(days=1)
+        w41_pos_raw = 0
         w42_pos_raw = 0
         w43_pos_raw = 0
         w43_pos_clean = 0
-
-        # Track clean per-group counts in W42 and W43
-        deduped: dict[tuple[str, str], dict[str, str]] = {}
-        for row in self.feeds:
-            key = (row["hospital_id"], row["feed_date"])
-            if key not in deduped or (row["ingested_at"], row["batch_id"]) > (
-                deduped[key]["ingested_at"],
-                deduped[key]["batch_id"],
-            ):
-                deduped[key] = row
 
         for row in self.feeds:
             if row["hospital_id"] not in ne_ids:
                 continue
             d = date.fromisoformat(row["feed_date"])
             pos = int(row["positive_flu_tests"])
-            if BASELINE_WEEK_START <= d <= BASELINE_WEEK_END:
+            if w41_start <= d <= w41_end:
+                w41_pos_raw += pos
+            elif BASELINE_WEEK_START <= d <= BASELINE_WEEK_END:
                 w42_pos_raw += pos
             elif SPIKE_WEEK_START <= d <= CUTOFF_DATE:
                 w43_pos_raw += pos
+
+        # Smooth transition from W41 to W42 (~5% Seasonal Ramp, no step-function jump)
+        self.assertAlmostEqual(w41_pos_raw / w42_pos_raw, 1.0 / 1.05, delta=0.02)
 
         w42_group_pos = defaultdict(int)
         w42_group_tot = defaultdict(int)
         w43_group_pos = defaultdict(int)
         w43_group_tot = defaultdict(int)
+        pipeline_w43_by_day = defaultdict(int)
 
-        for (hid, fdate_str), row in deduped.items():
+        for (hid, fdate_str), row in self.deduped.items():
             if hid not in ne_ids:
                 continue
             d = date.fromisoformat(fdate_str)
@@ -295,6 +336,27 @@ class TestMockDatasetStatisticalInvariants(unittest.TestCase):
                 w43_pos_clean += pos
                 w43_group_pos[group] += pos
                 w43_group_tot[group] += tot
+                if hid in pipeline_ids:
+                    pipeline_w43_by_day[d] += pos
+
+        # Verify balanced weekday/weekend distribution in W43 pipeline_defect hospitals
+        weekday_avg = (
+            sum(
+                v
+                for d, v in pipeline_w43_by_day.items()
+                if BACKFILL_START_DATE <= d <= BACKFILL_END_DATE
+            )
+            / 5.0
+        )
+        weekend_avg = (
+            sum(
+                v
+                for d, v in pipeline_w43_by_day.items()
+                if d < BACKFILL_START_DATE or d > BACKFILL_END_DATE
+            )
+            / 2.0
+        )
+        self.assertAlmostEqual(weekday_avg, weekend_avg, delta=2.0)
 
         headline_spike_pct = ((w43_pos_raw - w42_pos_raw) / w42_pos_raw) * 100.0
         self.assertAlmostEqual(headline_spike_pct, 35.0, places=2)
@@ -346,8 +408,7 @@ class TestMockDatasetStatisticalInvariants(unittest.TestCase):
         )
 
     def test_simpsons_paradox_and_zero_test_day_invariants(self):
-        """Verify Simpson's paradox across Urban vs Non-Urban strata and zero-test ANSI guard."""
-        # Check zero-test rows exist for Rural hospitals
+        """Verify Simpson's paradox across Urban vs Non-Urban strata (and per hospital) and zero-test ANSI guard."""
         zero_rows = [
             r
             for r in self.feeds
@@ -358,16 +419,6 @@ class TestMockDatasetStatisticalInvariants(unittest.TestCase):
             0,
             "Dataset must include zero-test days for Spark 4 ANSI division-by-zero tests",
         )
-
-        # Deduplicate feeds
-        deduped: dict[tuple[str, str], dict[str, str]] = {}
-        for row in self.feeds:
-            key = (row["hospital_id"], row["feed_date"])
-            if key not in deduped or (row["ingested_at"], row["batch_id"]) > (
-                deduped[key]["ingested_at"],
-                deduped[key]["batch_id"],
-            ):
-                deduped[key] = row
 
         outbreak_ids = {"HOSP_NE_001", "HOSP_NE_004", "HOSP_NE_006"}
         ne_non_outbreak = {
@@ -380,7 +431,11 @@ class TestMockDatasetStatisticalInvariants(unittest.TestCase):
             "Urban": {"w42_pos": 0, "w42_tot": 0, "w43_pos": 0, "w43_tot": 0},
             "NonUrban": {"w42_pos": 0, "w42_tot": 0, "w43_pos": 0, "w43_tot": 0},
         }
-        for (hid, fdate_str), row in deduped.items():
+        per_hosp = {
+            hid: {"w42_pos": 0, "w42_tot": 0, "w43_pos": 0, "w43_tot": 0}
+            for hid in ne_non_outbreak
+        }
+        for (hid, fdate_str), row in self.deduped.items():
             if hid not in ne_non_outbreak:
                 continue
             d = date.fromisoformat(fdate_str)
@@ -390,9 +445,22 @@ class TestMockDatasetStatisticalInvariants(unittest.TestCase):
             if BASELINE_WEEK_START <= d <= BASELINE_WEEK_END:
                 strata[bucket]["w42_pos"] += pos
                 strata[bucket]["w42_tot"] += tot
+                per_hosp[hid]["w42_pos"] += pos
+                per_hosp[hid]["w42_tot"] += tot
             elif SPIKE_WEEK_START <= d <= CUTOFF_DATE:
                 strata[bucket]["w43_pos"] += pos
                 strata[bucket]["w43_tot"] += tot
+                per_hosp[hid]["w43_pos"] += pos
+                per_hosp[hid]["w43_tot"] += tot
+
+        for hid, counts in per_hosp.items():
+            r42 = counts["w42_pos"] / counts["w42_tot"]
+            r43 = counts["w43_pos"] / counts["w43_tot"]
+            self.assertGreater(
+                r43,
+                r42,
+                f"Non-Outbreak hospital {hid} Positivity must rise from W42 ({r42:.4f}) to W43 ({r43:.4f})",
+            )
 
         urban_w42_rate = strata["Urban"]["w42_pos"] / strata["Urban"]["w42_tot"]
         urban_w43_rate = strata["Urban"]["w43_pos"] / strata["Urban"]["w43_tot"]
@@ -410,13 +478,46 @@ class TestMockDatasetStatisticalInvariants(unittest.TestCase):
             strata["Urban"]["w43_tot"] + strata["NonUrban"]["w43_tot"]
         )
 
-        # Simpson's Paradox: Positivity rises in BOTH strata individually, yet DROPS in aggregate!
         self.assertGreater(urban_w43_rate, urban_w42_rate)
         self.assertGreater(nonurban_w43_rate, nonurban_w42_rate)
         self.assertLess(agg_w43_rate, agg_w42_rate)
 
     def test_four_cohort_separation_and_reveal_overshoot(self):
-        """Outbreak hospitals must be distinct on seasonal features, and uncleaned forecast must overshoot Reveal."""
+        """Empirical seasonal features must cleanly separate the 4 cohorts, and uncleaned forecast must overshoot Reveal."""
+        # 1. Compute empirical seasonal features per hospital over the 2025-2026 season (36 weeks starting 2025-09-28)
+        season_start = date(2025, 9, 28)
+        weekly_pos: dict[tuple[str, int], int] = defaultdict(int)
+        for (hid, fdate_str), row in self.deduped.items():
+            d = date.fromisoformat(fdate_str)
+            wk = (d - season_start).days // 7
+            if 0 <= wk < 36:
+                weekly_pos[(hid, wk)] += int(row["positive_flu_tests"])
+
+        specs_by_id = {s.hospital_id: s for s in _build_hospital_specs("mini")}
+        cohort_peak_weeks: dict[str, list[int]] = defaultdict(list)
+        for hid, spec in specs_by_id.items():
+            wk_series = [weekly_pos[(hid, wk)] for wk in range(36)]
+            peak_val = max(wk_series)
+            peak_wk = wk_series.index(peak_val)
+            cohort_peak_weeks[spec.archetype].append(peak_wk)
+
+        # Verify that each of the 4 cohorts (outbreak, urban_early, suburban_broad, rural_sharp)
+        # clusters into its own distinct, non-overlapping peak_arrival_week window:
+        # outbreak (~9) < urban_early (~13) < suburban_broad (~18-19) < rural_sharp (~22-23)
+        self.assertLess(
+            max(cohort_peak_weeks["outbreak"]),
+            min(cohort_peak_weeks["urban_early"]),
+        )
+        self.assertLess(
+            max(cohort_peak_weeks["urban_early"]),
+            min(cohort_peak_weeks["suburban_broad"]),
+        )
+        self.assertLess(
+            max(cohort_peak_weeks["suburban_broad"]),
+            min(cohort_peak_weeks["rural_sharp"]),
+        )
+
+        # 2. Verify uncleaned forecast visibly overshoots the 6-week Reveal
         ne_ids = {
             h["hospital_id"] for h in self.hospitals if h["region"] == "Northeast"
         }
@@ -435,7 +536,6 @@ class TestMockDatasetStatisticalInvariants(unittest.TestCase):
             and SPIKE_WEEK_START <= date.fromisoformat(r["feed_date"]) <= CUTOFF_DATE
         )
 
-        # Uncleaned weekly slope (+35% jump in W43) projected across the 6 Reveal weeks
         uncleaned_weekly_delta = w43_raw - w42_raw
         uncleaned_6wk_projection = sum(
             w43_raw + uncleaned_weekly_delta * wk for wk in range(1, 7)
@@ -462,28 +562,11 @@ class TestLoadRawOpsCLI(unittest.TestCase):
         )
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            tmp_path = Path(tmpdir)
-            env_file = tmp_path / "demo.env"
-            env_file.write_text(
-                'PROJECT_ID="test-proj-008"\n'
-                'REGION="us-central1"\n'
-                "export PROJECT_ID\n"
-                "export REGION\n",
-                encoding="utf-8",
+            env_file, env, log_file = setup_preflight_test_env(
+                tmpdir,
+                project_id="test-proj-008",
+                region="us-central1",
             )
-
-            log_file = tmp_path / "bq_calls.log"
-            bin_dir = tmp_path / "bin"
-            bin_dir.mkdir()
-            fake_bq = bin_dir / "bq"
-            fake_bq.write_text(
-                f'#!/usr/bin/env bash\necho "$*" >> "{log_file}"\nexit 0\n',
-                encoding="utf-8",
-            )
-            fake_bq.chmod(0o755)
-
-            env = os.environ.copy()
-            env["PATH"] = f"{bin_dir}:{env['PATH']}"
 
             proc = subprocess.run(
                 [

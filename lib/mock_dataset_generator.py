@@ -46,6 +46,34 @@ BACKFILL_FINISHED_AT = "2026-10-31 06:18:42 UTC"
 # so Spark 4 ANSI division-by-zero handling (Positivity IS NULL) is exercised.
 ZERO_TEST_DATES = {date(2025, 7, 15), date(2026, 7, 15)}
 
+FEED_COLUMNS = [
+    "hospital_id",
+    "feed_date",
+    "total_flu_tests",
+    "positive_flu_tests",
+    "batch_id",
+    "ingested_at",
+]
+
+
+def _make_feed_row(
+    hospital_id: str,
+    feed_date: str,
+    total_flu_tests: int,
+    positive_flu_tests: int,
+    batch_id: str,
+    ingested_at: str,
+) -> dict[str, Any]:
+    """Construct a row dictionary for raw.hospital_flu_feeds or reveal.csv."""
+    return {
+        "hospital_id": hospital_id,
+        "feed_date": feed_date,
+        "total_flu_tests": total_flu_tests,
+        "positive_flu_tests": positive_flu_tests,
+        "batch_id": batch_id,
+        "ingested_at": ingested_at,
+    }
+
 
 @dataclass(frozen=True)
 class HospitalSpec:
@@ -502,22 +530,25 @@ def _distribute_across_hospitals(total: int, count: int) -> list[int]:
 
 
 def _build_controlled_window_counts(
-    specs: list[HospitalSpec], scale: str
+    specs: list[HospitalSpec], scale: str, seed: int = 42
 ) -> dict[tuple[str, date], tuple[int, int]]:
-    """Build exact daily (total_flu_tests, positive_flu_tests) for Baseline Week (W42),
-    Spike Week (W43), and the 6-week Reveal (W44-W49).
+    """Build exact daily (total_flu_tests, positive_flu_tests) for early 2026-2027
+    season ramp (W40-W41), Baseline Week (W42), Spike Week (W43), and the 6-week
+    Reveal (W44-W49).
 
     Guarantees:
       1. Exact +35.0% Northeast Spike in W43 vs W42 raw positive counts:
          - Pipeline Defect: +15.0 percentage points (from 5 backfilled days 2026-10-26..30)
-         - Sampling Artifact: +8.0 percentage points (~48% test volume surge, flat Positivity)
+         - Sampling Artifact: +8.0 percentage points (~48% test volume expansion, flat Positivity)
          - Outbreak: +7.0 percentage points (Positivity jumps ~6.0% -> ~16.3% at stable volume)
          - Seasonal Ramp: +5.0 percentage points (~5% WoW across all hospitals)
       2. Simpson's Paradox in Northeast non-Outbreak hospitals:
          - Every individual non-Outbreak hospital's Positivity increases slightly from W42 to W43,
            yet combined non-Outbreak Northeast Positivity decreases because high-volume Urban
            hospitals (low Positivity ~4.3%) expand testing volume by ~48%.
-      3. Reveal trajectory (W44-W49):
+      3. Smooth early-season ramp (W40 -> W41 -> W42) with zero step-function discontinuity
+         and balanced weekday/weekend distribution in W43 Pipeline Defect hospitals.
+      4. Reveal trajectory (W44-W49):
          - Follows the cleaned trajectory so forecasts trained on uncleaned W43 data (+35% jump)
            visibly overshoot the Reveal.
     """
@@ -533,37 +564,39 @@ def _build_controlled_window_counts(
     # Exact weekly Northeast positive test totals in W42 (sums to 1000 * mult)
     w42_pos_sampling = 180 * mult
     w42_pos_outbreak = 42 * mult
-    w42_pos_pipeline = 420 * mult
-    w42_pos_baseline_ne = 358 * mult
+    w42_pos_pipeline = 200 * mult
+    w42_pos_baseline_ne = 578 * mult
 
     # Exact weekly Northeast total_flu_tests in W42
     w42_tot_sampling = 4200 * mult  # Positivity = 4.286%
     w42_tot_outbreak = 700 * mult  # Positivity = 6.000%
-    w42_tot_pipeline = 3500 * mult  # Positivity = 12.000%
-    w42_tot_baseline_ne = 2900 * mult  # Positivity = 12.345%
+    w42_tot_pipeline = 1680 * mult  # Positivity = 11.905%
+    w42_tot_baseline_ne = 4720 * mult  # Positivity = 12.246%
 
     # Exact weekly Northeast positive test totals in W43 (clean sums to 1200 * mult;
     # plus 150 * mult from 5-day backfill duplicate rows = 1350 * mult = +35.0%)
-    # Seasonal Ramp (+50 * mult): +9 sampling, +2 outbreak, +21 pipeline, +18 baseline_ne
+    # Seasonal Ramp (+50 * mult): +9 sampling, +2 outbreak, +10 pipeline, +29 baseline_ne
     # Sampling Artifact (+80 * mult): on sampling_specs
     # Outbreak (+70 * mult): on outbreak_specs
     w43_pos_sampling = (180 + 9 + 80) * mult  # 269 * mult
     w43_pos_outbreak = (42 + 2 + 70) * mult  # 114 * mult
-    w43_pos_pipeline = (420 + 21) * mult  # 441 * mult (of which Mon-Fri = 150 * mult)
-    w43_pos_baseline_ne = (358 + 18) * mult  # 376 * mult
+    w43_pos_pipeline = (
+        200 + 10
+    ) * mult  # 210 * mult (Mon-Fri = 150 * mult = 5/7 of 210)
+    w43_pos_baseline_ne = (578 + 29) * mult  # 607 * mult
 
     # Exact weekly Northeast total_flu_tests in W43:
     # Sampling Artifact hospitals expand volume by +48.0% (4200 -> 6216 * mult)
     # so Positivity goes from 4.286% -> 4.328% (+0.042% rise at each hospital!),
-    # while non-Urban non-outbreak hospitals expand volume by +4.0% so their Positivity
+    # while non-Urban non-outbreak hospitals expand volume by ~4.0% so their Positivity
     # ALSO rises (from 12.156% -> 12.275%), yet combined non-outbreak Positivity DROPS
-    # from 9.038% -> 8.431% (Simpson's Paradox!).
+    # from 9.038% -> 8.437% (Simpson's Paradox!).
     w43_tot_sampling = 6216 * mult  # Positivity = 269/6216 = 4.328% (> 4.286%)
     w43_tot_outbreak = 700 * mult  # Positivity = 114/700 = 16.286% (jump from 6.0%!)
-    w43_tot_pipeline = 3640 * mult  # Positivity = 441/3640 = 12.115% (> 12.000%)
-    w43_tot_baseline_ne = 3016 * mult  # Positivity = 376/3016 = 12.467% (> 12.345%)
+    w43_tot_pipeline = 1720 * mult  # Positivity = 210/1720 = 12.209% (> 11.905%)
+    w43_tot_baseline_ne = 4936 * mult  # Positivity = 607/4936 = 12.297% (> 12.246%)
 
-    daily_weights = [0.95, 1.05, 1.02, 1.00, 1.03, 0.98, 0.97]
+    base_daily_weights = [0.95, 1.05, 1.02, 1.00, 1.03, 0.98, 0.97]
     overrides: dict[tuple[str, date], tuple[int, int]] = {}
 
     def _assign_group_week(
@@ -584,16 +617,27 @@ def _build_controlled_window_counts(
         for idx, spec in enumerate(group):
             h_tot = tot_per_hosp[idx]
             h_pos = pos_per_hosp[idx]
-            day_tots = _distribute_weekly_total(h_tot, daily_weights)
+            hosp_hash = sum((i + 1) * ord(ch) for i, ch in enumerate(spec.hospital_id))
+            wk_rng = random.Random(
+                (seed * 1_000_003)
+                ^ (week_start.toordinal() * 9_973)
+                ^ (hosp_hash * 65_537)
+                ^ (idx * 313)
+            )
+            day_weights = [
+                w * (1.0 + wk_rng.uniform(-0.05, 0.05)) for w in base_daily_weights
+            ]
+            day_tots = _distribute_weekly_total(h_tot, day_weights)
             if mon_fri_per_hosp is not None:
                 mf_pos = mon_fri_per_hosp[idx]
                 weekend_pos = h_pos - mf_pos
                 sun_pos = weekend_pos // 2
                 sat_pos = weekend_pos - sun_pos
-                mf_days = _distribute_weekly_total(mf_pos, [1.0, 1.0, 1.0, 1.0, 1.0])
+                mf_weights = [1.0 + wk_rng.uniform(-0.05, 0.05) for _ in range(5)]
+                mf_days = _distribute_weekly_total(mf_pos, mf_weights)
                 day_poss = [sun_pos, *mf_days, sat_pos]
             else:
-                day_poss = _distribute_weekly_total(h_pos, daily_weights)
+                day_poss = _distribute_weekly_total(h_pos, day_weights)
 
             for d_offset in range(7):
                 cur_date = week_start + timedelta(days=d_offset)
@@ -601,6 +645,36 @@ def _build_controlled_window_counts(
                     day_tots[d_offset],
                     day_poss[d_offset],
                 )
+
+    # Assign smooth early-season ramp weeks W40 (2026-10-04..10) and W41 (2026-10-11..17)
+    # so the 2026-2027 season ramps smoothly at ~5%/wk into W42 without a step jump.
+    for pre_idx, pre_factor in enumerate((1.0 / (1.05**2), 1.0 / 1.05)):
+        pre_week_start = BASELINE_WEEK_START - timedelta(days=(2 - pre_idx) * 7)
+        pre_vol_factor = 1.0 / (1.04 ** (2 - pre_idx))
+        _assign_group_week(
+            sampling_specs,
+            pre_week_start,
+            round(w42_tot_sampling * pre_vol_factor),
+            round(w42_pos_sampling * pre_factor),
+        )
+        _assign_group_week(
+            outbreak_specs,
+            pre_week_start,
+            round(w42_tot_outbreak * pre_vol_factor),
+            round(w42_pos_outbreak * pre_factor),
+        )
+        _assign_group_week(
+            pipeline_specs,
+            pre_week_start,
+            round(w42_tot_pipeline * pre_vol_factor),
+            round(w42_pos_pipeline * pre_factor),
+        )
+        _assign_group_week(
+            baseline_ne_specs,
+            pre_week_start,
+            round(w42_tot_baseline_ne * pre_vol_factor),
+            round(w42_pos_baseline_ne * pre_factor),
+        )
 
     # Assign W42 (2026-10-18..2026-10-24)
     _assign_group_week(
@@ -621,7 +695,8 @@ def _build_controlled_window_counts(
 
     # Assign W43 (2026-10-25..2026-10-31)
     # Note: For pipeline_specs, Mon-Fri (2026-10-26..2026-10-30) positive tests sum to
-    # exactly 150 * mult so the 5-day duplicate backfill adds +150 * mult (+15.0 pts).
+    # exactly 150 * mult (5/7 of 210 * mult) so the 5-day duplicate backfill adds
+    # +150 * mult (+15.0 pts) with balanced weekday/weekend rates.
     _assign_group_week(
         sampling_specs, SPIKE_WEEK_START, w43_tot_sampling, w43_pos_sampling
     )
@@ -642,7 +717,7 @@ def _build_controlled_window_counts(
         w43_pos_baseline_ne,
     )
 
-    # Assign non-Northeast W42 and W43 with clean +5.0% Seasonal Ramp
+    # Assign non-Northeast W40, W41, W42, and W43 with clean +5.0% Seasonal Ramp
     for spec in other_specs:
         if spec.urban_rural == "Urban":
             w42_t, w42_p = 1260, 60
@@ -650,6 +725,15 @@ def _build_controlled_window_counts(
             w42_t, w42_p = 630, 40
         else:
             w42_t, w42_p = 175, 20
+        for pre_idx, pre_factor in enumerate((1.0 / (1.05**2), 1.0 / 1.05)):
+            pre_week_start = BASELINE_WEEK_START - timedelta(days=(2 - pre_idx) * 7)
+            pre_vol_factor = 1.0 / (1.04 ** (2 - pre_idx))
+            _assign_group_week(
+                [spec],
+                pre_week_start,
+                round(w42_t * pre_vol_factor),
+                round(w42_p * pre_factor),
+            )
         w43_t = round(w42_t * 1.04)
         w43_p = round(w42_p * 1.05)
         _assign_group_week([spec], BASELINE_WEEK_START, w42_t, w42_p)
@@ -658,10 +742,10 @@ def _build_controlled_window_counts(
     # Assign the 6-week Reveal (W44..W49: 2026-11-01..2026-12-12)
     # In the Reveal:
     # - No duplicate backfills occur.
-    # - Sampling Artifact temporary screening surge reverts to normal seasonal growth (+5%/wk from W42 base).
+    # - Sampling Artifact temporary screening expansion reverts to normal Seasonal Ramp (+5%/wk from W42 base).
     # - Outbreak hospitals sustain their localized outbreak trajectory (+4%/wk from W43).
     # - Pipeline Defect & Baseline hospitals continue normal +5%/wk Seasonal Ramp from clean W43.
-    # Consequently, cleanNortheast W44..W49 grows smoothly around ~1,180 -> ~1,440 (* mult),
+    # Consequently, clean Northeast W44..W49 grows smoothly around ~1,180 -> ~1,440 (* mult),
     # whereas an uncleaned forecast extrapolating the +35% jump (1,000 -> 1,350) projects
     # ~1,550 -> ~2,200 (* mult), visibly overshooting the Reveal!
     for week_idx in range(6):
@@ -669,7 +753,7 @@ def _build_controlled_window_counts(
         ramp_factor = 1.05 ** (week_idx + 1)
         outbreak_factor = 1.04 ** (week_idx + 1)
 
-        # Sampling hospitals return to normal seasonal ramp from their W42 + 5% base (189 * mult)
+        # Sampling hospitals return to normal Seasonal Ramp from their W42 + 5% base (189 * mult)
         rev_pos_sampling = round(189 * mult * ramp_factor)
         rev_tot_sampling = round(4368 * mult * (1.03 ** (week_idx + 1)))
 
@@ -677,11 +761,11 @@ def _build_controlled_window_counts(
         rev_pos_outbreak = round(w43_pos_outbreak * outbreak_factor)
         rev_tot_outbreak = round(w43_tot_outbreak * (1.02 ** (week_idx + 1)))
 
-        # Pipeline hospitals continue normal seasonal ramp from clean W43 (441 * mult)
+        # Pipeline hospitals continue normal Seasonal Ramp from clean W43 (210 * mult)
         rev_pos_pipeline = round(w43_pos_pipeline * ramp_factor)
         rev_tot_pipeline = round(w43_tot_pipeline * (1.03 ** (week_idx + 1)))
 
-        # Baseline NE hospitals continue normal seasonal ramp from W43 (376 * mult)
+        # Baseline NE hospitals continue normal Seasonal Ramp from W43 (607 * mult)
         rev_pos_base_ne = round(w43_pos_baseline_ne * ramp_factor)
         rev_tot_base_ne = round(w43_tot_baseline_ne * (1.03 ** (week_idx + 1)))
 
@@ -699,9 +783,14 @@ def _build_controlled_window_counts(
         )
 
         for spec in other_specs:
-            base_t, base_p = overrides[(spec.hospital_id, SPIKE_WEEK_START)]
-            w_t = round(base_t * 7 * (1.03 ** (week_idx + 1)))
-            w_p = round(base_p * 7 * ramp_factor)
+            if spec.urban_rural == "Urban":
+                w43_t, w43_p = round(1260 * 1.04), round(60 * 1.05)
+            elif spec.urban_rural == "Suburban":
+                w43_t, w43_p = round(630 * 1.04), round(40 * 1.05)
+            else:
+                w43_t, w43_p = round(175 * 1.04), round(20 * 1.05)
+            w_t = round(w43_t * (1.03 ** (week_idx + 1)))
+            w_p = round(w43_p * ramp_factor)
             _assign_group_week([spec], rev_week_start, w_t, w_p)
 
     return overrides
@@ -722,7 +811,7 @@ def generate_dataset(
     total_visible_days = (CUTOFF_DATE - start_date).days + 1
     total_reveal_days = (REVEAL_END_DATE - REVEAL_START_DATE).days + 1
 
-    overrides = _build_controlled_window_counts(specs, scale)
+    overrides = _build_controlled_window_counts(specs, scale, seed=seed)
 
     # 1. Build hospital_reference rows
     hospital_rows: list[dict[str, Any]] = [
@@ -758,15 +847,16 @@ def generate_dataset(
             else:
                 tot_tests, pos_tests = _historical_daily_counts(spec, cur_date, row_rng)
 
-            row = {
-                "hospital_id": spec.hospital_id,
-                "feed_date": date_str,
-                "total_flu_tests": tot_tests,
-                "positive_flu_tests": pos_tests,
-                "batch_id": scheduled_batch_id,
-                "ingested_at": scheduled_ingested_at,
-            }
-            feed_rows.append(row)
+            feed_rows.append(
+                _make_feed_row(
+                    spec.hospital_id,
+                    date_str,
+                    tot_tests,
+                    pos_tests,
+                    scheduled_batch_id,
+                    scheduled_ingested_at,
+                )
+            )
 
             # Plant duplicate backfill rows for Pipeline Defect hospitals on 2026-10-26..30
             if (
@@ -774,14 +864,14 @@ def generate_dataset(
                 and BACKFILL_START_DATE <= cur_date <= BACKFILL_END_DATE
             ):
                 duplicate_rows.append(
-                    {
-                        "hospital_id": spec.hospital_id,
-                        "feed_date": date_str,
-                        "total_flu_tests": tot_tests,
-                        "positive_flu_tests": pos_tests,
-                        "batch_id": BACKFILL_BATCH_ID,
-                        "ingested_at": BACKFILL_INGESTED_AT,
-                    }
+                    _make_feed_row(
+                        spec.hospital_id,
+                        date_str,
+                        tot_tests,
+                        pos_tests,
+                        BACKFILL_BATCH_ID,
+                        BACKFILL_INGESTED_AT,
+                    )
                 )
 
     feed_rows.extend(duplicate_rows)
@@ -834,14 +924,14 @@ def generate_dataset(
         for spec in specs:
             tot_tests, pos_tests = overrides[(spec.hospital_id, cur_date)]
             reveal_rows.append(
-                {
-                    "hospital_id": spec.hospital_id,
-                    "feed_date": date_str,
-                    "total_flu_tests": tot_tests,
-                    "positive_flu_tests": pos_tests,
-                    "batch_id": batch_id,
-                    "ingested_at": ingested_at,
-                }
+                _make_feed_row(
+                    spec.hospital_id,
+                    date_str,
+                    tot_tests,
+                    pos_tests,
+                    batch_id,
+                    ingested_at,
+                )
             )
 
     # 5. Build Answer Key JSON
@@ -929,14 +1019,7 @@ def generate_dataset(
         )
         _write_csv(
             feeds_dir / "feeds.csv",
-            [
-                "hospital_id",
-                "feed_date",
-                "total_flu_tests",
-                "positive_flu_tests",
-                "batch_id",
-                "ingested_at",
-            ],
+            FEED_COLUMNS,
             feed_rows,
         )
         _write_csv(
@@ -964,14 +1047,7 @@ def generate_dataset(
 
         _write_csv(
             reveal_dir / "reveal.csv",
-            [
-                "hospital_id",
-                "feed_date",
-                "total_flu_tests",
-                "positive_flu_tests",
-                "batch_id",
-                "ingested_at",
-            ],
+            FEED_COLUMNS,
             reveal_rows,
         )
 

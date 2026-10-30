@@ -13,6 +13,11 @@ output "staging_bucket" {
   value       = google_storage_bucket.staging.name
 }
 
+output "state_bucket" {
+  description = "Terraform state bucket name configured in demo.env."
+  value       = var.state_bucket
+}
+
 output "subnet_uri" {
   description = "Subnet URI used by Dataproc Serverless batches (either supplied var.subnet or Terraform-provisioned demo-dataproc-subnet)."
   value       = local.create_network ? google_compute_subnetwork.demo_subnet[0].id : var.subnet
