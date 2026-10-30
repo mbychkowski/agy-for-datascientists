@@ -1,0 +1,16 @@
+{
+  "command-center-guardrails": {
+    "PreToolUse": [
+      {
+        "matcher": "run_command",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "../bin/agent-pre-command-hook",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

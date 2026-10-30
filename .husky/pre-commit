@@ -1,1 +1,6 @@
-npm test
+#!/usr/bin/env bash
+set -euo pipefail
+
+uvx ruff check .
+uvx ruff format --check .
+make test
