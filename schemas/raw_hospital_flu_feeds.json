@@ -1,0 +1,38 @@
+[
+  {
+    "name": "hospital_id",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Foreign key referencing hospital_reference.hospital_id."
+  },
+  {
+    "name": "feed_date",
+    "type": "DATE",
+    "mode": "REQUIRED",
+    "description": "Observation date for the daily report (YYYY-MM-DD)."
+  },
+  {
+    "name": "total_flu_tests",
+    "type": "INT64",
+    "mode": "REQUIRED",
+    "description": "Total diagnostic flu tests administered (>= 0)."
+  },
+  {
+    "name": "positive_flu_tests",
+    "type": "INT64",
+    "mode": "REQUIRED",
+    "description": "Total flu tests returning positive (0 <= positive <= total)."
+  },
+  {
+    "name": "batch_id",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Ingestion batch identifier."
+  },
+  {
+    "name": "ingested_at",
+    "type": "TIMESTAMP",
+    "mode": "REQUIRED",
+    "description": "UTC timestamp recording when the Hospital Feed record was ingested."
+  }
+]

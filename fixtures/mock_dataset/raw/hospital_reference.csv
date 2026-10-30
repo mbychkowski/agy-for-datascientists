@@ -1,0 +1,21 @@
+hospital_id,hospital_name,region,state,urban_rural,bed_count
+HOSP_NE_001,Pine Valley Medical Center,Northeast,NY,Suburban,320
+HOSP_NE_002,Metro Boston University Hospital,Northeast,MA,Urban,950
+HOSP_NE_003,Berkshire Community Clinic,Northeast,MA,Rural,90
+HOSP_NE_004,Hudson River Regional Hospital,Northeast,NY,Suburban,280
+HOSP_NE_005,Manhattan Central Medical Center,Northeast,NY,Urban,1100
+HOSP_NE_006,Catskill Valley General,Northeast,NY,Suburban,310
+HOSP_NE_007,Adirondack Rural Health,Northeast,NY,Rural,75
+HOSP_NE_008,White Mountain Community Hospital,Northeast,NH,Rural,85
+HOSP_NE_009,Philadelphia Harbor Health,Northeast,PA,Urban,880
+HOSP_NE_010,Hartford Charter Hospital,Northeast,CT,Suburban,440
+HOSP_NE_011,Allegheny Valley Hospital,Northeast,PA,Suburban,410
+HOSP_NE_014,Champlain Regional Medical,Northeast,VT,Rural,110
+HOSP_MW_001,Great Lakes University Medical,Midwest,IL,Urban,920
+HOSP_MW_002,Prairie View Regional Hospital,Midwest,IA,Suburban,380
+HOSP_MW_003,Northwoods Rural Clinic,Midwest,WI,Rural,65
+HOSP_SO_001,Peachtree Metro Medical Center,South,GA,Urban,890
+HOSP_SO_002,Blue Ridge Community Hospital,South,NC,Suburban,360
+HOSP_SO_003,Bayou Parish Rural Health,South,LA,Rural,80
+HOSP_WE_001,Cascade Bay Medical Center,West,WA,Urban,840
+HOSP_WE_002,High Desert Community Clinic,West,NV,Rural,70

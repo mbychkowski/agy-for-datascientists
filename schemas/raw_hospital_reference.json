@@ -1,0 +1,38 @@
+[
+  {
+    "name": "hospital_id",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Unique synthetic hospital identifier."
+  },
+  {
+    "name": "hospital_name",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Synthetic facility name."
+  },
+  {
+    "name": "region",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Geographic region (Northeast, Midwest, South, West)."
+  },
+  {
+    "name": "state",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Two-letter US state postal code."
+  },
+  {
+    "name": "urban_rural",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Demographic classification (Urban, Suburban, Rural)."
+  },
+  {
+    "name": "bed_count",
+    "type": "INT64",
+    "mode": "REQUIRED",
+    "description": "Licensed bed capacity (range 50 to 1,200)."
+  }
+]

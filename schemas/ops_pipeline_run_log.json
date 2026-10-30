@@ -1,0 +1,56 @@
+[
+  {
+    "name": "run_id",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Unique execution run identifier."
+  },
+  {
+    "name": "pipeline_name",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Pipeline job name (hospital_flu_daily_ingest or hospital_flu_backfill)."
+  },
+  {
+    "name": "run_type",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Execution type: scheduled (daily cron) or backfill (re-sent / correction run)."
+  },
+  {
+    "name": "date_range_start",
+    "type": "DATE",
+    "mode": "REQUIRED",
+    "description": "Earliest observation date covered by the batch run."
+  },
+  {
+    "name": "date_range_end",
+    "type": "DATE",
+    "mode": "REQUIRED",
+    "description": "Latest observation date covered by the batch run."
+  },
+  {
+    "name": "started_at",
+    "type": "TIMESTAMP",
+    "mode": "REQUIRED",
+    "description": "UTC timestamp when the pipeline execution started."
+  },
+  {
+    "name": "finished_at",
+    "type": "TIMESTAMP",
+    "mode": "REQUIRED",
+    "description": "UTC timestamp when the pipeline execution finished."
+  },
+  {
+    "name": "status",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Run status: SUCCESS or FAILED."
+  },
+  {
+    "name": "rows_written",
+    "type": "INT64",
+    "mode": "REQUIRED",
+    "description": "Count of Hospital Feed rows appended to raw.hospital_flu_feeds."
+  }
+]

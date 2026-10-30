@@ -1,0 +1,134 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# Load Raw and Ops Tables into BigQuery
+#
+# Loads hospital_reference, hospital_flu_feeds, and pipeline_run_log into the
+# pinned project's raw and ops datasets with explicit schemas and applies the
+# 'demo:true' label to every table created.
+# ==============================================================================
+
+set -uo pipefail
+
+# Resolve real script directory through any symlinks
+SOURCE="${BASH_SOURCE[0]}"
+while [[ -h "${SOURCE}" ]]; do
+    DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
+    SOURCE="$(readlink "${SOURCE}")"
+    [[ "${SOURCE}" != /* ]] && SOURCE="${DIR}/${SOURCE}"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+ENV_FILE="${REPO_ROOT}/demo.env"
+DATASET_DIR="${REPO_ROOT}/fixtures/mock_dataset"
+
+usage() {
+    echo "Usage: bin/load-raw-ops [OPTIONS]"
+    echo ""
+    echo "Options:"
+    echo "  -e, --env <path>          Path to environment file (default: demo.env)"
+    echo "  -d, --dataset-dir <path>  Path to dataset root containing raw/ and ops/ (default: fixtures/mock_dataset)"
+    echo "  -h, --help                Show this help message"
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --env|-e)
+            ENV_FILE="$2"
+            shift 2
+            ;;
+        --dataset-dir|-d)
+            DATASET_DIR="$2"
+            shift 2
+            ;;
+        --help|-h)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "Unknown argument: $1" >&2
+            usage >&2
+            exit 1
+            ;;
+    esac
+done
+
+if [[ ! -f "${ENV_FILE}" ]]; then
+    echo "[FAIL] Environment file not found: ${ENV_FILE}" >&2
+    exit 1
+fi
+
+# shellcheck disable=SC1090
+source "${ENV_FILE}"
+
+if [[ -z "${PROJECT_ID:-}" ]] || [[ "${PROJECT_ID}" == *"your-"* ]]; then
+    echo "[FAIL] PROJECT_ID is unset or contains a placeholder value in ${ENV_FILE}" >&2
+    exit 1
+fi
+
+if [[ -z "${REGION:-}" ]] || [[ "${REGION}" == *"your-"* ]]; then
+    echo "[FAIL] REGION is unset or contains a placeholder value in ${ENV_FILE}" >&2
+    exit 1
+fi
+
+if ! command -v bq >/dev/null 2>&1; then
+    echo "[FAIL] bq CLI is not installed or not in PATH." >&2
+    exit 1
+fi
+
+HOSP_REF_CSV="${DATASET_DIR}/raw/hospital_reference.csv"
+FEEDS_CSV="${DATASET_DIR}/raw/hospital_flu_feeds/feeds.csv"
+RUN_LOG_CSV="${DATASET_DIR}/ops/pipeline_run_log.csv"
+
+for required_file in "${HOSP_REF_CSV}" "${FEEDS_CSV}" "${RUN_LOG_CSV}"; do
+    if [[ ! -f "${required_file}" ]]; then
+        echo "[FAIL] Required dataset file not found: ${required_file}" >&2
+        exit 1
+    fi
+done
+
+load_and_label_table() {
+    local dataset_table="$1"
+    local source_csv="$2"
+    local schema_json="$3"
+
+    echo "Loading ${PROJECT_ID}:${dataset_table} from ${source_csv}..."
+    if ! bq --project_id="${PROJECT_ID}" --location="${REGION}" load \
+        --replace \
+        --source_format=CSV \
+        --skip_leading_rows=1 \
+        "${PROJECT_ID}:${dataset_table}" \
+        "${source_csv}" \
+        "${schema_json}"; then
+        echo "[FAIL] Failed to load ${PROJECT_ID}:${dataset_table}" >&2
+        return 1
+    fi
+
+    echo "Applying label demo:true to ${PROJECT_ID}:${dataset_table}..."
+    if ! bq --project_id="${PROJECT_ID}" --location="${REGION}" update \
+        --set_label demo:true \
+        "${PROJECT_ID}:${dataset_table}"; then
+        echo "[FAIL] Failed to apply demo label to ${PROJECT_ID}:${dataset_table}" >&2
+        return 1
+    fi
+
+    return 0
+}
+
+load_and_label_table \
+    "raw.hospital_reference" \
+    "${HOSP_REF_CSV}" \
+    "${REPO_ROOT}/schemas/raw_hospital_reference.json" || exit 1
+
+load_and_label_table \
+    "raw.hospital_flu_feeds" \
+    "${FEEDS_CSV}" \
+    "${REPO_ROOT}/schemas/raw_hospital_flu_feeds.json" || exit 1
+
+load_and_label_table \
+    "ops.pipeline_run_log" \
+    "${RUN_LOG_CSV}" \
+    "${REPO_ROOT}/schemas/ops_pipeline_run_log.json" || exit 1
+
+echo "[PASS] Loaded raw.hospital_reference, raw.hospital_flu_feeds, and ops.pipeline_run_log with label demo:true."
+exit 0
