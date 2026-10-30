@@ -213,6 +213,12 @@ exit 0
 """)
         fake_gcloud.chmod(0o755)
 
+        fake_bq = bin_dir / "bq"
+        fake_bq.write_text("""#!/usr/bin/env bash
+exit 0
+""")
+        fake_bq.chmod(0o755)
+
         adc_file = Path(tmpdir) / "adc.json"
         adc_file.write_text(f'{{"quota_project_id": "{quota_project}"}}')
 
@@ -394,7 +400,11 @@ exit 0
             self.assertIn(
                 "[PASS] ADC quota project matches PROJECT_ID and is active", proc.stdout
             )
-            self.assertIn("Summary: 4 passed, 0 failed.", proc.stdout)
+            self.assertIn(
+                "[PASS] Dataproc Serverless runtime 3.0 hello-world batch writes to BigQuery",
+                proc.stdout,
+            )
+            self.assertIn("Summary: 5 passed, 0 failed.", proc.stdout)
 
 
 if __name__ == "__main__":
