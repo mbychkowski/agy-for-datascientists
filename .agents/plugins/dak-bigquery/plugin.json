@@ -1,0 +1,9 @@
+{
+  "name": "dak-bigquery",
+  "displayName": "Data Agent Kit BigQuery MCP (Workspace Wrapper)",
+  "version": "1.1.0",
+  "sourceDakVersion": "1.1.0",
+  "description": "Workspace-scoped BigQuery MCP stdio proxy wrapper for the Antigravity Command Center. Authenticates as the presenter and bills to the demo environment quota project without modifying global Antigravity settings.",
+  "license": "Apache-2.0",
+  "repository": "https://github.com/GoogleCloudPlatform/data-agent-kit-plugin"
+}

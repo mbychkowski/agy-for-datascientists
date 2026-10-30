@@ -36,6 +36,7 @@ fi
 ENV_FILE="${REPO_ROOT}/demo.env"
 CHECKS_PASSED=0
 CHECKS_FAILED=0
+CHECKS_WARNED=0
 FAILED_MESSAGES=()
 
 # Parse arguments
@@ -79,6 +80,27 @@ run_check() {
         fi
         ((CHECKS_FAILED++))
         FAILED_MESSAGES+=("${title}")
+    fi
+}
+
+# Run a warning check function (records [PASS] or [WARN] without failing preflight)
+run_warn_check() {
+    local title="$1"
+    local check_fn="$2"
+    shift 2
+
+    local output
+    if output=$("$check_fn" "$@" 2>&1); then
+        printf "${COLOR_GREEN}[PASS]${COLOR_RESET} %s\n" "${title}"
+        ((CHECKS_PASSED++))
+    else
+        printf "${COLOR_YELLOW}[WARN]${COLOR_RESET} %s\n" "${title}"
+        if [[ -n "${output}" ]]; then
+            while IFS= read -r line; do
+                printf "       %s\n" "${line}"
+            done <<< "${output}"
+        fi
+        ((CHECKS_WARNED++))
     fi
 }
 
@@ -340,6 +362,130 @@ check_dataproc_hello_world_batch() {
 }
 
 # ------------------------------------------------------------------------------
+# Check 6: BigQuery MCP Authenticates as Presenter (No Compute Metadata Fallback)
+# ------------------------------------------------------------------------------
+check_bigquery_mcp_presenter_auth() {
+    local plugin_dir="${REPO_ROOT}/.agents/plugins/dak-bigquery"
+    local plugin_json="${plugin_dir}/plugin.json"
+    local mcp_config="${plugin_dir}/mcp_config.json"
+    local wrapper_bin="${plugin_dir}/bin/run-bigquery-mcp"
+    local vendored_proxy="${plugin_dir}/mcp/bin/mcp_proxy_bundle.cjs"
+
+    for required_file in "${plugin_json}" "${mcp_config}" "${wrapper_bin}" "${vendored_proxy}"; do
+        if [[ ! -f "${required_file}" ]]; then
+            echo "Required dak-bigquery plugin file missing: ${required_file}"
+            return 1
+        fi
+    done
+
+    if [[ ! -x "${wrapper_bin}" ]]; then
+        echo "BigQuery MCP wrapper is not executable: ${wrapper_bin}"
+        return 1
+    fi
+
+    if [[ -z "${PROJECT_ID:-}" ]] || [[ "${PROJECT_ID}" == *"your-"* ]]; then
+        echo "PROJECT_ID is unset or contains placeholder value in ${ENV_FILE}."
+        return 1
+    fi
+
+    local wrapper_env
+    if ! wrapper_env=$(DEMO_ENV_FILE="${ENV_FILE}" "${wrapper_bin}" --print-env 2>&1); then
+        echo "BigQuery MCP wrapper failed to load ${ENV_FILE}: ${wrapper_env}"
+        return 1
+    fi
+
+    if [[ "${wrapper_env}" != *"BILLING_QUOTA_PROJECT_ID=${PROJECT_ID}"* ]]; then
+        echo "BigQuery MCP wrapper did not set BILLING_QUOTA_PROJECT_ID=${PROJECT_ID}."
+        return 1
+    fi
+
+    # Verify active gcloud identity is a presenter user account, not a compute service account
+    if command -v gcloud >/dev/null 2>&1; then
+        local active_account
+        active_account=$(env -u CLOUDSDK_CORE_PROJECT gcloud config configurations list --filter="is_active=true" --format="value(properties.core.account)" 2>/dev/null || true)
+        if [[ "${active_account}" == *".gserviceaccount.com" ]]; then
+            echo "Active gcloud account ('${active_account}') is a service account rather than the presenter's user identity."
+            echo "BigQuery MCP must authenticate as the presenter. Run: gcloud auth login"
+            return 1
+        fi
+    fi
+
+    # Inspect ADC JSON to ensure user OAuth credentials are present so mcp_proxy_bundle.cjs
+    # cannot silently fall back to http://metadata.google.internal/... service account token
+    local adc_file="${GOOGLE_APPLICATION_CREDENTIALS:-${CLOUDSDK_CONFIG:-$HOME/.config/gcloud}/application_default_credentials.json}"
+    if [[ ! -f "${adc_file}" ]]; then
+        echo "ADC file not found at ${adc_file}. Without user ADC, BigQuery MCP silently falls back to the compute metadata service account."
+        echo "Run: gcloud auth application-default login"
+        return 1
+    fi
+
+    local adc_check
+    if ! adc_check=$(python3 -c "
+import json, sys
+with open('${adc_file}') as f:
+    data = json.load(f)
+cred_type = data.get('type', '')
+if cred_type == 'service_account':
+    print('ADC file has type=service_account; BigQuery MCP requires presenter user credentials (authorized_user).')
+    sys.exit(1)
+missing = [k for k in ('client_id', 'client_secret', 'refresh_token') if not isinstance(data.get(k), str) or not data.get(k).strip()]
+if missing:
+    print('ADC credentials file is missing user OAuth fields (' + ', '.join(missing) + ').')
+    sys.exit(1)
+" 2>&1); then
+        echo "${adc_check}"
+        echo "When user ADC fails validation, mcp_proxy_bundle.cjs silently falls back to the compute metadata service account identity."
+        echo "Run: gcloud auth application-default login"
+        return 1
+    fi
+
+    return 0
+}
+
+# ------------------------------------------------------------------------------
+# Check 7 (Warning): Vendored BigQuery MCP Proxy Drift Check
+# ------------------------------------------------------------------------------
+check_vendored_proxy_drift() {
+    local vendored_proxy="${REPO_ROOT}/.agents/plugins/dak-bigquery/mcp/bin/mcp_proxy_bundle.cjs"
+    if [[ ! -f "${vendored_proxy}" ]]; then
+        echo "Vendored BigQuery MCP proxy missing at: ${vendored_proxy}"
+        return 1
+    fi
+
+    local default_dak_dir="${HOME}/.gemini/config/plugins/data-agent-kit-plugin"
+    local dak_dir="${DAK_PLUGIN_DIR:-${default_dak_dir}}"
+    local installed_proxy="${dak_dir}/mcp/bin/mcp_proxy_bundle.cjs"
+
+    if [[ ! -f "${installed_proxy}" ]]; then
+        if [[ -n "${DAK_PLUGIN_DIR:-}" ]]; then
+            echo "Installed Data Agent Kit proxy not found at: ${installed_proxy}"
+            return 1
+        fi
+        return 0
+    fi
+
+    local drift_msg
+    if ! drift_msg=$(python3 -c "
+import hashlib, sys
+from pathlib import Path
+v_path = Path('${vendored_proxy}')
+i_path = Path('${installed_proxy}')
+v_hash = hashlib.sha256(v_path.read_bytes()).hexdigest()
+i_hash = hashlib.sha256(i_path.read_bytes()).hexdigest()
+if v_hash != i_hash:
+    print(f'Vendored proxy SHA-256 ({v_hash[:12]}...) differs from installed Data Agent Kit proxy ({i_hash[:12]}...).')
+    print(f'To sync with your installed Data Agent Kit, run:')
+    print(f'  cp \"{i_path}\" \"{v_path}\"')
+    sys.exit(1)
+" 2>&1); then
+        echo "${drift_msg}"
+        return 1
+    fi
+
+    return 0
+}
+
+# ------------------------------------------------------------------------------
 # Main Preflight Runner
 # ------------------------------------------------------------------------------
 main() {
@@ -370,9 +516,19 @@ main() {
     # Check 5: Dataproc Serverless runtime 3.0 hello-world batch writing to BigQuery
     run_check "Dataproc Serverless runtime 3.0 hello-world batch writes to BigQuery" check_dataproc_hello_world_batch
 
+    # Check 6: BigQuery MCP authenticates as presenter (no compute metadata fallback)
+    run_check "BigQuery MCP authenticates as presenter (no compute metadata fallback)" check_bigquery_mcp_presenter_auth
+
+    # Check 7 (Warning): Vendored BigQuery MCP proxy matches installed Data Agent Kit
+    run_warn_check "Vendored BigQuery MCP proxy matches installed Data Agent Kit" check_vendored_proxy_drift
+
     echo ""
     echo "--------------------------------------------------"
-    echo "Summary: ${CHECKS_PASSED} passed, ${CHECKS_FAILED} failed."
+    if [[ ${CHECKS_WARNED} -gt 0 ]]; then
+        echo "Summary: ${CHECKS_PASSED} passed, ${CHECKS_FAILED} failed, ${CHECKS_WARNED} warning(s)."
+    else
+        echo "Summary: ${CHECKS_PASSED} passed, ${CHECKS_FAILED} failed."
+    fi
     echo "--------------------------------------------------"
 
     if [[ ${CHECKS_FAILED} -gt 0 ]]; then

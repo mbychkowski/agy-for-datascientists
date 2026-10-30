@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# Workspace-Scoped BigQuery MCP Proxy Wrapper (dak-bigquery)
+#
+# Reads demo.env, exports the presenter's billing/quota project overrides
+# (BILLING_QUOTA_PROJECT_ID, GOOGLE_CLOUD_QUOTA_PROJECT, GOOGLE_CLOUD_PROJECT),
+# clears IDE credential overrides so user ADC is always used, and launches the
+# vendored Apache-2.0 BigQuery MCP stdio proxy.
+# ==============================================================================
+
+set -euo pipefail
+
+SOURCE="${BASH_SOURCE[0]}"
+while [[ -h "${SOURCE}" ]]; do
+    DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
+    SOURCE="$(readlink "${SOURCE}")"
+    [[ "${SOURCE}" != /* ]] && SOURCE="${DIR}/${SOURCE}"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
+PLUGIN_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+REPO_ROOT="$(cd "${PLUGIN_DIR}/../../.." && pwd)"
+
+ENV_FILE="${DEMO_ENV_FILE:-${REPO_ROOT}/demo.env}"
+PROXY_BUNDLE="${PLUGIN_DIR}/mcp/bin/mcp_proxy_bundle.cjs"
+DEFAULT_ENDPOINT="https://bigquery.googleapis.com/mcp"
+
+PRINT_ENV=false
+ENDPOINT="${DEFAULT_ENDPOINT}"
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --env|-e)
+            ENV_FILE="$2"
+            shift 2
+            ;;
+        --print-env)
+            PRINT_ENV=true
+            shift
+            ;;
+        --help|-h)
+            echo "Usage: run-bigquery-mcp [--env <path>] [--print-env] [endpoint_url]"
+            exit 0
+            ;;
+        *)
+            ENDPOINT="$1"
+            shift
+            ;;
+    esac
+done
+
+if [[ ! -f "${ENV_FILE}" ]]; then
+    echo "[dak-bigquery] Error: Environment file not found at ${ENV_FILE}. Copy demo.env.example to demo.env and configure PROJECT_ID." >&2
+    exit 1
+fi
+
+# shellcheck disable=SC1090
+source "${ENV_FILE}"
+
+if [[ -z "${PROJECT_ID:-}" ]] || [[ "${PROJECT_ID}" == *"your-"* ]]; then
+    echo "[dak-bigquery] Error: PROJECT_ID is unset or contains a placeholder value in ${ENV_FILE}." >&2
+    exit 1
+fi
+
+# Set explicit project and billing/quota project variables read by mcp_proxy_bundle.cjs
+export PROJECT_ID
+export GOOGLE_CLOUD_PROJECT="${PROJECT_ID}"
+export GOOGLE_CLOUD_QUOTA_PROJECT="${PROJECT_ID}"
+export BILLING_QUOTA_PROJECT_ID="${PROJECT_ID}"
+export X_GOOG_PROXY_HEADERS="${X_GOOG_PROXY_HEADERS:-{\"User-Agent\":\"datacloud.antigravity\"}}"
+
+# Ensure the proxy authenticates via presenter user ADC rather than IDE extension cache
+unset DATA_CLOUD_CURR_IDE_NAME DATA_CLOUD_IDE_TYPE IDE_TYPE
+
+if [[ "${PRINT_ENV}" == "true" ]]; then
+    echo "PROJECT_ID=${PROJECT_ID}"
+    echo "GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT}"
+    echo "GOOGLE_CLOUD_QUOTA_PROJECT=${GOOGLE_CLOUD_QUOTA_PROJECT}"
+    echo "BILLING_QUOTA_PROJECT_ID=${BILLING_QUOTA_PROJECT_ID}"
+    echo "PROXY_BUNDLE=${PROXY_BUNDLE}"
+    echo "ENDPOINT=${ENDPOINT}"
+    exit 0
+fi
+
+exec node "${PROXY_BUNDLE}" "${ENDPOINT}"

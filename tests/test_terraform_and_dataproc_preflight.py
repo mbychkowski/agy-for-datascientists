@@ -262,7 +262,9 @@ exit 0
         fake_bq.chmod(0o755)
 
         adc_file = Path(tmpdir) / "adc.json"
-        adc_file.write_text('{"quota_project_id": "demo-proj-123"}')
+        adc_file.write_text(
+            '{"type": "authorized_user", "client_id": "test-client", "client_secret": "test-secret", "refresh_token": "test-refresh", "quota_project_id": "demo-proj-123"}'
+        )
 
         env_file = Path(tmpdir) / "demo.env"
         env_file.write_text(f"""

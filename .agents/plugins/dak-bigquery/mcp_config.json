@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "dak-bigquery": {
+      "command": "bash",
+      "type": "stdio",
+      "args": [
+        "-c",
+        "if [ -x ./.agents/plugins/dak-bigquery/bin/run-bigquery-mcp ]; then exec ./.agents/plugins/dak-bigquery/bin/run-bigquery-mcp \"$@\"; else exec ./bin/run-bigquery-mcp \"$@\"; fi",
+        "run-bigquery-mcp",
+        "https://bigquery.googleapis.com/mcp"
+      ],
+      "env": {
+        "X_GOOG_PROXY_HEADERS": "{\"User-Agent\":\"datacloud.antigravity\"}"
+      }
+    }
+  }
+}
