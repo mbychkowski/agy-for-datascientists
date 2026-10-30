@@ -220,7 +220,9 @@ exit 0
         fake_bq.chmod(0o755)
 
         adc_file = Path(tmpdir) / "adc.json"
-        adc_file.write_text(f'{{"quota_project_id": "{quota_project}"}}')
+        adc_file.write_text(
+            f'{{"type": "authorized_user", "client_id": "test-client", "client_secret": "test-secret", "refresh_token": "test-refresh", "quota_project_id": "{quota_project}"}}'
+        )
 
         env = os.environ.copy()
         env["PATH"] = f"{bin_dir}:{env['PATH']}"
@@ -404,7 +406,15 @@ exit 0
                 "[PASS] Dataproc Serverless runtime 3.0 hello-world batch writes to BigQuery",
                 proc.stdout,
             )
-            self.assertIn("Summary: 5 passed, 0 failed.", proc.stdout)
+            self.assertIn(
+                "[PASS] BigQuery MCP authenticates as presenter (no compute metadata fallback)",
+                proc.stdout,
+            )
+            self.assertIn(
+                "[PASS] Vendored BigQuery MCP proxy matches installed Data Agent Kit",
+                proc.stdout,
+            )
+            self.assertIn("Summary: 7 passed, 0 failed.", proc.stdout)
 
 
 if __name__ == "__main__":
