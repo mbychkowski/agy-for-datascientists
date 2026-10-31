@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# Run Workstream 1 Pipeline v1 on Dataproc Serverless
+#
+# Submits pipelines/pipeline_v1.py to Dataproc Serverless runtime 3.0 as the
+# presenter to materialise the defective staging table staging.hospital_flu
+# (with duplicate Hospital Feeds intact) and labels it demo:true.
+# ==============================================================================
+
+set -uo pipefail
+
+# Resolve real script directory through any symlinks
+SOURCE="${BASH_SOURCE[0]}"
+while [[ -h "${SOURCE}" ]]; do
+    DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
+    SOURCE="$(readlink "${SOURCE}")"
+    [[ "${SOURCE}" != /* ]] && SOURCE="${DIR}/${SOURCE}"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+ENV_FILE="${REPO_ROOT}/demo.env"
+
+usage() {
+    echo "Usage: bin/run-pipeline-v1 [OPTIONS]"
+    echo ""
+    echo "Options:"
+    echo "  -e, --env <path>  Path to environment file (default: demo.env)"
+    echo "  -h, --help        Show this help message"
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --env|-e)
+            ENV_FILE="$2"
+            shift 2
+            ;;
+        --help|-h)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "Unknown argument: $1" >&2
+            usage >&2
+            exit 1
+            ;;
+    esac
+done
+
+if [[ ! -f "${ENV_FILE}" ]]; then
+    echo "[FAIL] Environment file not found: ${ENV_FILE}" >&2
+    exit 1
+fi
+
+# shellcheck disable=SC1090
+source "${ENV_FILE}"
+
+if [[ -z "${PROJECT_ID:-}" ]] || [[ "${PROJECT_ID}" == *"your-"* ]]; then
+    echo "[FAIL] PROJECT_ID is unset or contains a placeholder value in ${ENV_FILE}" >&2
+    exit 1
+fi
+
+if [[ -z "${REGION:-}" ]] || [[ "${REGION}" == *"your-"* ]]; then
+    echo "[FAIL] REGION is unset or contains a placeholder value in ${ENV_FILE}" >&2
+    exit 1
+fi
+
+if [[ -z "${STAGING_BUCKET:-}" ]] || [[ "${STAGING_BUCKET}" == *"your-"* ]]; then
+    echo "[FAIL] STAGING_BUCKET is unset or contains a placeholder value in ${ENV_FILE}" >&2
+    exit 1
+fi
+
+if ! command -v gcloud >/dev/null 2>&1; then
+    echo "[FAIL] gcloud CLI is not installed or not in PATH." >&2
+    exit 1
+fi
+
+if ! command -v bq >/dev/null 2>&1; then
+    echo "[FAIL] bq CLI is not installed or not in PATH." >&2
+    exit 1
+fi
+
+PIPELINE_SCRIPT="${REPO_ROOT}/pipelines/pipeline_v1.py"
+if [[ ! -f "${PIPELINE_SCRIPT}" ]]; then
+    echo "[FAIL] Pipeline v1 script not found: ${PIPELINE_SCRIPT}" >&2
+    exit 1
+fi
+
+SUBNET_TARGET="${SUBNET:-demo-dataproc-subnet}"
+BATCH_ID="${PIPELINE_V1_BATCH_ID:-ws1-pipeline-v1-$(date +%s)-$$}"
+
+echo "Submitting Workstream 1 Pipeline v1 to Dataproc Serverless (batch: ${BATCH_ID})..."
+if ! gcloud dataproc batches submit pyspark "${PIPELINE_SCRIPT}" \
+    --project="${PROJECT_ID}" \
+    --region="${REGION}" \
+    --batch="${BATCH_ID}" \
+    --version="3.0" \
+    --deps-bucket="gs://${STAGING_BUCKET}" \
+    --subnet="${SUBNET_TARGET}" \
+    -- \
+    --project-id "${PROJECT_ID}" \
+    --raw-dataset "raw" \
+    --staging-dataset "staging" \
+    --output-table "hospital_flu" \
+    --staging-bucket "${STAGING_BUCKET}"; then
+    echo "[FAIL] Pipeline v1 Dataproc Serverless batch failed." >&2
+    exit 1
+fi
+
+echo "Applying label demo:true to ${PROJECT_ID}:staging.hospital_flu..."
+if ! bq --project_id="${PROJECT_ID}" --location="${REGION}" update \
+    --set_label demo:true \
+    "${PROJECT_ID}:staging.hospital_flu"; then
+    echo "[FAIL] Failed to apply demo:true label to ${PROJECT_ID}:staging.hospital_flu" >&2
+    exit 1
+fi
+
+echo "[PASS] Pipeline v1 materialised ${PROJECT_ID}:staging.hospital_flu (with duplicates intact) and applied label demo:true."
+exit 0

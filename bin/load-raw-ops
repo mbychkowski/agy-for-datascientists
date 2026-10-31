@@ -21,13 +21,14 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 ENV_FILE="${REPO_ROOT}/demo.env"
 DATASET_DIR="${REPO_ROOT}/fixtures/mock_dataset"
+POSITIONAL_DATASET_SET=false
 
 usage() {
-    echo "Usage: bin/load-raw-ops [OPTIONS]"
+    echo "Usage: bin/load-raw-ops [OPTIONS] [dataset_location]"
     echo ""
     echo "Options:"
     echo "  -e, --env <path>          Path to environment file (default: demo.env)"
-    echo "  -d, --dataset-dir <path>  Path to dataset root containing raw/ and ops/ (default: fixtures/mock_dataset)"
+    echo "  -d, --dataset-dir <path>  Path or gs:// URI to dataset root containing raw/ and ops/ (default: fixtures/mock_dataset)"
     echo "  -h, --help                Show this help message"
 }
 
@@ -45,10 +46,21 @@ while [[ $# -gt 0 ]]; do
             usage
             exit 0
             ;;
-        *)
+        -*)
             echo "Unknown argument: $1" >&2
             usage >&2
             exit 1
+            ;;
+        *)
+            if [[ "${POSITIONAL_DATASET_SET}" == "false" ]]; then
+                DATASET_DIR="$1"
+                POSITIONAL_DATASET_SET=true
+                shift
+            else
+                echo "Unknown argument: $1" >&2
+                usage >&2
+                exit 1
+            fi
             ;;
     esac
 done
@@ -76,16 +88,19 @@ if ! command -v bq >/dev/null 2>&1; then
     exit 1
 fi
 
-HOSP_REF_CSV="${DATASET_DIR}/raw/hospital_reference.csv"
-FEEDS_CSV="${DATASET_DIR}/raw/hospital_flu_feeds/feeds.csv"
-RUN_LOG_CSV="${DATASET_DIR}/ops/pipeline_run_log.csv"
+DATASET_ROOT="${DATASET_DIR%/}"
+HOSP_REF_CSV="${DATASET_ROOT}/raw/hospital_reference.csv"
+FEEDS_CSV="${DATASET_ROOT}/raw/hospital_flu_feeds/feeds.csv"
+RUN_LOG_CSV="${DATASET_ROOT}/ops/pipeline_run_log.csv"
 
-for required_file in "${HOSP_REF_CSV}" "${FEEDS_CSV}" "${RUN_LOG_CSV}"; do
-    if [[ ! -f "${required_file}" ]]; then
-        echo "[FAIL] Required dataset file not found: ${required_file}" >&2
-        exit 1
-    fi
-done
+if [[ "${DATASET_ROOT}" != gs://* ]]; then
+    for required_file in "${HOSP_REF_CSV}" "${FEEDS_CSV}" "${RUN_LOG_CSV}"; do
+        if [[ ! -f "${required_file}" ]]; then
+            echo "[FAIL] Required dataset file not found: ${required_file}" >&2
+            exit 1
+        fi
+    done
+fi
 
 load_and_label_table() {
     local dataset_table="$1"

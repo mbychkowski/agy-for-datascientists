@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# One-Time Demo Setup (Workstream 1 Start Point)
+#
+# Loads raw and ops tables into BigQuery from the Data Generator output
+# (or fixtures/mock_dataset), runs Pipeline v1 on Dataproc Serverless to
+# materialise the defective staging table staging.hospital_flu (with duplicates
+# intact), labels every created table demo:true, and verifies the Workstream 1
+# Start Point via bin/verify-start-point ws1.
+# ==============================================================================
+
+set -uo pipefail
+
+# Resolve real script directory through any symlinks
+SOURCE="${BASH_SOURCE[0]}"
+while [[ -h "${SOURCE}" ]]; do
+    DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
+    SOURCE="$(readlink "${SOURCE}")"
+    [[ "${SOURCE}" != /* ]] && SOURCE="${DIR}/${SOURCE}"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+ENV_FILE="${REPO_ROOT}/demo.env"
+DATASET_DIR="${REPO_ROOT}/fixtures/mock_dataset"
+POSITIONAL_DATASET_SET=false
+
+usage() {
+    echo "Usage: bin/setup [OPTIONS] [dataset_location]"
+    echo ""
+    echo "Options:"
+    echo "  -e, --env <path>          Path to environment file (default: demo.env)"
+    echo "  -d, --dataset-dir <path>  Path or gs:// URI to dataset root (default: fixtures/mock_dataset)"
+    echo "  -h, --help                Show this help message"
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --env|-e)
+            ENV_FILE="$2"
+            shift 2
+            ;;
+        --dataset-dir|-d)
+            DATASET_DIR="$2"
+            shift 2
+            ;;
+        --help|-h)
+            usage
+            exit 0
+            ;;
+        -*)
+            echo "[FAIL] Unknown argument: $1" >&2
+            usage >&2
+            exit 1
+            ;;
+        *)
+            if [[ "${POSITIONAL_DATASET_SET}" == "false" ]]; then
+                DATASET_DIR="$1"
+                POSITIONAL_DATASET_SET=true
+                shift
+            else
+                echo "[FAIL] Unexpected argument: $1" >&2
+                usage >&2
+                exit 1
+            fi
+            ;;
+    esac
+done
+
+echo "==> Step 1/3: Loading raw and ops tables..."
+if ! "${REPO_ROOT}/bin/load-raw-ops" --env "${ENV_FILE}" --dataset-dir "${DATASET_DIR}"; then
+    echo "[FAIL] Step 1/3 (bin/load-raw-ops) failed." >&2
+    exit 1
+fi
+
+echo "==> Step 2/3: Running Pipeline v1 on Dataproc Serverless..."
+if ! "${REPO_ROOT}/bin/run-pipeline-v1" --env "${ENV_FILE}"; then
+    echo "[FAIL] Step 2/3 (bin/run-pipeline-v1) failed." >&2
+    exit 1
+fi
+
+echo "==> Step 3/3: Verifying Workstream 1 Start Point (ws1)..."
+if ! "${REPO_ROOT}/bin/verify-start-point" ws1 --env "${ENV_FILE}"; then
+    echo "[FAIL] Step 3/3 (bin/verify-start-point ws1) failed." >&2
+    exit 1
+fi
+
+echo "[PASS] Workstream 1 setup complete and verified."
+exit 0
