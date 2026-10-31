@@ -10,6 +10,10 @@ from typing import Any
 WORKTREE_ROOT = Path(__file__).resolve().parent.parent
 PREFLIGHT_BIN = WORKTREE_ROOT / "bin" / "preflight"
 PREFLIGHT_SYMLINK = WORKTREE_ROOT / "preflight"
+SETUP_BIN = WORKTREE_ROOT / "bin" / "setup"
+SETUP_SYMLINK = WORKTREE_ROOT / "setup"
+VERIFY_START_POINT_BIN = WORKTREE_ROOT / "bin" / "verify-start-point"
+VERIFY_START_POINT_SYMLINK = WORKTREE_ROOT / "verify-start-point"
 VENDORED_DAK_DIR = WORKTREE_ROOT / ".agents" / "plugins" / "dak-bigquery"
 
 
@@ -94,6 +98,10 @@ def setup_preflight_test_env(
     subagent_bad_token: bool = False,
     missing_workspace_dak_skills: bool = False,
     fresh_agent_skills_fails: bool = False,
+    ws1_missing_table: str = "",
+    ws1_missing_label: str = "",
+    ws1_no_duplicates: bool = False,
+    ws1_wrong_spike: bool = False,
 ) -> tuple[Path, dict[str, str], Path]:
     """Build a complete mock CLI and ADC environment for testing bin/preflight and CLIs."""
     tmp_path = Path(tmpdir)
@@ -147,8 +155,13 @@ exit 0
     )
     fake_gcloud.chmod(0o755)
 
-    bq_show_script = (
-        "echo 'Not found: Table' >&2; exit 1" if bq_show_fails else "exit 0"
+    bq_show_fails_flag = "true" if bq_show_fails else "false"
+    dup_val = 0 if ws1_no_duplicates else 5
+    spike_val = 12.5 if ws1_wrong_spike else 35.0
+    ws1_query_json = (
+        '[{"raw_ref_rows":6,"raw_feeds_rows":6767,"ops_log_rows":1128,'
+        f'"staging_rows":6767,"duplicate_groups":{dup_val},'
+        f'"w42_positives":200,"w43_positives":270,"spike_pct":{spike_val}}}]'
     )
     if ai_forecast_fails:
         ai_forecast_script = (
@@ -178,7 +191,24 @@ exit 0
         f"""#!/usr/bin/env bash
 echo "bq $*" >> "{log_file}"
 if [[ "$*" == *"show"* ]]; then
-    {bq_show_script}
+    if [[ -n "{ws1_missing_table}" ]] && [[ "$*" == *"{ws1_missing_table}"* ]]; then
+        echo "Not found: Table {ws1_missing_table}" >&2
+        exit 1
+    fi
+    if [[ "{bq_show_fails_flag}" == "true" ]]; then
+        echo "Not found: Table" >&2
+        exit 1
+    fi
+    if [[ -n "{ws1_missing_label}" ]] && [[ "$*" == *"{ws1_missing_label}"* ]]; then
+        echo '{{"id":"mock","labels":{{}}}}'
+        exit 0
+    fi
+    echo '{{"id":"mock","labels":{{"demo":"true"}}}}'
+    exit 0
+fi
+if [[ "$*" == *"duplicate_groups"* ]]; then
+    echo '{ws1_query_json}'
+    exit 0
 fi
 if [[ "$*" == *"AI.FORECAST"* ]]; then
     {ai_forecast_script}
@@ -250,6 +280,7 @@ exit 0
     env["PREFLIGHT_HELLO_TABLE"] = "_preflight_hello_test"
     env["PREFLIGHT_KMEANS_MODEL"] = "_preflight_kmeans_test"
     env["PREFLIGHT_AGY_TIMEOUT"] = "5s"
+    env["PIPELINE_V1_BATCH_ID"] = "ws1-pipeline-v1-test"
 
     workspace_skills_dir = tmp_path / "workspace-gemini-skills"
     if not missing_workspace_dak_skills:

@@ -1,0 +1,254 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# Verify Workstream Start Point State (Read-Only)
+#
+# Performs a strictly read-only check of BigQuery state for the requested
+# Start Point target (ws1, ws2, or main).
+#
+# For ws1, verifies:
+#   1. raw.hospital_reference, raw.hospital_flu_feeds, ops.pipeline_run_log,
+#      and staging.hospital_flu exist and carry the 'demo:true' label.
+#   2. All four tables are non-empty.
+#   3. staging.hospital_flu contains duplicate (hospital_id, feed_date) rows
+#      left intact by Pipeline v1 (the planted Pipeline Defect).
+#   4. The Northeast Spike in the week ending on the Cutoff (2026-10-31) is
+#      ~+35.0% over the prior week (2026-10-18..2026-10-24).
+# ==============================================================================
+
+set -uo pipefail
+
+# Resolve real script directory through any symlinks
+SOURCE="${BASH_SOURCE[0]}"
+while [[ -h "${SOURCE}" ]]; do
+    DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
+    SOURCE="$(readlink "${SOURCE}")"
+    [[ "${SOURCE}" != /* ]] && SOURCE="${DIR}/${SOURCE}"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+ENV_FILE="${REPO_ROOT}/demo.env"
+TARGET=""
+
+usage() {
+    echo "Usage: bin/verify-start-point <ws1|ws2|main> [OPTIONS]"
+    echo ""
+    echo "Targets:"
+    echo "  ws1   Verify Workstream 1 Start Point (raw, ops, and defective staging.hospital_flu)"
+    echo "  ws2   Verify Workstream 2 Start Point"
+    echo "  main  Verify main demo Start Point"
+    echo ""
+    echo "Options:"
+    echo "  -e, --env <path>  Path to environment file (default: demo.env)"
+    echo "  -h, --help        Show this help message"
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --env|-e)
+            ENV_FILE="$2"
+            shift 2
+            ;;
+        --help|-h)
+            usage
+            exit 0
+            ;;
+        -*)
+            echo "[FAIL] Unknown argument: $1" >&2
+            usage >&2
+            exit 1
+            ;;
+        *)
+            if [[ -z "${TARGET}" ]]; then
+                TARGET="$1"
+                shift
+            else
+                echo "[FAIL] Unexpected argument: $1" >&2
+                usage >&2
+                exit 1
+            fi
+            ;;
+    esac
+done
+
+if [[ -z "${TARGET}" ]]; then
+    echo "[FAIL] Missing required Start Point target (<ws1|ws2|main>)." >&2
+    usage >&2
+    exit 1
+fi
+
+case "${TARGET}" in
+    ws1)
+        ;;
+    ws2|main)
+        echo "[FAIL] Start Point verification for '${TARGET}' is not yet implemented." >&2
+        exit 1
+        ;;
+    *)
+        echo "[FAIL] Unknown Start Point target: ${TARGET} (expected ws1, ws2, or main)." >&2
+        usage >&2
+        exit 1
+        ;;
+esac
+
+if [[ ! -f "${ENV_FILE}" ]]; then
+    echo "[FAIL] Environment file not found: ${ENV_FILE}" >&2
+    exit 1
+fi
+
+# shellcheck disable=SC1090
+source "${ENV_FILE}"
+
+if [[ -z "${PROJECT_ID:-}" ]] || [[ "${PROJECT_ID}" == *"your-"* ]]; then
+    echo "[FAIL] PROJECT_ID is unset or contains a placeholder value in ${ENV_FILE}" >&2
+    exit 1
+fi
+
+if [[ -z "${REGION:-}" ]] || [[ "${REGION}" == *"your-"* ]]; then
+    echo "[FAIL] REGION is unset or contains a placeholder value in ${ENV_FILE}" >&2
+    exit 1
+fi
+
+if ! command -v bq >/dev/null 2>&1; then
+    echo "[FAIL] bq CLI is not installed or not in PATH." >&2
+    exit 1
+fi
+
+WS1_TABLES=(
+    "raw.hospital_reference"
+    "raw.hospital_flu_feeds"
+    "ops.pipeline_run_log"
+    "staging.hospital_flu"
+)
+
+for tbl in "${WS1_TABLES[@]}"; do
+    if ! table_meta=$(bq show --project_id="${PROJECT_ID}" --location="${REGION}" --format=json "${PROJECT_ID}:${tbl}" 2>&1); then
+        echo "[FAIL] Required Workstream 1 table missing: ${PROJECT_ID}:${tbl}" >&2
+        exit 1
+    fi
+
+    if ! python3 -c '
+import json, sys
+raw = sys.argv[1]
+decoder = json.JSONDecoder()
+meta = None
+for idx, ch in enumerate(raw):
+    if ch == "{":
+        try:
+            candidate, _ = decoder.raw_decode(raw[idx:])
+            if isinstance(candidate, dict):
+                meta = candidate
+                break
+        except Exception:
+            continue
+if not isinstance(meta, dict):
+    sys.exit(1)
+labels = meta.get("labels")
+if not isinstance(labels, dict) or labels.get("demo") != "true":
+    sys.exit(1)
+' "${table_meta}"; then
+        echo "[FAIL] Table ${PROJECT_ID}:${tbl} is missing required label demo:true" >&2
+        exit 1
+    fi
+done
+
+read -r -d '' WS1_SQL <<EOF || true
+WITH
+  counts AS (
+    SELECT
+      (SELECT COUNT(*) FROM \`${PROJECT_ID}.raw.hospital_reference\`) AS raw_ref_rows,
+      (SELECT COUNT(*) FROM \`${PROJECT_ID}.raw.hospital_flu_feeds\`) AS raw_feeds_rows,
+      (SELECT COUNT(*) FROM \`${PROJECT_ID}.ops.pipeline_run_log\`) AS ops_log_rows,
+      (SELECT COUNT(*) FROM \`${PROJECT_ID}.staging.hospital_flu\`) AS staging_rows
+  ),
+  dup_check AS (
+    SELECT COUNT(*) AS duplicate_groups
+    FROM (
+      SELECT hospital_id, feed_date
+      FROM \`${PROJECT_ID}.staging.hospital_flu\`
+      GROUP BY hospital_id, feed_date
+      HAVING COUNT(*) > 1
+    )
+  ),
+  ne_weekly AS (
+    SELECT
+      SUM(CASE WHEN s.feed_date BETWEEN DATE '2026-10-18' AND DATE '2026-10-24' THEN s.positive_flu_tests ELSE 0 END) AS w42_positives,
+      SUM(CASE WHEN s.feed_date BETWEEN DATE '2026-10-25' AND DATE '2026-10-31' THEN s.positive_flu_tests ELSE 0 END) AS w43_positives
+    FROM \`${PROJECT_ID}.staging.hospital_flu\` AS s
+    WHERE s.region = 'Northeast'
+  )
+SELECT
+  c.raw_ref_rows,
+  c.raw_feeds_rows,
+  c.ops_log_rows,
+  c.staging_rows,
+  d.duplicate_groups,
+  n.w42_positives,
+  n.w43_positives,
+  ROUND(SAFE_DIVIDE(n.w43_positives - n.w42_positives, n.w42_positives) * 100.0, 2) AS spike_pct
+FROM counts AS c
+CROSS JOIN dup_check AS d
+CROSS JOIN ne_weekly AS n
+EOF
+
+if ! query_out=$(bq query \
+    --quiet \
+    --use_legacy_sql=false \
+    --project_id="${PROJECT_ID}" \
+    --location="${REGION}" \
+    --format=json \
+    "${WS1_SQL}" 2>&1); then
+    echo "[FAIL] Read-only verification query failed on ${PROJECT_ID}: ${query_out}" >&2
+    exit 1
+fi
+
+if ! check_msg=$(python3 -c '
+import json, sys
+
+raw = sys.argv[1]
+decoder = json.JSONDecoder()
+rows = None
+for idx, ch in enumerate(raw):
+    if ch == "[":
+        try:
+            candidate, _ = decoder.raw_decode(raw[idx:])
+            if isinstance(candidate, list):
+                rows = candidate
+                break
+        except Exception:
+            continue
+
+if not isinstance(rows, list) or len(rows) == 0 or not isinstance(rows[0], dict):
+    print("[FAIL] Verification query returned no rows or invalid JSON.")
+    sys.exit(1)
+
+row = rows[0]
+for col in ("raw_ref_rows", "raw_feeds_rows", "ops_log_rows", "staging_rows"):
+    val = int(row.get(col) or 0)
+    if val <= 0:
+        print(f"[FAIL] Workstream 1 table has 0 rows ({col}={val}).")
+        sys.exit(1)
+
+dup_groups = int(row.get("duplicate_groups") or 0)
+if dup_groups <= 0:
+    print("[FAIL] Defective staging table staging.hospital_flu has no duplicate (hospital_id, feed_date) rows; pipeline v1 must leave duplicates intact.")
+    sys.exit(1)
+
+spike_raw = row.get("spike_pct")
+if spike_raw is None and row.get("w42_positives") is not None and row.get("w43_positives") is not None:
+    w42 = float(row["w42_positives"])
+    w43 = float(row["w43_positives"])
+    spike_pct = ((w43 - w42) / w42) * 100.0 if w42 > 0 else 0.0
+else:
+    spike_pct = float(spike_raw) if spike_raw is not None else 0.0
+
+if abs(spike_pct - 35.0) > 1.0:
+    print(f"[FAIL] Northeast Spike in week ending on Cutoff (2026-10-31) is {spike_pct:.2f}% (expected ~+35.0%).")
+    sys.exit(1)
+' "${query_out}" 2>&1); then
+    echo "${check_msg}" >&2
+    exit 1
+fi
+
+echo "[PASS] Workstream 1 Start Point (ws1) verified: raw, ops, and defective staging.hospital_flu exist with demo:true labels, duplicates intact, and Northeast Spike at +35.0% in the week ending on the Cutoff."
+exit 0
