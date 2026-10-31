@@ -1,0 +1,8 @@
+{
+  "id": "ws1_attribution",
+  "workstream": "ws1",
+  "description": "Workstream 1 reconciled Northeast Spike Attribution table across the four causes",
+  "source_table": "checkpoint.ws1_attribution",
+  "target_table": "staging.ws1_attribution",
+  "sql_file": "sql/ws1_attribution.sql"
+}

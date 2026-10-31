@@ -3,6 +3,12 @@
   "name": "ds-command-center",
   "displayName": "Command Center (ds-command-center)",
   "version": "1.0.0",
-  "description": "Team-owned Command Center rules, live-captured skills, and dataset boundary guardrail hook for Antigravity for Data Scientists.",
-  "license": "Apache-2.0"
+  "description": "Team-owned Command Center rules, triage and peer-review subagents, live-captured skills, and dataset boundary guardrail hook for Antigravity for Data Scientists.",
+  "license": "Apache-2.0",
+  "agents": [
+    "agents/distribution-triage.md",
+    "agents/sampling-triage.md",
+    "agents/pipeline-triage.md",
+    "agents/stats-reviewer.md"
+  ]
 }

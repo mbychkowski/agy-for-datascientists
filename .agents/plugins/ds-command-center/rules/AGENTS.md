@@ -30,3 +30,11 @@ These team-owned rules govern every agent and subagent operating inside the Anti
 - The `checkpoint` dataset is strictly off-limits to agents.
 - `checkpoint` tables are reserved exclusively for presenter **Checkpoint** swaps outside the agent if a live step fails on stage.
 - Never run `SELECT`, DML, DDL, `bq` CLI commands (`bq query`, `bq ls`, `bq show`, `bq head`, `bq cp`), or BigQuery MCP tools (`execute_sql`, `execute_sql_readonly`, `get_table_info`, `list_table_ids`, `get_dataset_info`) against the `checkpoint` dataset.
+
+## 5. Workstream 1 Triage & Statistical Peer-Review Subagents
+
+- When investigating the Northeast **Spike** in **Workstream** 1, dispatch the three parallel triage subagents defined in `.agents/plugins/ds-command-center/agents/`:
+  - `distribution-triage` (`agents/distribution-triage.md`): Separates a localized **Outbreak** from the broad **Seasonal Ramp** using hospital- and region-level **Positivity**.
+  - `sampling-triage` (`agents/sampling-triage.md`): Identifies hospitals experiencing a **Sampling Artifact** (`total_flu_tests` expansion with flat **Positivity**).
+  - `pipeline-triage` (`agents/pipeline-triage.md`): Correlates duplicate **Hospital Feed** rows in `staging.hospital_flu` with `ops.pipeline_run_log` backfill runs to quantify the **Pipeline Defect**.
+- Before presenting the reconciled **Attribution** table for human sign-off, run `stats-reviewer` (`agents/stats-reviewer.md`) to challenge raw counts vs **Positivity**, small-sample hospitals, and Simpson's paradox across regions.

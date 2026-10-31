@@ -1,0 +1,8 @@
+{
+  "id": "ws1_eda_heatmap",
+  "workstream": "ws1",
+  "description": "Workstream 1 EDA hospital x week heatmap and concentration summary",
+  "source_table": "checkpoint.ws1_eda_heatmap",
+  "target_table": "staging.ws1_eda_heatmap",
+  "sql_file": "sql/ws1_eda_heatmap.sql"
+}
