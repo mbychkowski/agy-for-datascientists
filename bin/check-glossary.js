@@ -130,7 +130,8 @@ const EXCLUDED_DIR_PREFIXES = [
   '.worktree/',
   '.vscode/',
   '.venv/',
-  '__pycache__/'
+  '__pycache__/',
+  'graphify-out/'
 ];
 
 function isPathExcluded(relPath) {

@@ -35,3 +35,7 @@ __pycache__/
 .DS_Store
 Thumbs.db
 
+# Knowledge graph output (local cache)
+graphify-out/
+
+

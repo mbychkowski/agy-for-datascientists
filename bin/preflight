@@ -555,7 +555,193 @@ for label, payload, expected_decision, expected_substr in probes:
 }
 
 # ------------------------------------------------------------------------------
-# Check 8 (Warning): Vendored BigQuery MCP Proxy Drift Check
+# Check 8: BigQuery AI.FORECAST (TimesFM) Executes on a Tiny Series
+# ------------------------------------------------------------------------------
+check_bqml_timesfm_forecast() {
+    if ! command -v bq >/dev/null 2>&1; then
+        echo "bq CLI is not installed or not in PATH."
+        return 1
+    fi
+
+    if [[ -z "${PROJECT_ID:-}" ]] || [[ "${PROJECT_ID}" == *"your-"* ]]; then
+        echo "PROJECT_ID is unset or contains placeholder value in ${ENV_FILE}."
+        echo "Configure PROJECT_ID in ${ENV_FILE} and run: terraform -chdir=infra apply"
+        return 1
+    fi
+
+    if [[ -z "${REGION:-}" ]] || [[ "${REGION}" == *"your-"* ]]; then
+        echo "REGION is unset or contains placeholder value in ${ENV_FILE}."
+        echo "Configure REGION in ${ENV_FILE} and run: terraform -chdir=infra apply"
+        return 1
+    fi
+
+    local forecast_out
+    if ! forecast_out=$(bq query \
+        --quiet \
+        --use_legacy_sql=false \
+        --project_id="${PROJECT_ID}" \
+        --location="${REGION}" \
+        --format=json \
+        "SELECT forecast_timestamp, forecast_value FROM AI.FORECAST((SELECT dt AS ts, CAST(10 + idx AS FLOAT64) AS val FROM UNNEST(GENERATE_DATE_ARRAY(DATE '2026-10-01', DATE '2026-10-14')) AS dt WITH OFFSET AS idx), data_col => 'val', timestamp_col => 'ts', horizon => 3)" 2>&1); then
+        echo "BigQuery AI.FORECAST (TimesFM) query failed in project '${PROJECT_ID}' (${REGION})."
+        echo "Ensure Vertex AI and BigQuery APIs are enabled ('terraform -chdir=infra apply') and AI.FORECAST is available in '${REGION}'."
+        echo "Error details: ${forecast_out}"
+        return 1
+    fi
+
+    local validate_out
+    if ! validate_out=$(python3 -c '
+import json, sys
+raw = sys.argv[1]
+decoder = json.JSONDecoder()
+rows = None
+for idx, ch in enumerate(raw):
+    if ch == "[":
+        try:
+            candidate, _ = decoder.raw_decode(raw[idx:])
+            if isinstance(candidate, list):
+                rows = candidate
+                break
+        except Exception:
+            continue
+if not isinstance(rows, list) or len(rows) == 0:
+    print("AI.FORECAST returned an empty or non-list result.")
+    sys.exit(1)
+first = rows[0]
+if not isinstance(first, dict) or "forecast_value" not in first:
+    print("AI.FORECAST output is missing expected forecast_value field.")
+    sys.exit(1)
+' "${forecast_out}" 2>&1); then
+        echo "${validate_out}"
+        echo "Actual output: ${forecast_out}"
+        return 1
+    fi
+
+    return 0
+}
+
+# ------------------------------------------------------------------------------
+# Check 9: BigQuery ML K-Means Model Trains and Cleans Up in ml Dataset
+# ------------------------------------------------------------------------------
+check_bqml_kmeans_model() {
+    if ! command -v bq >/dev/null 2>&1; then
+        echo "bq CLI is not installed or not in PATH."
+        return 1
+    fi
+
+    if [[ -z "${PROJECT_ID:-}" ]] || [[ "${PROJECT_ID}" == *"your-"* ]]; then
+        echo "PROJECT_ID is unset or contains placeholder value in ${ENV_FILE}."
+        echo "Configure PROJECT_ID in ${ENV_FILE} and run: terraform -chdir=infra apply"
+        return 1
+    fi
+
+    if [[ -z "${REGION:-}" ]] || [[ "${REGION}" == *"your-"* ]]; then
+        echo "REGION is unset or contains placeholder value in ${ENV_FILE}."
+        echo "Configure REGION in ${ENV_FILE} and run: terraform -chdir=infra apply"
+        return 1
+    fi
+
+    local temp_model="${PREFLIGHT_KMEANS_MODEL:-_preflight_kmeans_$$}"
+
+    cleanup_kmeans_model() {
+        bq rm -f -m --project_id="${PROJECT_ID}" --location="${REGION}" "${PROJECT_ID}:ml.${temp_model}" >/dev/null 2>&1 || true
+    }
+
+    local kmeans_out
+    if ! kmeans_out=$(bq query \
+        --quiet \
+        --use_legacy_sql=false \
+        --project_id="${PROJECT_ID}" \
+        --location="${REGION}" \
+        "CREATE OR REPLACE MODEL \`${PROJECT_ID}.ml.${temp_model}\` OPTIONS(model_type='KMEANS', num_clusters=2, max_iterations=2) AS SELECT CAST(x AS FLOAT64) AS f1, CAST(y AS FLOAT64) AS f2 FROM UNNEST([STRUCT(1.0 AS x, 1.0 AS y), STRUCT(1.2 AS x, 0.9 AS y), STRUCT(10.0 AS x, 10.0 AS y), STRUCT(10.5 AS x, 9.8 AS y)])" 2>&1); then
+        echo "BigQuery ML K-means model training failed in '${PROJECT_ID}:ml.${temp_model}' (${REGION})."
+        echo "Verify that dataset 'ml' exists ('terraform -chdir=infra apply') and you have BigQuery ML permissions."
+        echo "Error details: ${kmeans_out}"
+        cleanup_kmeans_model
+        return 1
+    fi
+
+    local rm_out
+    if ! rm_out=$(bq rm -f -m --project_id="${PROJECT_ID}" --location="${REGION}" "${PROJECT_ID}:ml.${temp_model}" 2>&1); then
+        echo "BigQuery ML K-means model trained, but cleanup ('bq rm -f -m ${PROJECT_ID}:ml.${temp_model}') failed."
+        echo "Error details: ${rm_out}"
+        return 1
+    fi
+
+    return 0
+}
+
+# ------------------------------------------------------------------------------
+# Check 10: Subagent Dispatches and Returns via Antigravity Harness
+# ------------------------------------------------------------------------------
+check_subagent_dispatch() {
+    if ! command -v agy >/dev/null 2>&1; then
+        echo "agy CLI is not installed or not in PATH."
+        return 1
+    fi
+
+    local agy_timeout="${PREFLIGHT_AGY_TIMEOUT:-60s}"
+    local subagent_out
+    if ! subagent_out=$(agy --print --print-timeout "${agy_timeout}" "Dispatch a research subagent with the prompt 'Reply with SUBAGENT_OK' and print SUBAGENT_OK when it returns." 2>&1); then
+        echo "Antigravity CLI subagent dispatch failed."
+        echo "Error details: ${subagent_out}"
+        echo "Manual fallback check: In the Antigravity IDE chat panel, ask the agent to dispatch a research subagent and confirm it returns in the Subagents pane."
+        return 1
+    fi
+    if [[ "${subagent_out}" != *"SUBAGENT_OK"* ]]; then
+        echo "Subagent dispatch did not return expected confirmation token 'SUBAGENT_OK'."
+        echo "Actual output: ${subagent_out}"
+        echo "Manual fallback check: In the Antigravity IDE chat panel, ask the agent to dispatch a research subagent and confirm it returns in the Subagents pane."
+        return 1
+    fi
+
+    return 0
+}
+
+# ------------------------------------------------------------------------------
+# Check 11: Fresh Agent Sees Data Agent Kit Skills Installed in the Workspace
+# ------------------------------------------------------------------------------
+check_workspace_dak_skills_visibility() {
+    local skills_json="${REPO_ROOT}/.agents/skills.json"
+    if [[ ! -f "${skills_json}" ]]; then
+        echo "Workspace skills configuration file not found: ${skills_json}"
+        return 1
+    fi
+    if ! grep -q ".gemini/skills" "${skills_json}"; then
+        echo "Workspace skills configuration (${skills_json}) does not reference '.gemini/skills'."
+        return 1
+    fi
+
+    local skills_dir="${WORKSPACE_DAK_SKILLS_DIR:-${REPO_ROOT}/.gemini/skills}"
+    if [[ ! -d "${skills_dir}" ]] || { [[ ! -f "${skills_dir}/bigquery-ai-ml/SKILL.md" ]] && [[ ! -f "${skills_dir}/gcp-spark/SKILL.md" ]] && [[ ! -f "${skills_dir}/bigquery-sql/SKILL.md" ]]; }; then
+        echo "Workspace Data Agent Kit skills not found in: ${skills_dir}"
+        echo "Install Data Agent Kit skills into the workspace (.gemini/skills/) before presenting."
+        return 1
+    fi
+
+    if ! command -v agy >/dev/null 2>&1; then
+        echo "agy CLI is not installed or not in PATH."
+        return 1
+    fi
+
+    local agy_timeout="${PREFLIGHT_AGY_TIMEOUT:-60s}"
+    local skills_out
+    if ! skills_out=$(agy --print --print-timeout "${agy_timeout}" "Confirm whether Data Agent Kit skills (such as bigquery-ai-ml or gcp-spark) are visible in this workspace and reply with DAK_SKILLS_VISIBLE." 2>&1); then
+        echo "Fresh agent invocation failed while checking workspace Data Agent Kit skills."
+        echo "Error details: ${skills_out}"
+        return 1
+    fi
+    if [[ "${skills_out}" != *"DAK_SKILLS_VISIBLE"* ]]; then
+        echo "Fresh agent did not report Data Agent Kit skills as visible in the workspace."
+        echo "Actual output: ${skills_out}"
+        return 1
+    fi
+
+    return 0
+}
+
+# ------------------------------------------------------------------------------
+# Check 12 (Warning): Vendored BigQuery MCP Proxy Drift Check
 # ------------------------------------------------------------------------------
 check_vendored_proxy_drift() {
     local vendored_proxy="${REPO_ROOT}/.agents/plugins/dak-bigquery/mcp/bin/mcp_proxy_bundle.cjs"
@@ -631,8 +817,25 @@ main() {
     # Check 7: ds-command-center plugin rules and guardrail hook enforce dataset boundaries
     run_check "ds-command-center plugin rules and guardrail hook enforce dataset boundaries" check_ds_command_center_guardrails
 
-    # Check 8 (Warning): Vendored BigQuery MCP proxy matches installed Data Agent Kit
+    # Check 8: BigQuery AI.FORECAST (TimesFM) executes on a tiny series
+    run_check "BigQuery AI.FORECAST (TimesFM) executes on a tiny series" check_bqml_timesfm_forecast
+
+    # Check 9: BigQuery ML K-means model trains and cleans up in ml dataset
+    run_check "BigQuery ML K-means model trains and cleans up in ml dataset" check_bqml_kmeans_model
+
+    # Check 10: Subagent dispatches and returns via Antigravity harness
+    run_check "Subagent dispatches and returns via Antigravity harness" check_subagent_dispatch
+
+    # Check 11: Fresh agent sees Data Agent Kit skills installed in the workspace
+    run_check "Fresh agent sees Data Agent Kit skills installed in the workspace" check_workspace_dak_skills_visibility
+
+    # Check 12 (Warning): Vendored BigQuery MCP proxy matches installed Data Agent Kit
     run_warn_check "Vendored BigQuery MCP proxy matches installed Data Agent Kit" check_vendored_proxy_drift
+
+    echo ""
+    echo "Manual Verification Steps (Not Scriptable by CLI Harness):"
+    printf "  ${COLOR_YELLOW}[MANUAL]${COLOR_RESET} VS Code Data Agent Kit UI: Submit and inspect a Dataproc Serverless batch in the VS Code extension panel.\n"
+    printf "  ${COLOR_YELLOW}[MANUAL]${COLOR_RESET} Antigravity IDE UI: Confirm the Subagents pane and guardrail block banner render visually in the IDE.\n"
 
     echo ""
     echo "--------------------------------------------------"
