@@ -1,0 +1,340 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# Verify Main End-State (Read-Only)
+#
+# Performs a strictly read-only verification of the main reference end-state:
+#   1. Requires the Answer Key and Reveal locations at runtime (ADR 0001).
+#   2. Verifies that main holds the reference files for every live step.
+#   3. Verifies via read-only BigQuery metadata and SQL checks that all core
+#      demo tables across raw, ops, staging, features, and ml exist and carry
+#      the 'demo:true' label.
+#   4. Verifies that the reconciled Workstream 1 Attribution matches the
+#      runtime-supplied Answer Key within ATTRIBUTION_TOLERANCE_POINTS.
+#   5. Verifies that the uncleaned forecast visibly overshoots in the Reveal
+#      while the clean forecast tracks the observed Reveal counts closely.
+# ==============================================================================
+
+set -uo pipefail
+
+# Resolve real script directory through any symlinks (CODING_STANDARDS.md §1)
+SOURCE="${BASH_SOURCE[0]}"
+while [[ -h "${SOURCE}" ]]; do
+    DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
+    SOURCE="$(readlink "${SOURCE}")"
+    [[ "${SOURCE}" != /* ]] && SOURCE="${DIR}/${SOURCE}"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+ENV_FILE="${REPO_ROOT}/demo.env"
+DATASET_DIR="${REPO_ROOT}/fixtures/mock_dataset"
+WITHHELD_DIR=""
+ANSWER_KEY_LOC=""
+REVEAL_LOC=""
+TARGET=""
+
+usage() {
+    echo "Usage: bin/verify-start-point main --withheld-dir <path> [OPTIONS]"
+    echo "   or: bin/verify-main-end-state [main] --withheld-dir <path> [OPTIONS]"
+    echo ""
+    echo "Required Runtime Withheld Location (ADR 0001):"
+    echo "  -w, --withheld-dir <path>   Runtime path to withheld directory containing answer_key.json and reveal/"
+    echo "  --answer-key <path>         Runtime path to answer_key.json (alternative to --withheld-dir)"
+    echo "  --reveal <path>             Runtime path to Reveal CSV or directory (alternative to --withheld-dir)"
+    echo ""
+    echo "Options:"
+    echo "  -e, --env <path>            Path to environment file (default: demo.env)"
+    echo "  -d, --dataset-dir <path>    Path to visible dataset directory (default: fixtures/mock_dataset)"
+    echo "  -h, --help                  Show this help message"
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --env|-e)
+            if [[ $# -lt 2 ]]; then
+                echo "[FAIL] Missing value for $1" >&2
+                usage >&2
+                exit 1
+            fi
+            ENV_FILE="$2"
+            shift 2
+            ;;
+        --dataset-dir|-d)
+            if [[ $# -lt 2 ]]; then
+                echo "[FAIL] Missing value for $1" >&2
+                usage >&2
+                exit 1
+            fi
+            DATASET_DIR="$2"
+            shift 2
+            ;;
+        --withheld-dir|-w)
+            if [[ $# -lt 2 ]]; then
+                echo "[FAIL] Missing value for $1" >&2
+                usage >&2
+                exit 1
+            fi
+            WITHHELD_DIR="$2"
+            shift 2
+            ;;
+        --answer-key)
+            if [[ $# -lt 2 ]]; then
+                echo "[FAIL] Missing value for $1" >&2
+                usage >&2
+                exit 1
+            fi
+            ANSWER_KEY_LOC="$2"
+            shift 2
+            ;;
+        --reveal)
+            if [[ $# -lt 2 ]]; then
+                echo "[FAIL] Missing value for $1" >&2
+                usage >&2
+                exit 1
+            fi
+            REVEAL_LOC="$2"
+            shift 2
+            ;;
+        --help|-h)
+            usage
+            exit 0
+            ;;
+        -*)
+            echo "[FAIL] Unknown argument: $1" >&2
+            usage >&2
+            exit 1
+            ;;
+        *)
+            if [[ -z "${TARGET}" ]] && [[ "$1" == "main" ]]; then
+                TARGET="$1"
+                shift
+            else
+                echo "[FAIL] Unexpected argument: $1" >&2
+                usage >&2
+                exit 1
+            fi
+            ;;
+    esac
+done
+
+if [[ -n "${WITHHELD_DIR}" ]]; then
+    [[ -z "${ANSWER_KEY_LOC}" ]] && ANSWER_KEY_LOC="${WITHHELD_DIR%/}/answer_key.json"
+    [[ -z "${REVEAL_LOC}" ]] && REVEAL_LOC="${WITHHELD_DIR%/}/reveal/hospital_flu_feeds_reveal/reveal.csv"
+fi
+
+if [[ -z "${ANSWER_KEY_LOC}" ]] || [[ -z "${REVEAL_LOC}" ]]; then
+    echo "[FAIL] Missing required runtime Answer Key / Reveal location (--withheld-dir or --answer-key and --reveal). Withheld paths are never hardcoded (ADR 0001)." >&2
+    usage >&2
+    exit 1
+fi
+
+if [[ ! -f "${ENV_FILE}" ]]; then
+    echo "[FAIL] Environment file not found: ${ENV_FILE}" >&2
+    exit 1
+fi
+
+# shellcheck disable=SC1090
+source "${ENV_FILE}"
+
+if [[ -z "${PROJECT_ID:-}" ]] || [[ "${PROJECT_ID}" == *"your-"* ]]; then
+    echo "[FAIL] PROJECT_ID is unset or contains a placeholder value in ${ENV_FILE}" >&2
+    exit 1
+fi
+
+if [[ -z "${REGION:-}" ]] || [[ "${REGION}" == *"your-"* ]]; then
+    echo "[FAIL] REGION is unset or contains a placeholder value in ${ENV_FILE}" >&2
+    exit 1
+fi
+
+if ! command -v bq >/dev/null 2>&1; then
+    echo "[FAIL] bq CLI is not installed or not in PATH." >&2
+    exit 1
+fi
+
+# 1. Verify that main holds the reference version of every live step
+REFERENCE_FILES=(
+    "pipelines/pipeline_v1.py"
+    "pipelines/pipeline_clean.py"
+    "sql/ws1_eda_heatmap.sql"
+    "sql/ws1_attribution.sql"
+    "sql/staging_hospital_flu_clean.sql"
+    "sql/ws2_reveal_comparison.sql"
+    "lib/ws1_triage.py"
+    "lib/reveal_chart.py"
+    "bin/load-reveal"
+)
+
+for rel_file in "${REFERENCE_FILES[@]}"; do
+    if [[ ! -f "${REPO_ROOT}/${rel_file}" ]]; then
+        echo "[FAIL] Reference file missing on main: ${rel_file}" >&2
+        exit 1
+    fi
+done
+
+# 2. Read-only BigQuery table existence and demo:true label checks
+MAIN_TABLES=(
+    "raw.hospital_reference"
+    "raw.hospital_flu_feeds"
+    "ops.pipeline_run_log"
+    "staging.hospital_flu"
+    "staging.hospital_flu_clean"
+    "features.hospital_seasonal_features"
+    "features.hospital_cohorts"
+    "ml.experiment_trials"
+    "ml.forecast_leaderboard"
+)
+
+for tbl in "${MAIN_TABLES[@]}"; do
+    if ! table_meta=$(bq show --project_id="${PROJECT_ID}" --location="${REGION}" --format=json "${PROJECT_ID}:${tbl}" 2>&1); then
+        echo "[FAIL] Required end-state table missing: ${PROJECT_ID}:${tbl}" >&2
+        exit 1
+    fi
+
+    if ! python3 -c '
+import json, sys
+raw = sys.argv[1]
+decoder = json.JSONDecoder()
+meta = None
+for idx, ch in enumerate(raw):
+    if ch == "{":
+        try:
+            candidate, _ = decoder.raw_decode(raw[idx:])
+            if isinstance(candidate, dict):
+                meta = candidate
+                break
+        except Exception:
+            continue
+if not isinstance(meta, dict):
+    sys.exit(1)
+labels = meta.get("labels")
+if not isinstance(labels, dict) or labels.get("demo") != "true":
+    sys.exit(1)
+' "${table_meta}"; then
+        echo "[FAIL] Table ${PROJECT_ID}:${tbl} is missing required label demo:true" >&2
+        exit 1
+    fi
+done
+
+# 3. Read-only BigQuery SQL verification of raw/ops/staging counts and Northeast Spike
+read -r -d '' WS1_SQL <<EOF || true
+WITH
+  counts AS (
+    SELECT
+      (SELECT COUNT(*) FROM \`${PROJECT_ID}.raw.hospital_reference\`) AS raw_ref_rows,
+      (SELECT COUNT(*) FROM \`${PROJECT_ID}.raw.hospital_flu_feeds\`) AS raw_feeds_rows,
+      (SELECT COUNT(*) FROM \`${PROJECT_ID}.ops.pipeline_run_log\`) AS ops_log_rows,
+      (SELECT COUNT(*) FROM \`${PROJECT_ID}.staging.hospital_flu\`) AS staging_rows
+  ),
+  dup_check AS (
+    SELECT COUNT(*) AS duplicate_groups
+    FROM (
+      SELECT hospital_id, feed_date
+      FROM \`${PROJECT_ID}.staging.hospital_flu\`
+      GROUP BY hospital_id, feed_date
+      HAVING COUNT(*) > 1
+    )
+  ),
+  ne_weekly AS (
+    SELECT
+      SUM(CASE WHEN s.feed_date BETWEEN DATE '2026-10-18' AND DATE '2026-10-24' THEN s.positive_flu_tests ELSE 0 END) AS w42_positives,
+      SUM(CASE WHEN s.feed_date BETWEEN DATE '2026-10-25' AND DATE '2026-10-31' THEN s.positive_flu_tests ELSE 0 END) AS w43_positives
+    FROM \`${PROJECT_ID}.staging.hospital_flu\` AS s
+    WHERE s.region = 'Northeast'
+  )
+SELECT
+  c.raw_ref_rows,
+  c.raw_feeds_rows,
+  c.ops_log_rows,
+  c.staging_rows,
+  d.duplicate_groups,
+  n.w42_positives,
+  n.w43_positives,
+  ROUND(SAFE_DIVIDE(n.w43_positives - n.w42_positives, n.w42_positives) * 100.0, 2) AS spike_pct
+FROM counts AS c
+CROSS JOIN dup_check AS d
+CROSS JOIN ne_weekly AS n
+EOF
+
+if ! query_out=$(bq query \
+    --quiet \
+    --use_legacy_sql=false \
+    --project_id="${PROJECT_ID}" \
+    --location="${REGION}" \
+    --format=json \
+    "${WS1_SQL}" 2>&1); then
+    echo "[FAIL] Read-only verification query failed on ${PROJECT_ID}: ${query_out}" >&2
+    exit 1
+fi
+
+# 4. Verify Attribution against runtime Answer Key and Uncleaned Forecast Overshoot in Reveal
+if ! verify_msg=$(PYTHONPATH="${REPO_ROOT}" python3 -c '
+import json
+import sys
+from pathlib import Path
+
+from lib.reveal_chart import (
+    build_reveal_comparison_series,
+    evaluate_reveal_overshoot,
+    resolve_answer_key_path,
+    resolve_reveal_csv_path,
+)
+from lib.ws1_triage import (
+    ATTRIBUTION_TOLERANCE_POINTS,
+    compare_attribution_to_answer_key,
+    reconcile_attribution,
+)
+
+dataset_dir = Path(sys.argv[1])
+answer_key_arg = sys.argv[2]
+reveal_arg = sys.argv[3]
+
+try:
+    ak_path = resolve_answer_key_path(answer_key_arg)
+except Exception as exc:
+    print(f"[FAIL] {exc}")
+    sys.exit(1)
+
+try:
+    rev_path = resolve_reveal_csv_path(reveal_arg)
+except Exception as exc:
+    print(f"[FAIL] {exc}")
+    sys.exit(1)
+
+if not dataset_dir.is_dir():
+    print(f"[FAIL] Dataset directory not found: {dataset_dir}")
+    sys.exit(1)
+
+answer_key = json.loads(ak_path.read_text(encoding="utf-8"))
+attribution_rows = reconcile_attribution(dataset_dir)
+attr_cmp = compare_attribution_to_answer_key(
+    attribution_rows,
+    answer_key,
+    tolerance_points=ATTRIBUTION_TOLERANCE_POINTS,
+)
+if not attr_cmp["passed"]:
+    print(
+        f"[FAIL] Attribution does not match Answer Key within tolerance "
+        f"(+/-{ATTRIBUTION_TOLERANCE_POINTS} pts): {json.dumps(attr_cmp)}"
+    )
+    sys.exit(1)
+
+series = build_reveal_comparison_series(dataset_dir, rev_path)
+overshoot = evaluate_reveal_overshoot(series)
+if not overshoot["uncleaned_visibly_overshoots"]:
+    c_wape = overshoot["clean_wape"]
+    u_wape = overshoot["uncleaned_wape"]
+    u_over = overshoot["uncleaned_mean_overshoot_pct"]
+    print(
+        f"[FAIL] Uncleaned forecast does not visibly overshoot in the Reveal: "
+        f"clean_wape={c_wape}%, "
+        f"uncleaned_wape={u_wape}%, "
+        f"uncleaned_mean_overshoot_pct={u_over}%"
+    )
+    sys.exit(1)
+' "${DATASET_DIR}" "${ANSWER_KEY_LOC}" "${REVEAL_LOC}" 2>&1); then
+    echo "${verify_msg}" >&2
+    exit 1
+fi
+
+echo "[PASS] End-state verification (main) passed: Attribution matches Answer Key within tolerance and uncleaned forecast visibly overshoots in the Reveal."
+exit 0
