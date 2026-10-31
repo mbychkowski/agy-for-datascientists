@@ -13,6 +13,12 @@
 #      left intact by Pipeline v1 (the planted Pipeline Defect).
 #   4. The Northeast Spike in the week ending on the Cutoff (2026-10-31) is
 #      ~+35.0% over the prior week (2026-10-18..2026-10-24).
+#
+# For ws2, verifies all ws1 invariants plus:
+#   5. staging.hospital_flu_clean exists and carries the 'demo:true' label.
+#   6. staging.hospital_flu_clean is non-empty, has 0 duplicate
+#      (hospital_id, feed_date) groups, and has Positivity populated on all
+#      rows with total_flu_tests > 0.
 # ==============================================================================
 
 set -uo pipefail
@@ -29,13 +35,15 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 ENV_FILE="${REPO_ROOT}/demo.env"
 TARGET=""
+ORIG_ARGS=("$@")
+EXTRA_ARGS=()
 
 usage() {
     echo "Usage: bin/verify-start-point <ws1|ws2|main> [OPTIONS]"
     echo ""
     echo "Targets:"
     echo "  ws1   Verify Workstream 1 Start Point (raw, ops, and defective staging.hospital_flu)"
-    echo "  ws2   Verify Workstream 2 Start Point"
+    echo "  ws2   Verify Workstream 2 Start Point (ws1 state plus clean staging.hospital_flu_clean)"
     echo "  main  Verify main demo Start Point"
     echo ""
     echo "Options:"
@@ -46,8 +54,26 @@ usage() {
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --env|-e)
+            if [[ $# -lt 2 ]]; then
+                echo "[FAIL] Missing value for $1" >&2
+                usage >&2
+                exit 1
+            fi
             ENV_FILE="$2"
             shift 2
+            ;;
+        --withheld-dir|--answer-key)
+            if [[ $# -lt 2 ]]; then
+                echo "[FAIL] Missing value for $1" >&2
+                usage >&2
+                exit 1
+            fi
+            EXTRA_ARGS+=("$1" "$2")
+            shift 2
+            ;;
+        --reveal)
+            EXTRA_ARGS+=("$1")
+            shift
             ;;
         --help|-h)
             usage
@@ -77,10 +103,23 @@ if [[ -z "${TARGET}" ]]; then
     exit 1
 fi
 
+if [[ "${TARGET}" != "main" ]] && [[ ${#EXTRA_ARGS[@]} -gt 0 ]]; then
+    echo "[FAIL] Unknown argument: ${EXTRA_ARGS[0]}" >&2
+    usage >&2
+    exit 1
+fi
+
 case "${TARGET}" in
     ws1)
+        WORKSTREAM_LABEL="Workstream 1"
         ;;
-    ws2|main)
+    ws2)
+        WORKSTREAM_LABEL="Workstream 2"
+        ;;
+    main)
+        if [[ -x "${REPO_ROOT}/bin/verify-main-end-state" ]]; then
+            exec "${REPO_ROOT}/bin/verify-main-end-state" "${ORIG_ARGS[@]}"
+        fi
         echo "[FAIL] Start Point verification for '${TARGET}' is not yet implemented." >&2
         exit 1
         ;;
@@ -114,16 +153,20 @@ if ! command -v bq >/dev/null 2>&1; then
     exit 1
 fi
 
-WS1_TABLES=(
+REQUIRED_TABLES=(
     "raw.hospital_reference"
     "raw.hospital_flu_feeds"
     "ops.pipeline_run_log"
     "staging.hospital_flu"
 )
 
-for tbl in "${WS1_TABLES[@]}"; do
+if [[ "${TARGET}" == "ws2" ]]; then
+    REQUIRED_TABLES+=("staging.hospital_flu_clean")
+fi
+
+for tbl in "${REQUIRED_TABLES[@]}"; do
     if ! table_meta=$(bq show --project_id="${PROJECT_ID}" --location="${REGION}" --format=json "${PROJECT_ID}:${tbl}" 2>&1); then
-        echo "[FAIL] Required Workstream 1 table missing: ${PROJECT_ID}:${tbl}" >&2
+        echo "[FAIL] Required ${WORKSTREAM_LABEL} table missing: ${PROJECT_ID}:${tbl}" >&2
         exit 1
     fi
 
@@ -152,7 +195,64 @@ if not isinstance(labels, dict) or labels.get("demo") != "true":
     fi
 done
 
-read -r -d '' WS1_SQL <<EOF || true
+if [[ "${TARGET}" == "ws2" ]]; then
+    read -r -d '' VERIFY_SQL <<EOF || true
+WITH
+  counts AS (
+    SELECT
+      (SELECT COUNT(*) FROM \`${PROJECT_ID}.raw.hospital_reference\`) AS raw_ref_rows,
+      (SELECT COUNT(*) FROM \`${PROJECT_ID}.raw.hospital_flu_feeds\`) AS raw_feeds_rows,
+      (SELECT COUNT(*) FROM \`${PROJECT_ID}.ops.pipeline_run_log\`) AS ops_log_rows,
+      (SELECT COUNT(*) FROM \`${PROJECT_ID}.staging.hospital_flu\`) AS staging_rows,
+      (SELECT COUNT(*) FROM \`${PROJECT_ID}.staging.hospital_flu_clean\`) AS clean_staging_rows,
+      (SELECT COUNT(*) FROM \`${PROJECT_ID}.staging.hospital_flu_clean\` WHERE total_flu_tests > 0 AND positivity IS NOT NULL) AS clean_positivity_populated_rows,
+      (SELECT COUNT(*) FROM \`${PROJECT_ID}.staging.hospital_flu_clean\` WHERE total_flu_tests > 0 AND positivity IS NULL) AS clean_missing_positivity_rows
+  ),
+  dup_check AS (
+    SELECT COUNT(*) AS duplicate_groups
+    FROM (
+      SELECT hospital_id, feed_date
+      FROM \`${PROJECT_ID}.staging.hospital_flu\`
+      GROUP BY hospital_id, feed_date
+      HAVING COUNT(*) > 1
+    )
+  ),
+  clean_dup_check AS (
+    SELECT COUNT(*) AS clean_duplicate_groups
+    FROM (
+      SELECT hospital_id, feed_date
+      FROM \`${PROJECT_ID}.staging.hospital_flu_clean\`
+      GROUP BY hospital_id, feed_date
+      HAVING COUNT(*) > 1
+    )
+  ),
+  ne_weekly AS (
+    SELECT
+      SUM(CASE WHEN s.feed_date BETWEEN DATE '2026-10-18' AND DATE '2026-10-24' THEN s.positive_flu_tests ELSE 0 END) AS w42_positives,
+      SUM(CASE WHEN s.feed_date BETWEEN DATE '2026-10-25' AND DATE '2026-10-31' THEN s.positive_flu_tests ELSE 0 END) AS w43_positives
+    FROM \`${PROJECT_ID}.staging.hospital_flu\` AS s
+    WHERE s.region = 'Northeast'
+  )
+SELECT
+  c.raw_ref_rows,
+  c.raw_feeds_rows,
+  c.ops_log_rows,
+  c.staging_rows,
+  c.clean_staging_rows,
+  c.clean_positivity_populated_rows,
+  c.clean_missing_positivity_rows,
+  d.duplicate_groups,
+  cd.clean_duplicate_groups,
+  n.w42_positives,
+  n.w43_positives,
+  ROUND(SAFE_DIVIDE(n.w43_positives - n.w42_positives, n.w42_positives) * 100.0, 2) AS spike_pct
+FROM counts AS c
+CROSS JOIN dup_check AS d
+CROSS JOIN clean_dup_check AS cd
+CROSS JOIN ne_weekly AS n
+EOF
+else
+    read -r -d '' VERIFY_SQL <<EOF || true
 WITH
   counts AS (
     SELECT
@@ -190,6 +290,7 @@ FROM counts AS c
 CROSS JOIN dup_check AS d
 CROSS JOIN ne_weekly AS n
 EOF
+fi
 
 if ! query_out=$(bq query \
     --quiet \
@@ -197,7 +298,7 @@ if ! query_out=$(bq query \
     --project_id="${PROJECT_ID}" \
     --location="${REGION}" \
     --format=json \
-    "${WS1_SQL}" 2>&1); then
+    "${VERIFY_SQL}" 2>&1); then
     echo "[FAIL] Read-only verification query failed on ${PROJECT_ID}: ${query_out}" >&2
     exit 1
 fi
@@ -206,6 +307,7 @@ if ! check_msg=$(python3 -c '
 import json, sys
 
 raw = sys.argv[1]
+target = sys.argv[2]
 decoder = json.JSONDecoder()
 rows = None
 for idx, ch in enumerate(raw):
@@ -245,10 +347,34 @@ else:
 if abs(spike_pct - 35.0) > 1.0:
     print(f"[FAIL] Northeast Spike in week ending on Cutoff (2026-10-31) is {spike_pct:.2f}% (expected ~+35.0%).")
     sys.exit(1)
-' "${query_out}" 2>&1); then
+
+if target == "ws2":
+    clean_rows = int(row.get("clean_staging_rows") or 0)
+    if clean_rows <= 0:
+        print(f"[FAIL] Clean staging table staging.hospital_flu_clean has 0 rows (clean_staging_rows={clean_rows}).")
+        sys.exit(1)
+
+    clean_dups = int(row.get("clean_duplicate_groups") or 0)
+    if clean_dups > 0:
+        print(f"[FAIL] Clean staging table staging.hospital_flu_clean has {clean_dups} duplicate (hospital_id, feed_date) groups (expected 0).")
+        sys.exit(1)
+
+    clean_pos_populated = int(row.get("clean_positivity_populated_rows") or 0)
+    clean_missing_pos = int(row.get("clean_missing_positivity_rows") or 0)
+    if clean_pos_populated <= 0 or clean_missing_pos > 0:
+        print(
+            "[FAIL] Clean staging table staging.hospital_flu_clean has unpopulated Positivity "
+            f"(clean_positivity_populated_rows={clean_pos_populated}, clean_missing_positivity_rows={clean_missing_pos})."
+        )
+        sys.exit(1)
+' "${query_out}" "${TARGET}" 2>&1); then
     echo "${check_msg}" >&2
     exit 1
 fi
 
-echo "[PASS] Workstream 1 Start Point (ws1) verified: raw, ops, and defective staging.hospital_flu exist with demo:true labels, duplicates intact, and Northeast Spike at +35.0% in the week ending on the Cutoff."
+if [[ "${TARGET}" == "ws2" ]]; then
+    echo "[PASS] Workstream 2 Start Point (ws2) verified: raw, ops, defective staging.hospital_flu, and clean staging.hospital_flu_clean exist with demo:true labels, no duplicate (hospital_id, feed_date) rows in staging.hospital_flu_clean, and Positivity populated."
+else
+    echo "[PASS] Workstream 1 Start Point (ws1) verified: raw, ops, and defective staging.hospital_flu exist with demo:true labels, duplicates intact, and Northeast Spike at +35.0% in the week ending on the Cutoff."
+fi
 exit 0
