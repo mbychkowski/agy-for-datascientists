@@ -337,11 +337,15 @@ class TestPreflightCLI(unittest.TestCase):
                 proc.stdout,
             )
             self.assertIn(
+                "[PASS] Java 21 runtime is available for local Spark 4 testing",
+                proc.stdout,
+            )
+            self.assertIn(
                 "Manual Verification Steps (Not Scriptable by CLI Harness):",
                 proc.stdout,
             )
             self.assertIn("[MANUAL] VS Code Data Agent Kit UI", proc.stdout)
-            self.assertIn("Summary: 12 passed, 0 failed.", proc.stdout)
+            self.assertIn("Summary: 13 passed, 0 failed.", proc.stdout)
 
     def test_preflight_runs_ai_forecast_and_kmeans_and_cleans_up_temp_model(self):
         """preflight must invoke AI.FORECAST, train a tiny K-means model in ml, and clean up the temporary model."""

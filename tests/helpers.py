@@ -18,6 +18,8 @@ RESET_BIN = WORKTREE_ROOT / "bin" / "reset"
 RESET_SYMLINK = WORKTREE_ROOT / "reset"
 CHECKPOINT_BIN = WORKTREE_ROOT / "bin" / "checkpoint"
 CHECKPOINT_SYMLINK = WORKTREE_ROOT / "checkpoint"
+RUN_PIPELINE_CLEAN_BIN = WORKTREE_ROOT / "bin" / "run-pipeline-clean"
+RUN_PIPELINE_CLEAN_SYMLINK = WORKTREE_ROOT / "run-pipeline-clean"
 VENDORED_DAK_DIR = WORKTREE_ROOT / ".agents" / "plugins" / "dak-bigquery"
 
 
@@ -107,6 +109,13 @@ def setup_preflight_test_env(
     ws1_no_duplicates: bool = False,
     ws1_wrong_spike: bool = False,
     dataset_tables: dict[str, dict[str, dict[str, str]]] | None = None,
+    java_version_override: str = "21.0.4",
+    java_missing: bool = False,
+    clean_equiv_row_count_a: int = 15260,
+    clean_equiv_row_count_b: int = 15260,
+    clean_equiv_diff_ab: int = 0,
+    clean_equiv_diff_ba: int = 0,
+    clean_equiv_dup_keys: int = 0,
 ) -> tuple[Path, dict[str, str], Path]:
     """Build a complete mock CLI and ADC environment for testing bin/preflight and CLIs."""
     tmp_path = Path(tmpdir)
@@ -224,6 +233,11 @@ exit 0
         'echo "ERROR: model cleanup failed" >&2; exit 1'
         if kmeans_cleanup_fails
         else "exit 0"
+    )
+    clean_equiv_json = (
+        f'[{{"row_count_a":{clean_equiv_row_count_a},"row_count_b":{clean_equiv_row_count_b},'
+        f'"diff_a_minus_b_count":{clean_equiv_diff_ab},"diff_b_minus_a_count":{clean_equiv_diff_ba},'
+        f'"duplicate_key_count":{clean_equiv_dup_keys}}}]'
     )
 
     fake_bq = bin_dir / "bq"
@@ -374,6 +388,10 @@ for tok in args:
 ' "{bq_state_file}" "$@"
     exit 0
 fi
+if [[ "$*" == *"diff_a_minus_b_count"* ]]; then
+    echo '{clean_equiv_json}'
+    exit 0
+fi
 if [[ "$*" == *"duplicate_groups"* ]]; then
     echo '{ws1_query_json}'
     exit 0
@@ -392,6 +410,30 @@ exit 0
         encoding="utf-8",
     )
     fake_bq.chmod(0o755)
+
+    fake_java = bin_dir / "java"
+    if java_missing:
+        fake_java.write_text(
+            f"""#!/usr/bin/env bash
+echo "java $*" >> "{log_file}"
+echo "java: runtime not found" >&2
+exit 127
+""",
+            encoding="utf-8",
+        )
+    else:
+        fake_java.write_text(
+            f"""#!/usr/bin/env bash
+echo "java $*" >> "{log_file}"
+if [[ "$*" == *"-XshowSettings:properties"* ]]; then
+    echo "    java.home = {tmp_path}" >&2
+fi
+echo 'openjdk version "{java_version_override}" 2024-07-16' >&2
+exit 0
+""",
+            encoding="utf-8",
+        )
+    fake_java.chmod(0o755)
 
     if subagent_fails:
         subagent_script = 'echo "ERROR: subagent dispatch timed out" >&2; exit 1'
@@ -449,6 +491,11 @@ exit 0
     env["PREFLIGHT_KMEANS_MODEL"] = "_preflight_kmeans_test"
     env["PREFLIGHT_AGY_TIMEOUT"] = "5s"
     env["PIPELINE_V1_BATCH_ID"] = "ws1-pipeline-v1-test"
+    env["PIPELINE_CLEAN_BATCH_ID"] = "ws1-pipeline-clean-test"
+    env["RECORDED_RUNTIMES_FILE"] = str(tmp_path / "recorded_runtimes.json")
+    env["PREFLIGHT_STRICT_JAVA_PATH"] = "1"
+    env["JAVA_HOME"] = str(tmp_path)
+    env["JAVA_21_HOME"] = ""
 
     workspace_skills_dir = tmp_path / "workspace-gemini-skills"
     if not missing_workspace_dak_skills:

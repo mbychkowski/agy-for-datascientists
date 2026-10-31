@@ -1,0 +1,22 @@
+{
+  "ws1_pipeline_v1_dataproc_runtime_3_0": {
+    "script": "pipelines/pipeline_v1.py",
+    "runner": "bin/run-pipeline-v1",
+    "dataproc_serverless_runtime": "3.0",
+    "target_table": "staging.hospital_flu",
+    "baseline_observed_seconds": 88,
+    "last_observed_seconds": 88,
+    "supports_async": false
+  },
+  "ws1_pipeline_clean_dataproc_runtime_3_0": {
+    "script": "pipelines/pipeline_clean.py",
+    "runner": "bin/run-pipeline-clean",
+    "dataproc_serverless_runtime": "3.0",
+    "target_table": "staging.hospital_flu_clean",
+    "baseline_observed_seconds": 94,
+    "last_observed_seconds": 94,
+    "last_batch_id": "ws1-pipeline-clean-baseline",
+    "supports_async": true,
+    "sql_fallback": "bin/run-pipeline-clean --sql-fallback"
+  }
+}
