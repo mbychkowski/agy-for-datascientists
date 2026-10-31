@@ -576,6 +576,18 @@ class TestWorkstream2StartPoint(unittest.TestCase):
             )
             if fetch_ws2.returncode == 0:
                 ws2_ref = "origin/workstream-2-start"
+            else:
+                # On GitHub Actions pull_request runs before workstream-2-start is cut,
+                # HEAD is refs/pull/<PR>/merge (a synthetic merge commit); inspect HEAD^2.
+                parent2_chk = subprocess.run(
+                    ["git", "rev-parse", "--verify", "HEAD^2"],
+                    cwd=WORKTREE_ROOT,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                if parent2_chk.returncode == 0:
+                    ws2_ref = "HEAD^2"
 
         # 1. Verify ws1_ref is an ancestor of ws2_ref
         anc_proc = subprocess.run(
