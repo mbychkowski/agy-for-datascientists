@@ -1,0 +1,338 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# Safe Reset to Workstream Start Point
+#
+# Resets the demo environment to the requested Start Point (ws1):
+#   - Inspects only working demo datasets (raw, ops, staging, features, ml).
+#   - Never touches buckets, checkpoint, other datasets, or infrastructure.
+#   - Strictly preserves any table that does not carry the 'demo:true' label.
+#   - Lists all tables to be dropped and rebuilt, and prompts for confirmation
+#     before dropping anything (unless --yes / -y is passed).
+#   - Drops live-created and loaded Reveal tables carrying 'demo:true'.
+#   - Restores raw, ops, and the defective staging.hospital_flu table.
+#   - Runs bin/verify-start-point ws1 to confirm the restored state.
+# ==============================================================================
+
+set -uo pipefail
+
+# Resolve real script directory through any symlinks (CODING_STANDARDS.md §1)
+SOURCE="${BASH_SOURCE[0]}"
+while [[ -h "${SOURCE}" ]]; do
+    DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
+    SOURCE="$(readlink "${SOURCE}")"
+    [[ "${SOURCE}" != /* ]] && SOURCE="${DIR}/${SOURCE}"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+ENV_FILE="${REPO_ROOT}/demo.env"
+DATASET_DIR="${REPO_ROOT}/fixtures/mock_dataset"
+TARGET=""
+AUTO_YES=false
+POSITIONAL_DATASET_SET=false
+
+usage() {
+    echo "Usage: bin/reset <ws1|ws2> [OPTIONS] [dataset_location]"
+    echo ""
+    echo "Targets:"
+    echo "  ws1   Reset to Workstream 1 Start Point (raw, ops, and defective staging.hospital_flu)"
+    echo "  ws2   Reset to Workstream 2 Start Point"
+    echo ""
+    echo "Options:"
+    echo "  -e, --env <path>          Path to environment file (default: demo.env)"
+    echo "  -d, --dataset-dir <path>  Path or gs:// URI to dataset root (default: fixtures/mock_dataset)"
+    echo "  -y, --yes                 Skip interactive confirmation prompt"
+    echo "  -h, --help                Show this help message"
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --env|-e)
+            if [[ $# -lt 2 ]]; then
+                echo "[FAIL] Missing value for $1" >&2
+                usage >&2
+                exit 1
+            fi
+            ENV_FILE="$2"
+            shift 2
+            ;;
+        --dataset-dir|-d)
+            if [[ $# -lt 2 ]]; then
+                echo "[FAIL] Missing value for $1" >&2
+                usage >&2
+                exit 1
+            fi
+            DATASET_DIR="$2"
+            shift 2
+            ;;
+        --yes|-y)
+            AUTO_YES=true
+            shift
+            ;;
+        --help|-h)
+            usage
+            exit 0
+            ;;
+        -*)
+            echo "[FAIL] Unknown argument: $1" >&2
+            usage >&2
+            exit 1
+            ;;
+        *)
+            if [[ -z "${TARGET}" ]]; then
+                TARGET="$1"
+                shift
+            elif [[ "${POSITIONAL_DATASET_SET}" == "false" ]]; then
+                DATASET_DIR="$1"
+                POSITIONAL_DATASET_SET=true
+                shift
+            else
+                echo "[FAIL] Unexpected argument: $1" >&2
+                usage >&2
+                exit 1
+            fi
+            ;;
+    esac
+done
+
+if [[ -z "${TARGET}" ]]; then
+    echo "[FAIL] Missing required reset target (<ws1|ws2>)." >&2
+    usage >&2
+    exit 1
+fi
+
+case "${TARGET}" in
+    ws1)
+        ;;
+    ws2)
+        echo "[FAIL] Reset for 'ws2' is not yet implemented." >&2
+        exit 1
+        ;;
+    *)
+        echo "[FAIL] Unknown reset target: ${TARGET} (expected ws1 or ws2)." >&2
+        usage >&2
+        exit 1
+        ;;
+esac
+
+if [[ ! -f "${ENV_FILE}" ]]; then
+    echo "[FAIL] Environment file not found: ${ENV_FILE}" >&2
+    exit 1
+fi
+
+# shellcheck disable=SC1090
+source "${ENV_FILE}"
+
+if [[ -z "${PROJECT_ID:-}" ]] || [[ "${PROJECT_ID}" == *"your-"* ]]; then
+    echo "[FAIL] PROJECT_ID is unset or contains a placeholder value in ${ENV_FILE}" >&2
+    exit 1
+fi
+
+if [[ -z "${REGION:-}" ]] || [[ "${REGION}" == *"your-"* ]]; then
+    echo "[FAIL] REGION is unset or contains a placeholder value in ${ENV_FILE}" >&2
+    exit 1
+fi
+
+if [[ -z "${STAGING_BUCKET:-}" ]] || [[ "${STAGING_BUCKET}" == *"your-"* ]]; then
+    echo "[FAIL] STAGING_BUCKET is unset or contains a placeholder value in ${ENV_FILE}" >&2
+    exit 1
+fi
+
+if ! command -v bq >/dev/null 2>&1; then
+    echo "[FAIL] bq CLI is not installed or not in PATH." >&2
+    exit 1
+fi
+
+# Only inspect working demo datasets; never touch checkpoint, buckets, or other datasets
+DEMO_WORKING_DATASETS=(
+    "raw"
+    "ops"
+    "staging"
+    "features"
+    "ml"
+)
+
+WS1_CORE_TABLES=(
+    "raw.hospital_reference"
+    "raw.hospital_flu_feeds"
+    "ops.pipeline_run_log"
+    "staging.hospital_flu"
+)
+
+is_core_table() {
+    local candidate="$1"
+    local core
+    for core in "${WS1_CORE_TABLES[@]}"; do
+        if [[ "${core}" == "${candidate}" ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+parse_bq_ls_tables() {
+    python3 -c '
+import json, sys
+raw = sys.argv[1]
+decoder = json.JSONDecoder()
+items = None
+for idx, ch in enumerate(raw):
+    if ch == "[":
+        try:
+            candidate, _ = decoder.raw_decode(raw[idx:])
+            if isinstance(candidate, list):
+                items = candidate
+                break
+        except Exception:
+            continue
+if not isinstance(items, list):
+    sys.exit(0)
+for item in items:
+    if not isinstance(item, dict):
+        continue
+    tref = item.get("tableReference")
+    tid = ""
+    if isinstance(tref, dict):
+        tid = str(tref.get("tableId") or "").strip()
+    if not tid:
+        tid = str(item.get("tableId") or "").strip()
+    if not tid and item.get("id"):
+        tid = str(item["id"]).split(".")[-1].strip()
+    if tid:
+        print(tid)
+' "$1"
+}
+
+has_demo_true_label() {
+    python3 -c '
+import json, sys
+raw = sys.argv[1]
+decoder = json.JSONDecoder()
+meta = None
+for idx, ch in enumerate(raw):
+    if ch == "{":
+        try:
+            candidate, _ = decoder.raw_decode(raw[idx:])
+            if isinstance(candidate, dict):
+                meta = candidate
+                break
+        except Exception:
+            continue
+if not isinstance(meta, dict):
+    sys.exit(1)
+labels = meta.get("labels")
+if not isinstance(labels, dict) or labels.get("demo") != "true":
+    sys.exit(1)
+' "$1"
+}
+
+TABLES_TO_DROP=()
+TABLES_PRESERVED=()
+
+for ds in "${DEMO_WORKING_DATASETS[@]}"; do
+    if ! ls_out=$(bq ls --project_id="${PROJECT_ID}" --location="${REGION}" --format=json "${PROJECT_ID}:${ds}" 2>&1); then
+        echo "[FAIL] Failed to list tables in demo dataset ${PROJECT_ID}:${ds}: ${ls_out}" >&2
+        exit 1
+    fi
+
+    table_list="$(parse_bq_ls_tables "${ls_out}")"
+    while IFS= read -r tbl; do
+        [[ -z "${tbl}" ]] && continue
+        ds_tbl="${ds}.${tbl}"
+
+        if ! show_out=$(bq show --project_id="${PROJECT_ID}" --location="${REGION}" --format=json "${PROJECT_ID}:${ds_tbl}" 2>&1); then
+            echo "[FAIL] Failed to inspect table metadata for ${PROJECT_ID}:${ds_tbl}: ${show_out}" >&2
+            exit 1
+        fi
+
+        if has_demo_true_label "${show_out}"; then
+            if ! is_core_table "${ds_tbl}"; then
+                TABLES_TO_DROP+=("${ds_tbl}")
+            fi
+        else
+            if is_core_table "${ds_tbl}"; then
+                echo "[FAIL] Refusing to overwrite non-demo table ${PROJECT_ID}:${ds_tbl} (missing demo:true label)" >&2
+                exit 1
+            fi
+            echo "[SKIP] Preserving non-demo table ${PROJECT_ID}:${ds_tbl} (missing demo:true label)"
+            TABLES_PRESERVED+=("${ds_tbl}")
+        fi
+    done <<< "${table_list}"
+done
+
+echo "=============================================================================="
+echo "Reset Plan for Workstream 1 (${TARGET}) in project ${PROJECT_ID}"
+echo "=============================================================================="
+echo "Tables to DROP (demo:true live-created and Reveal tables):"
+if [[ ${#TABLES_TO_DROP[@]} -eq 0 ]]; then
+    echo "  (none)"
+else
+    for ds_tbl in "${TABLES_TO_DROP[@]}"; do
+        echo "  - ${PROJECT_ID}:${ds_tbl}"
+    done
+fi
+echo ""
+echo "Tables to REBUILD (ws1 Start Point tables with demo:true):"
+for core_tbl in "${WS1_CORE_TABLES[@]}"; do
+    echo "  - ${PROJECT_ID}:${core_tbl}"
+done
+if [[ ${#TABLES_PRESERVED[@]} -gt 0 ]]; then
+    echo ""
+    echo "Tables PRESERVED (missing demo:true label — untouched):"
+    for pres_tbl in "${TABLES_PRESERVED[@]}"; do
+        echo "  - ${PROJECT_ID}:${pres_tbl}"
+    done
+fi
+echo "=============================================================================="
+
+if [[ "${AUTO_YES}" != "true" ]]; then
+    printf "Proceed with reset to %s? [y/N]: " "${TARGET}"
+    if ! read -r reply; then
+        reply=""
+    fi
+    if [[ ! "${reply}" =~ ^[Yy]([Ee][Ss])?$ ]]; then
+        echo "[ABORT] Reset cancelled by user."
+        exit 1
+    fi
+fi
+
+if [[ ${#TABLES_TO_DROP[@]} -gt 0 ]]; then
+    echo "==> Dropping demo:true live-created and Reveal tables..."
+    for ds_tbl in "${TABLES_TO_DROP[@]}"; do
+        echo "Dropping ${PROJECT_ID}:${ds_tbl}..."
+        if ! bq --project_id="${PROJECT_ID}" --location="${REGION}" rm -f -t "${PROJECT_ID}:${ds_tbl}"; then
+            echo "[FAIL] Failed to drop table ${PROJECT_ID}:${ds_tbl}" >&2
+            exit 1
+        fi
+    done
+fi
+
+echo "==> Step 1/3: Restoring raw and ops tables..."
+if ! "${REPO_ROOT}/bin/load-raw-ops" --env "${ENV_FILE}" --dataset-dir "${DATASET_DIR}"; then
+    echo "[FAIL] Step 1/3 (bin/load-raw-ops) failed." >&2
+    exit 1
+fi
+
+echo "==> Step 2/3: Restoring defective staging.hospital_flu..."
+if bq show --project_id="${PROJECT_ID}" --location="${REGION}" --format=json "${PROJECT_ID}:checkpoint.ws1_staging_hospital_flu" >/dev/null 2>&1; then
+    echo "Restoring staging.hospital_flu from Checkpoint ws1_pipeline_v1..."
+    if ! "${REPO_ROOT}/bin/checkpoint" ws1_pipeline_v1 --env "${ENV_FILE}"; then
+        echo "[FAIL] Step 2/3 (bin/checkpoint ws1_pipeline_v1) failed." >&2
+        exit 1
+    fi
+else
+    echo "Checkpoint ws1_staging_hospital_flu not found; running Pipeline v1 on Dataproc Serverless..."
+    if ! "${REPO_ROOT}/bin/run-pipeline-v1" --env "${ENV_FILE}"; then
+        echo "[FAIL] Step 2/3 (bin/run-pipeline-v1) failed." >&2
+        exit 1
+    fi
+fi
+
+echo "==> Step 3/3: Verifying Workstream 1 Start Point (ws1)..."
+if ! "${REPO_ROOT}/bin/verify-start-point" ws1 --env "${ENV_FILE}"; then
+    echo "[FAIL] Step 3/3 (bin/verify-start-point ws1) failed." >&2
+    exit 1
+fi
+
+echo "[PASS] Reset to Workstream 1 Start Point (ws1) complete and verified."
+exit 0

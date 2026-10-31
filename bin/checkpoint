@@ -1,0 +1,304 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# One-Command Checkpoint Registry & Swap CLI
+#
+# Lists registered Checkpoints from checkpoints/manifest.d/*.json, swaps a
+# named Checkpoint from the checkpoint dataset into its live target table (with
+# label demo:true), or builds/materialises Checkpoint tables into checkpoint.
+#
+# Later tickets register new Checkpoints by dropping JSON descriptors into
+# checkpoints/manifest.d/ without modifying this script.
+# ==============================================================================
+
+set -uo pipefail
+
+# Resolve real script directory through any symlinks (CODING_STANDARDS.md §1)
+SOURCE="${BASH_SOURCE[0]}"
+while [[ -h "${SOURCE}" ]]; do
+    DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
+    SOURCE="$(readlink "${SOURCE}")"
+    [[ "${SOURCE}" != /* ]] && SOURCE="${DIR}/${SOURCE}"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+ENV_FILE="${REPO_ROOT}/demo.env"
+MANIFEST_DIR="${CHECKPOINT_MANIFEST_DIR:-${REPO_ROOT}/checkpoints/manifest.d}"
+MODE=""
+TARGET_ID=""
+
+usage() {
+    echo "Usage:"
+    echo "  bin/checkpoint --list [--env <path>]"
+    echo "  bin/checkpoint list [--env <path>]"
+    echo "  bin/checkpoint <checkpoint_id> [--env <path>]"
+    echo "  bin/checkpoint swap <checkpoint_id> [--env <path>]"
+    echo "  bin/checkpoint --build [<checkpoint_id>|all] [--env <path>]"
+    echo ""
+    echo "Options:"
+    echo "  -l, --list                      List all registered Checkpoints"
+    echo "  -b, --build [<id>|all]          Build/materialise Checkpoint table(s) into checkpoint dataset"
+    echo "  -e, --env <path>                Path to environment file (default: demo.env)"
+    echo "  -h, --help                      Show this help message"
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --list|-l|list)
+            MODE="list"
+            shift
+            ;;
+        --build|-b|build)
+            MODE="build"
+            shift
+            if [[ $# -gt 0 ]] && [[ "$1" != -* ]]; then
+                TARGET_ID="$1"
+                shift
+            fi
+            ;;
+        swap)
+            MODE="swap"
+            shift
+            if [[ $# -gt 0 ]] && [[ "$1" != -* ]]; then
+                TARGET_ID="$1"
+                shift
+            fi
+            ;;
+        --env|-e)
+            if [[ $# -lt 2 ]]; then
+                echo "[FAIL] Missing value for $1" >&2
+                usage >&2
+                exit 1
+            fi
+            ENV_FILE="$2"
+            shift 2
+            ;;
+        --help|-h)
+            usage
+            exit 0
+            ;;
+        -*)
+            echo "[FAIL] Unknown argument: $1" >&2
+            usage >&2
+            exit 1
+            ;;
+        *)
+            if [[ -z "${TARGET_ID}" ]]; then
+                TARGET_ID="$1"
+                if [[ -z "${MODE}" ]]; then
+                    MODE="swap"
+                fi
+                shift
+            else
+                echo "[FAIL] Unexpected argument: $1" >&2
+                usage >&2
+                exit 1
+            fi
+            ;;
+    esac
+done
+
+if [[ -z "${MODE}" ]]; then
+    echo "[FAIL] Missing Checkpoint action or <checkpoint_id>." >&2
+    usage >&2
+    exit 1
+fi
+
+if [[ ! -d "${MANIFEST_DIR}" ]]; then
+    echo "[FAIL] Checkpoint manifest directory not found: ${MANIFEST_DIR}" >&2
+    exit 1
+fi
+
+load_manifest_tsv() {
+    python3 -c '
+import glob
+import json
+import os
+import sys
+
+manifest_dir = sys.argv[1]
+files = sorted(glob.glob(os.path.join(manifest_dir, "*.json")))
+entries = []
+for path in files:
+    with open(path, "r", encoding="utf-8") as fh:
+        data = json.load(fh)
+    cid = str(data.get("id", "")).strip()
+    ws = str(data.get("workstream", "")).strip()
+    src = str(data.get("source_table", "")).strip()
+    dst = str(data.get("target_table", "")).strip()
+    desc = str(data.get("description", "")).strip()
+    sql_file = str(data.get("sql_file", "")).strip()
+    if not cid or not src or not dst:
+        sys.stderr.write(f"[FAIL] Invalid Checkpoint descriptor in {path}\n")
+        sys.exit(1)
+    entries.append((cid, ws, src, dst, desc, sql_file))
+
+entries.sort(key=lambda item: item[0])
+for cid, ws, src, dst, desc, sql_file in entries:
+    print(f"{cid}\t{ws}\t{src}\t{dst}\t{desc}\t{sql_file}")
+' "${MANIFEST_DIR}"
+}
+
+if ! MANIFEST_TSV="$(load_manifest_tsv)"; then
+    exit 1
+fi
+
+if [[ -z "${MANIFEST_TSV}" ]]; then
+    echo "[FAIL] No Checkpoint descriptors (*.json) found in ${MANIFEST_DIR}" >&2
+    exit 1
+fi
+
+if [[ "${MODE}" == "list" ]]; then
+    echo "Available Checkpoints (${MANIFEST_DIR}):"
+    printf "  %-24s %-8s %-62s %s\n" "ID" "WS" "MAPPING (SOURCE -> TARGET)" "DESCRIPTION"
+    printf "  %-24s %-8s %-62s %s\n" "------------------------" "--------" "--------------------------------------------------------------" "-----------"
+    while IFS=$'\t' read -r cid ws src dst desc _sql_file; do
+        [[ -z "${cid}" ]] && continue
+        printf "  %-24s %-8s %-62s %s\n" "${cid}" "${ws}" "${src} -> ${dst}" "${desc}"
+    done <<< "${MANIFEST_TSV}"
+    exit 0
+fi
+
+require_env_and_bq() {
+    if [[ ! -f "${ENV_FILE}" ]]; then
+        echo "[FAIL] Environment file not found: ${ENV_FILE}" >&2
+        exit 1
+    fi
+
+    # shellcheck disable=SC1090
+    source "${ENV_FILE}"
+
+    if [[ -z "${PROJECT_ID:-}" ]] || [[ "${PROJECT_ID}" == *"your-"* ]]; then
+        echo "[FAIL] PROJECT_ID is unset or contains a placeholder value in ${ENV_FILE}" >&2
+        exit 1
+    fi
+
+    if [[ -z "${REGION:-}" ]] || [[ "${REGION}" == *"your-"* ]]; then
+        echo "[FAIL] REGION is unset or contains a placeholder value in ${ENV_FILE}" >&2
+        exit 1
+    fi
+
+    if ! command -v bq >/dev/null 2>&1; then
+        echo "[FAIL] bq CLI is not installed or not in PATH." >&2
+        exit 1
+    fi
+}
+
+available_ids_list() {
+    local ids=()
+    while IFS=$'\t' read -r cid _ws _src _dst _desc _sql; do
+        [[ -n "${cid}" ]] && ids+=("${cid}")
+    done <<< "${MANIFEST_TSV}"
+    local IFS=", "
+    echo "${ids[*]}"
+}
+
+if [[ "${MODE}" == "swap" ]]; then
+    if [[ -z "${TARGET_ID}" ]]; then
+        echo "[FAIL] Missing <checkpoint_id> for swap." >&2
+        usage >&2
+        exit 1
+    fi
+
+    MATCH_FOUND=false
+    MATCH_SRC=""
+    MATCH_DST=""
+    while IFS=$'\t' read -r cid _ws src dst _desc _sql_file; do
+        if [[ "${cid}" == "${TARGET_ID}" ]]; then
+            MATCH_FOUND=true
+            MATCH_SRC="${src}"
+            MATCH_DST="${dst}"
+            break
+        fi
+    done <<< "${MANIFEST_TSV}"
+
+    if [[ "${MATCH_FOUND}" != "true" ]]; then
+        echo "[FAIL] Unknown Checkpoint: ${TARGET_ID} (available: $(available_ids_list))" >&2
+        exit 1
+    fi
+
+    require_env_and_bq
+
+    echo "Verifying Checkpoint source table ${PROJECT_ID}:${MATCH_SRC}..."
+    if ! bq show --project_id="${PROJECT_ID}" --location="${REGION}" --format=json "${PROJECT_ID}:${MATCH_SRC}" >/dev/null 2>&1; then
+        echo "[FAIL] Checkpoint source table does not exist: ${PROJECT_ID}:${MATCH_SRC}" >&2
+        exit 1
+    fi
+
+    echo "Copying ${PROJECT_ID}:${MATCH_SRC} -> ${PROJECT_ID}:${MATCH_DST}..."
+    if ! bq --project_id="${PROJECT_ID}" --location="${REGION}" cp -f \
+        "${PROJECT_ID}:${MATCH_SRC}" \
+        "${PROJECT_ID}:${MATCH_DST}"; then
+        echo "[FAIL] Failed to copy Checkpoint ${PROJECT_ID}:${MATCH_SRC} to ${PROJECT_ID}:${MATCH_DST}" >&2
+        exit 1
+    fi
+
+    echo "Applying label demo:true to ${PROJECT_ID}:${MATCH_DST}..."
+    if ! bq --project_id="${PROJECT_ID}" --location="${REGION}" update \
+        --set_label demo:true \
+        "${PROJECT_ID}:${MATCH_DST}"; then
+        echo "[FAIL] Failed to apply demo:true label to ${PROJECT_ID}:${MATCH_DST}" >&2
+        exit 1
+    fi
+
+    echo "[PASS] Swapped Checkpoint '${TARGET_ID}': ${PROJECT_ID}:${MATCH_SRC} -> ${PROJECT_ID}:${MATCH_DST}"
+    exit 0
+fi
+
+if [[ "${MODE}" == "build" ]]; then
+    if [[ -z "${TARGET_ID}" ]]; then
+        TARGET_ID="all"
+    fi
+
+    require_env_and_bq
+
+    BUILT_COUNT=0
+    while IFS=$'\t' read -r cid _ws src dst _desc sql_file; do
+        [[ -z "${cid}" ]] && continue
+        if [[ "${TARGET_ID}" != "all" ]] && [[ "${cid}" != "${TARGET_ID}" ]]; then
+            continue
+        fi
+        BUILT_COUNT=$((BUILT_COUNT + 1))
+
+        if [[ -n "${sql_file}" ]]; then
+            SQL_PATH="${REPO_ROOT}/${sql_file}"
+            if [[ ! -f "${SQL_PATH}" ]]; then
+                echo "[FAIL] SQL file for Checkpoint '${cid}' not found: ${SQL_PATH}" >&2
+                exit 1
+            fi
+            echo "Building Checkpoint '${cid}' into ${PROJECT_ID}:${src} from ${sql_file}..."
+            if ! bq --project_id="${PROJECT_ID}" --location="${REGION}" query \
+                --use_legacy_sql=false \
+                --destination_table="${PROJECT_ID}:${src}" \
+                --replace=true \
+                "$(cat "${SQL_PATH}")"; then
+                echo "[FAIL] Failed to build Checkpoint '${cid}' via query into ${PROJECT_ID}:${src}" >&2
+                exit 1
+            fi
+        else
+            echo "Building Checkpoint '${cid}' into ${PROJECT_ID}:${src} from ${PROJECT_ID}:${dst}..."
+            if ! bq --project_id="${PROJECT_ID}" --location="${REGION}" cp -f \
+                "${PROJECT_ID}:${dst}" \
+                "${PROJECT_ID}:${src}"; then
+                echo "[FAIL] Failed to copy ${PROJECT_ID}:${dst} to Checkpoint ${PROJECT_ID}:${src}" >&2
+                exit 1
+            fi
+        fi
+
+        echo "Applying label demo:true to ${PROJECT_ID}:${src}..."
+        if ! bq --project_id="${PROJECT_ID}" --location="${REGION}" update \
+            --set_label demo:true \
+            "${PROJECT_ID}:${src}"; then
+            echo "[FAIL] Failed to apply demo:true label to ${PROJECT_ID}:${src}" >&2
+            exit 1
+        fi
+
+        echo "[PASS] Built Checkpoint '${cid}': ${PROJECT_ID}:${src}"
+    done <<< "${MANIFEST_TSV}"
+
+    if [[ "${BUILT_COUNT}" -eq 0 ]]; then
+        echo "[FAIL] Unknown Checkpoint: ${TARGET_ID} (available: $(available_ids_list))" >&2
+        exit 1
+    fi
+    exit 0
+fi
