@@ -1,0 +1,187 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# Pre-Stage Personal Config Isolation Script
+#
+# Moves personal/global Antigravity rules and non-DAK personal skills aside into
+# ~/.gemini/.demo-stage-stash/ before going on stage so only the demo workspace
+# setup (.agents/plugins/ds-command-center, .agents/plugins/dak-bigquery,
+# .gemini/skills) loads during the live session. Restores them on --restore.
+# ==============================================================================
+
+set -uo pipefail
+
+# Resolve real script directory through any symlinks (CODING_STANDARDS.md §1)
+SOURCE="${BASH_SOURCE[0]}"
+while [[ -h "${SOURCE}" ]]; do
+    DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
+    SOURCE="$(readlink "${SOURCE}")"
+    [[ "${SOURCE}" != /* ]] && SOURCE="${DIR}/${SOURCE}"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+export REPO_ROOT
+
+HOME_DIR="${STAGE_CLEAN_HOME_DIR:-${HOME}}"
+ACTION=""
+
+usage() {
+    echo "Usage: bin/stage-clean-env <--stash|--restore|--status> [--home-dir <path>]"
+    echo ""
+    echo "Actions:"
+    echo "  --stash, stash       Move personal rules and non-DAK skills into ~/.gemini/.demo-stage-stash"
+    echo "  --restore, restore   Restore stashed personal rules and skills back to ~/.gemini"
+    echo "  --status, status     Report whether personal rules and skills are stashed or active"
+    echo ""
+    echo "Options:"
+    echo "  --home-dir <path>    Override home directory (default: \$HOME)"
+    echo "  -h, --help           Show this help message"
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --stash|stash)
+            ACTION="stash"
+            shift
+            ;;
+        --restore|restore)
+            ACTION="restore"
+            shift
+            ;;
+        --status|status)
+            ACTION="status"
+            shift
+            ;;
+        --home-dir)
+            if [[ $# -lt 2 ]]; then
+                echo "[FAIL] Missing value for --home-dir" >&2
+                usage >&2
+                exit 1
+            fi
+            HOME_DIR="$2"
+            shift 2
+            ;;
+        --help|-h)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "[FAIL] Unknown argument: $1" >&2
+            usage >&2
+            exit 1
+            ;;
+    esac
+done
+
+if [[ -z "${ACTION}" ]]; then
+    echo "[FAIL] Missing required action (--stash, --restore, or --status)." >&2
+    usage >&2
+    exit 1
+fi
+
+GEMINI_DIR="${HOME_DIR}/.gemini"
+STASH_DIR="${GEMINI_DIR}/.demo-stage-stash"
+ITEMS_DIR="${STASH_DIR}/items"
+MANIFEST_FILE="${STASH_DIR}/manifest.tsv"
+
+is_dak_skill_name() {
+    local name="$1"
+    case "${name}" in
+        bigquery-ai-ml|bigquery-bigframes|bigquery-data-transfer-service|bigquery-sql|bigtable-basics|data-autocleaning|dataform-bigquery|dbt-bigquery|enforcing-resource-attribution|gcp-composer-troubleshooting|gcp-data-pipelines|gcp-managed-airflow-dag-authoring|gcp-managed-airflow-migrations|gcp-managed-airflow-recommendations|gcp-pipeline-orchestration|gcp-spark|gcp-spark-troubleshooting|google-cloud-auth-verification)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+stash_rel_path() {
+    local rel_path="$1"
+    local src_path="${GEMINI_DIR}/${rel_path}"
+    local dst_path="${ITEMS_DIR}/${rel_path}"
+
+    if [[ ! -e "${src_path}" ]] && [[ ! -L "${src_path}" ]]; then
+        return 0
+    fi
+
+    mkdir -p "$(dirname "${dst_path}")"
+    if ! mv "${src_path}" "${dst_path}"; then
+        echo "[FAIL] Failed to move ${src_path} to ${dst_path}" >&2
+        exit 1
+    fi
+    printf "%s\n" "${rel_path}" >> "${MANIFEST_FILE}"
+}
+
+if [[ "${ACTION}" == "status" ]]; then
+    if [[ -f "${MANIFEST_FILE}" ]]; then
+        ITEM_COUNT=$(grep -c '[^[:space:]]' "${MANIFEST_FILE}" 2>/dev/null || true)
+        echo "[PASS] STATUS: stashed (${ITEM_COUNT} personal item(s) isolated in ${STASH_DIR})"
+        while IFS= read -r rel_path; do
+            [[ -z "${rel_path}" ]] && continue
+            echo "  - ${rel_path}"
+        done < "${MANIFEST_FILE}"
+    else
+        echo "[PASS] STATUS: active (no personal rules or skills stashed in ${STASH_DIR})"
+    fi
+    exit 0
+fi
+
+if [[ "${ACTION}" == "stash" ]]; then
+    if [[ -f "${MANIFEST_FILE}" ]]; then
+        echo "[PASS] Personal rules and skills are already stashed in ${STASH_DIR}."
+        exit 0
+    fi
+
+    mkdir -p "${ITEMS_DIR}"
+    : > "${MANIFEST_FILE}"
+
+    # 1. Stash global/personal rule directories and top-level rule markdown files
+    for rule_rel in "rules" "config/rules" "AGENTS.md" "GEMINI.md" "CLAUDE.md"; do
+        stash_rel_path "${rule_rel}"
+    done
+
+    # 2. Stash personal non-DAK skills under ~/.gemini/skills and ~/.gemini/config/skills
+    for skill_parent in "skills" "config/skills"; do
+        parent_dir="${GEMINI_DIR}/${skill_parent}"
+        if [[ -d "${parent_dir}" ]]; then
+            for entry in "${parent_dir}"/*; do
+                [[ ! -e "${entry}" ]] && [[ ! -L "${entry}" ]] && continue
+                entry_name="$(basename "${entry}")"
+                if is_dak_skill_name "${entry_name}"; then
+                    continue
+                fi
+                stash_rel_path "${skill_parent}/${entry_name}"
+            done
+        fi
+    done
+
+    STASHED_COUNT=$(grep -c '[^[:space:]]' "${MANIFEST_FILE}" 2>/dev/null || true)
+    echo "[PASS] Stashed ${STASHED_COUNT} personal rule/skill item(s) into ${STASH_DIR}."
+    exit 0
+fi
+
+if [[ "${ACTION}" == "restore" ]]; then
+    if [[ ! -f "${MANIFEST_FILE}" ]]; then
+        echo "[PASS] Nothing to restore (${MANIFEST_FILE} not found)."
+        exit 0
+    fi
+
+    RESTORED_COUNT=0
+    while IFS= read -r rel_path; do
+        [[ -z "${rel_path}" ]] && continue
+        src_path="${ITEMS_DIR}/${rel_path}"
+        dst_path="${GEMINI_DIR}/${rel_path}"
+        if [[ -e "${src_path}" ]] || [[ -L "${src_path}" ]]; then
+            mkdir -p "$(dirname "${dst_path}")"
+            if ! mv "${src_path}" "${dst_path}"; then
+                echo "[FAIL] Failed to restore ${src_path} to ${dst_path}" >&2
+                exit 1
+            fi
+            RESTORED_COUNT=$((RESTORED_COUNT + 1))
+        fi
+    done < "${MANIFEST_FILE}"
+
+    rm -rf "${STASH_DIR}"
+    echo "[PASS] Restored ${RESTORED_COUNT} personal rule/skill item(s) from ${STASH_DIR}."
+    exit 0
+fi
