@@ -320,7 +320,200 @@ class TestPreflightCLI(unittest.TestCase):
                 "[PASS] ds-command-center plugin rules and guardrail hook enforce dataset boundaries",
                 proc.stdout,
             )
-            self.assertIn("Summary: 8 passed, 0 failed.", proc.stdout)
+            self.assertIn(
+                "[PASS] BigQuery AI.FORECAST (TimesFM) executes on a tiny series",
+                proc.stdout,
+            )
+            self.assertIn(
+                "[PASS] BigQuery ML K-means model trains and cleans up in ml dataset",
+                proc.stdout,
+            )
+            self.assertIn(
+                "[PASS] Subagent dispatches and returns via Antigravity harness",
+                proc.stdout,
+            )
+            self.assertIn(
+                "[PASS] Fresh agent sees Data Agent Kit skills installed in the workspace",
+                proc.stdout,
+            )
+            self.assertIn(
+                "Manual Verification Steps (Not Scriptable by CLI Harness):",
+                proc.stdout,
+            )
+            self.assertIn("[MANUAL] VS Code Data Agent Kit UI", proc.stdout)
+            self.assertIn("Summary: 12 passed, 0 failed.", proc.stdout)
+
+    def test_preflight_runs_ai_forecast_and_kmeans_and_cleans_up_temp_model(self):
+        """preflight must invoke AI.FORECAST, train a tiny K-means model in ml, and clean up the temporary model."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env_file, env, log_file = setup_preflight_test_env(
+                tmpdir,
+                project_id="demo-proj-123",
+                region="us-central1",
+                active_project="demo-proj-123",
+                quota_project="demo-proj-123",
+            )
+
+            proc = subprocess.run(
+                [str(PREFLIGHT_BIN), "--env", str(env_file)],
+                cwd=WORKTREE_ROOT,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(
+                proc.returncode, 0, f"Output was:\n{proc.stdout}\n{proc.stderr}"
+            )
+            calls_text = log_file.read_text(encoding="utf-8")
+            self.assertIn("AI.FORECAST", calls_text)
+            self.assertIn("--project_id=demo-proj-123", calls_text)
+            self.assertIn("--location=us-central1", calls_text)
+            self.assertIn("CREATE OR REPLACE MODEL", calls_text)
+            self.assertIn("demo-proj-123.ml._preflight_kmeans_test", calls_text)
+            self.assertIn("KMEANS", calls_text)
+            self.assertIn(
+                "bq rm -f -m --project_id=demo-proj-123 --location=us-central1 demo-proj-123:ml._preflight_kmeans_test",
+                calls_text,
+            )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env_file, env, _ = setup_preflight_test_env(
+                tmpdir,
+                project_id="demo-proj-123",
+                region="us-central1",
+                active_project="demo-proj-123",
+                quota_project="demo-proj-123",
+                ai_forecast_with_status_lines=True,
+            )
+
+            proc = subprocess.run(
+                [str(PREFLIGHT_BIN), "--env", str(env_file)],
+                cwd=WORKTREE_ROOT,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(
+                proc.returncode, 0, f"Output was:\n{proc.stdout}\n{proc.stderr}"
+            )
+            self.assertIn(
+                "[PASS] BigQuery AI.FORECAST (TimesFM) executes on a tiny series",
+                proc.stdout,
+            )
+
+    def test_preflight_fails_when_ai_forecast_fails(self):
+        """preflight must fail when BigQuery AI.FORECAST (TimesFM) query fails or returns empty rows."""
+        for kwargs in (
+            {"ai_forecast_fails": True},
+            {"ai_forecast_empty": True},
+        ):
+            with self.subTest(**kwargs), tempfile.TemporaryDirectory() as tmpdir:
+                env_file, env, _ = setup_preflight_test_env(
+                    tmpdir,
+                    **kwargs,
+                )
+
+                proc = subprocess.run(
+                    [str(PREFLIGHT_BIN), "--env", str(env_file)],
+                    cwd=WORKTREE_ROOT,
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertNotEqual(proc.returncode, 0)
+                self.assertIn(
+                    "[FAIL] BigQuery AI.FORECAST (TimesFM) executes on a tiny series",
+                    proc.stdout,
+                )
+
+    def test_preflight_fails_and_cleans_up_when_kmeans_fails(self):
+        """preflight must fail when K-means training or cleanup fails and always run cleanup."""
+        for kwargs in (
+            {"kmeans_fails": True},
+            {"kmeans_cleanup_fails": True},
+        ):
+            with self.subTest(**kwargs), tempfile.TemporaryDirectory() as tmpdir:
+                env_file, env, log_file = setup_preflight_test_env(
+                    tmpdir,
+                    project_id="demo-proj-123",
+                    region="us-central1",
+                    **kwargs,
+                )
+
+                proc = subprocess.run(
+                    [str(PREFLIGHT_BIN), "--env", str(env_file)],
+                    cwd=WORKTREE_ROOT,
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertNotEqual(proc.returncode, 0)
+                self.assertIn(
+                    "[FAIL] BigQuery ML K-means model trains and cleans up in ml dataset",
+                    proc.stdout,
+                )
+                calls_text = log_file.read_text(encoding="utf-8")
+                self.assertIn(
+                    "bq rm -f -m --project_id=demo-proj-123 --location=us-central1 demo-proj-123:ml._preflight_kmeans_test",
+                    calls_text,
+                )
+
+    def test_preflight_fails_when_subagent_dispatch_fails(self):
+        """preflight must fail and print manual fallback instructions when subagent dispatch fails or lacks token."""
+        for kwargs in (
+            {"subagent_fails": True},
+            {"subagent_bad_token": True},
+        ):
+            with self.subTest(**kwargs), tempfile.TemporaryDirectory() as tmpdir:
+                env_file, env, _ = setup_preflight_test_env(
+                    tmpdir,
+                    **kwargs,
+                )
+
+                proc = subprocess.run(
+                    [str(PREFLIGHT_BIN), "--env", str(env_file)],
+                    cwd=WORKTREE_ROOT,
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertNotEqual(proc.returncode, 0)
+                self.assertIn(
+                    "[FAIL] Subagent dispatches and returns via Antigravity harness",
+                    proc.stdout,
+                )
+                self.assertIn("Manual fallback check", proc.stdout)
+
+    def test_preflight_fails_when_workspace_dak_skills_missing_or_invisible(self):
+        """preflight must fail when workspace DAK skills are missing or invisible to a fresh agent."""
+        for kwargs in (
+            {"missing_workspace_dak_skills": True},
+            {"fresh_agent_skills_fails": True},
+        ):
+            with self.subTest(**kwargs), tempfile.TemporaryDirectory() as tmpdir:
+                env_file, env, _ = setup_preflight_test_env(
+                    tmpdir,
+                    **kwargs,
+                )
+
+                proc = subprocess.run(
+                    [str(PREFLIGHT_BIN), "--env", str(env_file)],
+                    cwd=WORKTREE_ROOT,
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertNotEqual(proc.returncode, 0)
+                self.assertIn(
+                    "[FAIL] Fresh agent sees Data Agent Kit skills installed in the workspace",
+                    proc.stdout,
+                )
 
 
 if __name__ == "__main__":
