@@ -498,6 +498,22 @@ class TestWorkstream2StartPoint(unittest.TestCase):
         self,
     ) -> None:
         """workstream-2-start (or HEAD before branch cut) must follow workstream-1-start in one linear history and contain no Workstream 2 reference answers."""
+        shallow_chk = subprocess.run(
+            ["git", "rev-parse", "--is-shallow-repository"],
+            cwd=WORKTREE_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if shallow_chk.stdout.strip() == "true":
+            subprocess.run(
+                ["git", "fetch", "--unshallow", "origin"],
+                cwd=WORKTREE_ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
         ws1_ref = None
         for candidate in ("workstream-1-start", "origin/workstream-1-start"):
             chk = subprocess.run(
@@ -510,6 +526,22 @@ class TestWorkstream2StartPoint(unittest.TestCase):
             if chk.returncode == 0:
                 ws1_ref = candidate
                 break
+
+        if ws1_ref is None:
+            fetch_ws1 = subprocess.run(
+                [
+                    "git",
+                    "fetch",
+                    "origin",
+                    "workstream-1-start:refs/remotes/origin/workstream-1-start",
+                ],
+                cwd=WORKTREE_ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if fetch_ws1.returncode == 0:
+                ws1_ref = "origin/workstream-1-start"
 
         self.assertIsNotNone(
             ws1_ref,
@@ -529,6 +561,22 @@ class TestWorkstream2StartPoint(unittest.TestCase):
                 ws2_ref = candidate
                 break
 
+        if ws2_ref == "HEAD":
+            fetch_ws2 = subprocess.run(
+                [
+                    "git",
+                    "fetch",
+                    "origin",
+                    "workstream-2-start:refs/remotes/origin/workstream-2-start",
+                ],
+                cwd=WORKTREE_ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if fetch_ws2.returncode == 0:
+                ws2_ref = "origin/workstream-2-start"
+
         # 1. Verify ws1_ref is an ancestor of ws2_ref
         anc_proc = subprocess.run(
             ["git", "merge-base", "--is-ancestor", str(ws1_ref), ws2_ref],
@@ -537,6 +585,27 @@ class TestWorkstream2StartPoint(unittest.TestCase):
             text=True,
             check=False,
         )
+        if anc_proc.returncode != 0:
+            subprocess.run(
+                [
+                    "git",
+                    "fetch",
+                    "--deepen=100",
+                    "origin",
+                    "workstream-1-start:refs/remotes/origin/workstream-1-start",
+                ],
+                cwd=WORKTREE_ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            anc_proc = subprocess.run(
+                ["git", "merge-base", "--is-ancestor", str(ws1_ref), ws2_ref],
+                cwd=WORKTREE_ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
         self.assertEqual(
             anc_proc.returncode,
             0,
