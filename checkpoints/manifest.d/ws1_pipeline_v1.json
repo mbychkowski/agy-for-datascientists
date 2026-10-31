@@ -1,0 +1,7 @@
+{
+  "id": "ws1_pipeline_v1",
+  "workstream": "ws1",
+  "description": "Defective Pipeline v1 output table in staging.hospital_flu (with duplicate backfill rows intact)",
+  "source_table": "checkpoint.ws1_staging_hospital_flu",
+  "target_table": "staging.hospital_flu"
+}

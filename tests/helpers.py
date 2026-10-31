@@ -14,6 +14,10 @@ SETUP_BIN = WORKTREE_ROOT / "bin" / "setup"
 SETUP_SYMLINK = WORKTREE_ROOT / "setup"
 VERIFY_START_POINT_BIN = WORKTREE_ROOT / "bin" / "verify-start-point"
 VERIFY_START_POINT_SYMLINK = WORKTREE_ROOT / "verify-start-point"
+RESET_BIN = WORKTREE_ROOT / "bin" / "reset"
+RESET_SYMLINK = WORKTREE_ROOT / "reset"
+CHECKPOINT_BIN = WORKTREE_ROOT / "bin" / "checkpoint"
+CHECKPOINT_SYMLINK = WORKTREE_ROOT / "checkpoint"
 VENDORED_DAK_DIR = WORKTREE_ROOT / ".agents" / "plugins" / "dak-bigquery"
 
 
@@ -102,12 +106,37 @@ def setup_preflight_test_env(
     ws1_missing_label: str = "",
     ws1_no_duplicates: bool = False,
     ws1_wrong_spike: bool = False,
+    dataset_tables: dict[str, dict[str, dict[str, str]]] | None = None,
 ) -> tuple[Path, dict[str, str], Path]:
     """Build a complete mock CLI and ADC environment for testing bin/preflight and CLIs."""
     tmp_path = Path(tmpdir)
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
     log_file = tmp_path / "calls.log"
+    bq_state_file = tmp_path / "bq_tables.json"
+    use_stateful_bq = "true" if dataset_tables is not None else "false"
+    initial_tables: dict[str, dict[str, dict[str, str]]] = (
+        dataset_tables
+        if dataset_tables is not None
+        else {
+            "raw": {
+                "hospital_reference": {"demo": "true"},
+                "hospital_flu_feeds": {"demo": "true"},
+            },
+            "ops": {
+                "pipeline_run_log": {"demo": "true"},
+            },
+            "staging": {
+                "hospital_flu": {"demo": "true"},
+            },
+            "features": {},
+            "ml": {},
+            "checkpoint": {
+                "ws1_staging_hospital_flu": {"demo": "true"},
+            },
+        }
+    )
+    bq_state_file.write_text(json.dumps(initial_tables), encoding="utf-8")
 
     resolved_active_project = project_id if active_project is None else active_project
     resolved_quota_project = project_id if quota_project is None else quota_project
@@ -123,7 +152,18 @@ def setup_preflight_test_env(
         else 'echo "ya29.mock-presenter-access-token"; exit 0'
     )
     batch_script = (
-        "echo 'ERROR: batch execution failed' >&2; exit 1" if batch_fails else "exit 0"
+        "echo 'ERROR: batch execution failed' >&2; exit 1"
+        if batch_fails
+        else f"""if [[ "{use_stateful_bq}" == "true" ]] && [[ "$*" == *"pipeline_v1.py"* ]]; then
+        python3 -c '
+import json, sys
+path = sys.argv[1]
+state = json.loads(open(path, encoding="utf-8").read())
+state.setdefault("staging", {{}})["hospital_flu"] = {{}}
+open(path, "w", encoding="utf-8").write(json.dumps(state))
+' "{bq_state_file}"
+    fi
+    exit 0"""
     )
 
     fake_gcloud = bin_dir / "gcloud"
@@ -190,6 +230,27 @@ exit 0
     fake_bq.write_text(
         f"""#!/usr/bin/env bash
 echo "bq $*" >> "{log_file}"
+if [[ "$*" == *" ls "* ]] || [[ "$1" == "ls" ]]; then
+    python3 -c '
+import json, sys
+state = json.loads(open(sys.argv[1], encoding="utf-8").read())
+args = sys.argv[2:]
+target = args[-1] if args else ""
+ds = target.split(":")[-1].split(".")[-1]
+proj = target.split(":")[0] if ":" in target else "{project_id}"
+tables = state.get(ds, {{}})
+out = [
+    {{
+        "id": f"{{proj}}:{{ds}}.{{tbl}}",
+        "tableReference": {{"projectId": proj, "datasetId": ds, "tableId": tbl}},
+        "type": "TABLE",
+    }}
+    for tbl in tables.keys()
+]
+print(json.dumps(out))
+' "{bq_state_file}" "$@"
+    exit 0
+fi
 if [[ "$*" == *"show"* ]]; then
     if [[ -n "{ws1_missing_table}" ]] && [[ "$*" == *"{ws1_missing_table}"* ]]; then
         echo "Not found: Table {ws1_missing_table}" >&2
@@ -203,7 +264,114 @@ if [[ "$*" == *"show"* ]]; then
         echo '{{"id":"mock","labels":{{}}}}'
         exit 0
     fi
+    if [[ "{use_stateful_bq}" == "true" ]]; then
+        python3 -c '
+import json, sys
+state = json.loads(open(sys.argv[1], encoding="utf-8").read())
+target = sys.argv[-1]
+ds_tbl = target.split(":")[-1]
+if "." not in ds_tbl:
+    sys.exit(1)
+ds, tbl = ds_tbl.split(".", 1)
+if tbl not in state.get(ds, {{}}):
+    sys.stderr.write(f"Not found: Table {{target}}\\n")
+    sys.exit(1)
+print(json.dumps({{"id": target, "labels": state[ds][tbl]}}))
+' "{bq_state_file}" "$@"
+        exit $?
+    fi
     echo '{{"id":"mock","labels":{{"demo":"true"}}}}'
+    exit 0
+fi
+if [[ "$*" == *"rm -f -t"* ]]; then
+    python3 -c '
+import json, sys
+path = sys.argv[1]
+target = sys.argv[-1]
+state = json.loads(open(path, encoding="utf-8").read())
+ds_tbl = target.split(":")[-1]
+if "." in ds_tbl:
+    ds, tbl = ds_tbl.split(".", 1)
+    state.get(ds, {{}}).pop(tbl, None)
+    open(path, "w", encoding="utf-8").write(json.dumps(state))
+' "{bq_state_file}" "$@"
+    exit 0
+fi
+if [[ "$*" == *" load "* ]]; then
+    python3 -c '
+import json, sys
+path = sys.argv[1]
+args = sys.argv[2:]
+state = json.loads(open(path, encoding="utf-8").read())
+load_idx = args.index("load") if "load" in args else -1
+for tok in args[load_idx + 1:]:
+    if tok.startswith("-"):
+        continue
+    if ":" in tok or "." in tok:
+        ds_tbl = tok.split(":")[-1]
+        if "." in ds_tbl:
+            ds, tbl = ds_tbl.split(".", 1)
+            state.setdefault(ds, {{}})[tbl] = {{}}
+            open(path, "w", encoding="utf-8").write(json.dumps(state))
+        break
+' "{bq_state_file}" "$@"
+    exit 0
+fi
+if [[ "$*" == *" cp "* ]]; then
+    python3 -c '
+import json, sys
+path = sys.argv[1]
+use_stateful = sys.argv[2] == "true"
+args = sys.argv[3:]
+state = json.loads(open(path, encoding="utf-8").read())
+cp_idx = args.index("cp") if "cp" in args else -1
+pos = [t for t in args[cp_idx + 1:] if not t.startswith("-")]
+if len(pos) >= 2:
+    src_ref, dst_ref = pos[-2], pos[-1]
+    src_ds, src_tbl = src_ref.split(":")[-1].split(".", 1)
+    dst_ds, dst_tbl = dst_ref.split(":")[-1].split(".", 1)
+    if use_stateful and src_tbl not in state.get(src_ds, {{}}):
+        sys.stderr.write(f"Not found: Table {{src_ref}}\\n")
+        sys.exit(1)
+    state.setdefault(dst_ds, {{}})[dst_tbl] = {{}}
+    open(path, "w", encoding="utf-8").write(json.dumps(state))
+' "{bq_state_file}" "{use_stateful_bq}" "$@"
+    exit $?
+fi
+if [[ "$*" == *"update"* ]] && [[ "$*" == *"--set_label"* ]]; then
+    python3 -c '
+import json, sys
+path = sys.argv[1]
+args = sys.argv[2:]
+state = json.loads(open(path, encoding="utf-8").read())
+label_idx = args.index("--set_label") if "--set_label" in args else -1
+if label_idx != -1 and label_idx + 1 < len(args):
+    kv = args[label_idx + 1]
+    target = args[-1]
+    ds_tbl = target.split(":")[-1]
+    if ":" in kv and "." in ds_tbl:
+        k, v = kv.split(":", 1)
+        ds, tbl = ds_tbl.split(".", 1)
+        state.setdefault(ds, {{}}).setdefault(tbl, {{}})[k] = v
+        open(path, "w", encoding="utf-8").write(json.dumps(state))
+' "{bq_state_file}" "$@"
+    exit 0
+fi
+if [[ "$*" == *"--destination_table="* ]]; then
+    python3 -c '
+import json, sys
+path = sys.argv[1]
+args = sys.argv[2:]
+state = json.loads(open(path, encoding="utf-8").read())
+for tok in args:
+    if tok.startswith("--destination_table="):
+        target = tok.split("=", 1)[1]
+        ds_tbl = target.split(":")[-1]
+        if "." in ds_tbl:
+            ds, tbl = ds_tbl.split(".", 1)
+            state.setdefault(ds, {{}})[tbl] = {{}}
+            open(path, "w", encoding="utf-8").write(json.dumps(state))
+' "{bq_state_file}" "$@"
     exit 0
 fi
 if [[ "$*" == *"duplicate_groups"* ]]; then
