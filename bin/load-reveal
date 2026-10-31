@@ -1,0 +1,239 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# Load Post-Cutoff Reveal Data into BigQuery and Render Reveal Comparison Chart
+#
+# Takes the withheld Reveal location as a required runtime argument (never
+# persisted, enforcing ADR 0001), loads raw.hospital_flu_feeds_reveal with
+# --replace and label demo:true, materialises staging.reveal_forecast_comparison
+# with label demo:true, and renders the Reveal comparison chart.
+#
+# Because raw.hospital_flu_feeds_reveal and staging.reveal_forecast_comparison
+# carry the 'demo:true' label and are outside WS1_CORE_TABLES, bin/reset
+# automatically drops both tables.
+# ==============================================================================
+
+set -uo pipefail
+
+# Resolve real script directory through any symlinks (CODING_STANDARDS.md §1)
+SOURCE="${BASH_SOURCE[0]}"
+while [[ -h "${SOURCE}" ]]; do
+    DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
+    SOURCE="$(readlink "${SOURCE}")"
+    [[ "${SOURCE}" != /* ]] && SOURCE="${DIR}/${SOURCE}"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+ENV_FILE="${REPO_ROOT}/demo.env"
+DATASET_DIR="${REPO_ROOT}/fixtures/mock_dataset"
+REVEAL_LOCATION=""
+CHART_OUT=""
+
+usage() {
+    echo "Usage: bin/load-reveal [OPTIONS] <reveal_location>"
+    echo ""
+    echo "Arguments:"
+    echo "  <reveal_location>             Runtime path or gs:// URI to withheld Reveal CSV or directory (required; never persisted per ADR 0001)"
+    echo ""
+    echo "Options:"
+    echo "  -r, --reveal-location <path>  Runtime path or gs:// URI to withheld Reveal CSV or directory"
+    echo "  -e, --env <path>              Path to environment file (default: demo.env)"
+    echo "  -d, --dataset-dir <path>      Path to visible dataset directory for local chart rendering (default: fixtures/mock_dataset)"
+    echo "  --chart-out <path>            Optional file path to write the rendered Reveal SVG chart"
+    echo "  -h, --help                    Show this help message"
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --env|-e)
+            if [[ $# -lt 2 ]]; then
+                echo "[FAIL] Missing value for $1" >&2
+                usage >&2
+                exit 1
+            fi
+            ENV_FILE="$2"
+            shift 2
+            ;;
+        --dataset-dir|-d)
+            if [[ $# -lt 2 ]]; then
+                echo "[FAIL] Missing value for $1" >&2
+                usage >&2
+                exit 1
+            fi
+            DATASET_DIR="$2"
+            shift 2
+            ;;
+        --reveal-location|-r)
+            if [[ $# -lt 2 ]]; then
+                echo "[FAIL] Missing value for $1" >&2
+                usage >&2
+                exit 1
+            fi
+            REVEAL_LOCATION="$2"
+            shift 2
+            ;;
+        --chart-out)
+            if [[ $# -lt 2 ]]; then
+                echo "[FAIL] Missing value for $1" >&2
+                usage >&2
+                exit 1
+            fi
+            CHART_OUT="$2"
+            shift 2
+            ;;
+        --help|-h)
+            usage
+            exit 0
+            ;;
+        -*)
+            echo "[FAIL] Unknown argument: $1" >&2
+            usage >&2
+            exit 1
+            ;;
+        *)
+            if [[ -z "${REVEAL_LOCATION}" ]]; then
+                REVEAL_LOCATION="$1"
+                shift
+            else
+                echo "[FAIL] Unexpected argument: $1" >&2
+                usage >&2
+                exit 1
+            fi
+            ;;
+    esac
+done
+
+if [[ -z "${REVEAL_LOCATION}" ]]; then
+    echo "[FAIL] Missing required Reveal location argument (<reveal_location>). The Reveal location must be supplied at runtime and is never persisted (ADR 0001)." >&2
+    usage >&2
+    exit 1
+fi
+
+if [[ ! -f "${ENV_FILE}" ]]; then
+    echo "[FAIL] Environment file not found: ${ENV_FILE}" >&2
+    exit 1
+fi
+
+# shellcheck disable=SC1090
+source "${ENV_FILE}"
+
+if [[ -z "${PROJECT_ID:-}" ]] || [[ "${PROJECT_ID}" == *"your-"* ]]; then
+    echo "[FAIL] PROJECT_ID is unset or contains a placeholder value in ${ENV_FILE}" >&2
+    exit 1
+fi
+
+if [[ -z "${REGION:-}" ]] || [[ "${REGION}" == *"your-"* ]]; then
+    echo "[FAIL] REGION is unset or contains a placeholder value in ${ENV_FILE}" >&2
+    exit 1
+fi
+
+if ! command -v bq >/dev/null 2>&1; then
+    echo "[FAIL] bq CLI is not installed or not in PATH." >&2
+    exit 1
+fi
+
+REVEAL_CSV_SOURCE=""
+if [[ "${REVEAL_LOCATION}" == gs://* ]]; then
+    LOC_TRIMMED="${REVEAL_LOCATION%/}"
+    if [[ "${LOC_TRIMMED}" == *.csv ]]; then
+        REVEAL_CSV_SOURCE="${LOC_TRIMMED}"
+    elif [[ "${LOC_TRIMMED}" == */hospital_flu_feeds_reveal ]]; then
+        REVEAL_CSV_SOURCE="${LOC_TRIMMED}/reveal.csv"
+    elif [[ "${LOC_TRIMMED}" == */reveal ]]; then
+        REVEAL_CSV_SOURCE="${LOC_TRIMMED}/hospital_flu_feeds_reveal/reveal.csv"
+    else
+        REVEAL_CSV_SOURCE="${LOC_TRIMMED}/reveal/hospital_flu_feeds_reveal/reveal.csv"
+    fi
+else
+    if ! REVEAL_CSV_SOURCE=$(PYTHONPATH="${REPO_ROOT}" python3 -c '
+import sys
+from lib.reveal_chart import resolve_reveal_csv_path
+try:
+    print(resolve_reveal_csv_path(sys.argv[1]))
+except Exception as exc:
+    sys.stderr.write(f"[FAIL] {exc}\n")
+    sys.exit(1)
+' "${REVEAL_LOCATION}"); then
+        exit 1
+    fi
+fi
+
+SCHEMA_FILE="${REPO_ROOT}/schemas/raw_hospital_flu_feeds.json"
+if [[ ! -f "${SCHEMA_FILE}" ]]; then
+    echo "[FAIL] Schema file not found: ${SCHEMA_FILE}" >&2
+    exit 1
+fi
+
+echo "Loading ${PROJECT_ID}:raw.hospital_flu_feeds_reveal from runtime Reveal source..."
+if ! bq --project_id="${PROJECT_ID}" --location="${REGION}" load \
+    --replace \
+    --source_format=CSV \
+    --skip_leading_rows=1 \
+    "${PROJECT_ID}:raw.hospital_flu_feeds_reveal" \
+    "${REVEAL_CSV_SOURCE}" \
+    "${SCHEMA_FILE}"; then
+    echo "[FAIL] Failed to load ${PROJECT_ID}:raw.hospital_flu_feeds_reveal" >&2
+    exit 1
+fi
+
+echo "Applying label demo:true to ${PROJECT_ID}:raw.hospital_flu_feeds_reveal..."
+if ! bq --project_id="${PROJECT_ID}" --location="${REGION}" update \
+    --set_label demo:true \
+    "${PROJECT_ID}:raw.hospital_flu_feeds_reveal"; then
+    echo "[FAIL] Failed to apply demo:true label to ${PROJECT_ID}:raw.hospital_flu_feeds_reveal" >&2
+    exit 1
+fi
+
+REVEAL_SQL_FILE="${REPO_ROOT}/sql/ws2_reveal_comparison.sql"
+if [[ ! -f "${REVEAL_SQL_FILE}" ]]; then
+    echo "[FAIL] Reveal comparison SQL file not found: ${REVEAL_SQL_FILE}" >&2
+    exit 1
+fi
+
+echo "Materialising ${PROJECT_ID}:staging.reveal_forecast_comparison..."
+if ! bq --project_id="${PROJECT_ID}" --location="${REGION}" query \
+    --quiet \
+    --use_legacy_sql=false \
+    --destination_table="${PROJECT_ID}:staging.reveal_forecast_comparison" \
+    --replace=true \
+    "$(cat "${REVEAL_SQL_FILE}")"; then
+    echo "[FAIL] Failed to materialise ${PROJECT_ID}:staging.reveal_forecast_comparison" >&2
+    exit 1
+fi
+
+echo "Applying label demo:true to ${PROJECT_ID}:staging.reveal_forecast_comparison..."
+if ! bq --project_id="${PROJECT_ID}" --location="${REGION}" update \
+    --set_label demo:true \
+    "${PROJECT_ID}:staging.reveal_forecast_comparison"; then
+    echo "[FAIL] Failed to apply demo:true label to ${PROJECT_ID}:staging.reveal_forecast_comparison" >&2
+    exit 1
+fi
+
+if [[ "${REVEAL_CSV_SOURCE}" != gs://* ]] && [[ -d "${DATASET_DIR}" ]]; then
+    if ! PYTHONPATH="${REPO_ROOT}" python3 -c '
+import sys
+from pathlib import Path
+from lib.reveal_chart import (
+    build_reveal_comparison_series,
+    render_reveal_chart_ascii,
+    render_reveal_chart_svg,
+)
+
+dataset_dir = Path(sys.argv[1])
+reveal_csv = Path(sys.argv[2])
+chart_out = sys.argv[3]
+
+series = build_reveal_comparison_series(dataset_dir, reveal_csv)
+print(render_reveal_chart_ascii(series))
+if chart_out:
+    out_path = Path(chart_out)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(render_reveal_chart_svg(series), encoding="utf-8")
+' "${DATASET_DIR}" "${REVEAL_CSV_SOURCE}" "${CHART_OUT}"; then
+        echo "[FAIL] Failed to render Reveal comparison chart." >&2
+        exit 1
+    fi
+fi
+
+echo "[PASS] Loaded ${PROJECT_ID}:raw.hospital_flu_feeds_reveal and materialised ${PROJECT_ID}:staging.reveal_forecast_comparison with label demo:true."
+exit 0
