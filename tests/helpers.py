@@ -108,6 +108,9 @@ def setup_preflight_test_env(
     ws1_missing_label: str = "",
     ws1_no_duplicates: bool = False,
     ws1_wrong_spike: bool = False,
+    ws2_clean_duplicates: int = 0,
+    ws2_clean_missing_positivity: int = 0,
+    ws2_clean_rows: int = 6747,
     dataset_tables: dict[str, dict[str, dict[str, str]]] | None = None,
     java_version_override: str = "21.0.4",
     java_missing: bool = False,
@@ -163,14 +166,24 @@ def setup_preflight_test_env(
     batch_script = (
         "echo 'ERROR: batch execution failed' >&2; exit 1"
         if batch_fails
-        else f"""if [[ "{use_stateful_bq}" == "true" ]] && [[ "$*" == *"pipeline_v1.py"* ]]; then
-        python3 -c '
+        else f"""if [[ "{use_stateful_bq}" == "true" ]]; then
+        if [[ "$*" == *"pipeline_v1.py"* ]]; then
+            python3 -c '
 import json, sys
 path = sys.argv[1]
 state = json.loads(open(path, encoding="utf-8").read())
 state.setdefault("staging", {{}})["hospital_flu"] = {{}}
 open(path, "w", encoding="utf-8").write(json.dumps(state))
 ' "{bq_state_file}"
+        elif [[ "$*" == *"pipeline_clean.py"* ]]; then
+            python3 -c '
+import json, sys
+path = sys.argv[1]
+state = json.loads(open(path, encoding="utf-8").read())
+state.setdefault("staging", {{}})["hospital_flu_clean"] = {{}}
+open(path, "w", encoding="utf-8").write(json.dumps(state))
+' "{bq_state_file}"
+        fi
     fi
     exit 0"""
     )
@@ -207,9 +220,14 @@ exit 0
     bq_show_fails_flag = "true" if bq_show_fails else "false"
     dup_val = 0 if ws1_no_duplicates else 5
     spike_val = 12.5 if ws1_wrong_spike else 35.0
+    clean_pos_populated = max(ws2_clean_rows - ws2_clean_missing_positivity, 0)
     ws1_query_json = (
         '[{"raw_ref_rows":6,"raw_feeds_rows":6767,"ops_log_rows":1128,'
         f'"staging_rows":6767,"duplicate_groups":{dup_val},'
+        f'"clean_staging_rows":{ws2_clean_rows},'
+        f'"clean_duplicate_groups":{ws2_clean_duplicates},'
+        f'"clean_positivity_populated_rows":{clean_pos_populated},'
+        f'"clean_missing_positivity_rows":{ws2_clean_missing_positivity},'
         f'"w42_positives":200,"w43_positives":270,"spike_pct":{spike_val}}}]'
     )
     if ai_forecast_fails:

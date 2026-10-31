@@ -2,15 +2,16 @@
 # ==============================================================================
 # Safe Reset to Workstream Start Point
 #
-# Resets the demo environment to the requested Start Point (ws1):
+# Resets the demo environment to the requested Start Point (ws1 or ws2):
 #   - Inspects only working demo datasets (raw, ops, staging, features, ml).
 #   - Never touches buckets, checkpoint, other datasets, or infrastructure.
 #   - Strictly preserves any table that does not carry the 'demo:true' label.
 #   - Lists all tables to be dropped and rebuilt, and prompts for confirmation
 #     before dropping anything (unless --yes / -y is passed).
 #   - Drops live-created and loaded Reveal tables carrying 'demo:true'.
-#   - Restores raw, ops, and the defective staging.hospital_flu table.
-#   - Runs bin/verify-start-point ws1 to confirm the restored state.
+#   - Restores raw, ops, and the defective staging.hospital_flu table (plus
+#     clean staging.hospital_flu_clean when resetting to ws2).
+#   - Runs bin/verify-start-point <ws1|ws2> to confirm the restored state.
 # ==============================================================================
 
 set -uo pipefail
@@ -103,10 +104,10 @@ fi
 
 case "${TARGET}" in
     ws1)
+        WORKSTREAM_LABEL="Workstream 1"
         ;;
     ws2)
-        echo "[FAIL] Reset for 'ws2' is not yet implemented." >&2
-        exit 1
+        WORKSTREAM_LABEL="Workstream 2"
         ;;
     *)
         echo "[FAIL] Unknown reset target: ${TARGET} (expected ws1 or ws2)." >&2
@@ -152,17 +153,27 @@ DEMO_WORKING_DATASETS=(
     "ml"
 )
 
-WS1_CORE_TABLES=(
-    "raw.hospital_reference"
-    "raw.hospital_flu_feeds"
-    "ops.pipeline_run_log"
-    "staging.hospital_flu"
-)
+if [[ "${TARGET}" == "ws2" ]]; then
+    CORE_TABLES=(
+        "raw.hospital_reference"
+        "raw.hospital_flu_feeds"
+        "ops.pipeline_run_log"
+        "staging.hospital_flu"
+        "staging.hospital_flu_clean"
+    )
+else
+    CORE_TABLES=(
+        "raw.hospital_reference"
+        "raw.hospital_flu_feeds"
+        "ops.pipeline_run_log"
+        "staging.hospital_flu"
+    )
+fi
 
 is_core_table() {
     local candidate="$1"
     local core
-    for core in "${WS1_CORE_TABLES[@]}"; do
+    for core in "${CORE_TABLES[@]}"; do
         if [[ "${core}" == "${candidate}" ]]; then
             return 0
         fi
@@ -261,7 +272,7 @@ for ds in "${DEMO_WORKING_DATASETS[@]}"; do
 done
 
 echo "=============================================================================="
-echo "Reset Plan for Workstream 1 (${TARGET}) in project ${PROJECT_ID}"
+echo "Reset Plan for ${WORKSTREAM_LABEL} (${TARGET}) in project ${PROJECT_ID}"
 echo "=============================================================================="
 echo "Tables to DROP (demo:true live-created and Reveal tables):"
 if [[ ${#TABLES_TO_DROP[@]} -eq 0 ]]; then
@@ -272,8 +283,8 @@ else
     done
 fi
 echo ""
-echo "Tables to REBUILD (ws1 Start Point tables with demo:true):"
-for core_tbl in "${WS1_CORE_TABLES[@]}"; do
+echo "Tables to REBUILD (${TARGET} Start Point tables with demo:true):"
+for core_tbl in "${CORE_TABLES[@]}"; do
     echo "  - ${PROJECT_ID}:${core_tbl}"
 done
 if [[ ${#TABLES_PRESERVED[@]} -gt 0 ]]; then
@@ -307,32 +318,79 @@ if [[ ${#TABLES_TO_DROP[@]} -gt 0 ]]; then
     done
 fi
 
-echo "==> Step 1/3: Restoring raw and ops tables..."
+if [[ "${TARGET}" == "ws1" ]]; then
+    echo "==> Step 1/3: Restoring raw and ops tables..."
+    if ! "${REPO_ROOT}/bin/load-raw-ops" --env "${ENV_FILE}" --dataset-dir "${DATASET_DIR}"; then
+        echo "[FAIL] Step 1/3 (bin/load-raw-ops) failed." >&2
+        exit 1
+    fi
+
+    echo "==> Step 2/3: Restoring defective staging.hospital_flu..."
+    if bq show --project_id="${PROJECT_ID}" --location="${REGION}" --format=json "${PROJECT_ID}:checkpoint.ws1_staging_hospital_flu" >/dev/null 2>&1; then
+        echo "Restoring staging.hospital_flu from Checkpoint ws1_pipeline_v1..."
+        if ! "${REPO_ROOT}/bin/checkpoint" ws1_pipeline_v1 --env "${ENV_FILE}"; then
+            echo "[FAIL] Step 2/3 (bin/checkpoint ws1_pipeline_v1) failed." >&2
+            exit 1
+        fi
+    else
+        echo "Checkpoint ws1_staging_hospital_flu not found; running Pipeline v1 on Dataproc Serverless..."
+        if ! "${REPO_ROOT}/bin/run-pipeline-v1" --env "${ENV_FILE}"; then
+            echo "[FAIL] Step 2/3 (bin/run-pipeline-v1) failed." >&2
+            exit 1
+        fi
+    fi
+
+    echo "==> Step 3/3: Verifying Workstream 1 Start Point (ws1)..."
+    if ! "${REPO_ROOT}/bin/verify-start-point" ws1 --env "${ENV_FILE}"; then
+        echo "[FAIL] Step 3/3 (bin/verify-start-point ws1) failed." >&2
+        exit 1
+    fi
+
+    echo "[PASS] Reset to Workstream 1 Start Point (ws1) complete and verified."
+    exit 0
+fi
+
+echo "==> Step 1/4: Restoring raw and ops tables..."
 if ! "${REPO_ROOT}/bin/load-raw-ops" --env "${ENV_FILE}" --dataset-dir "${DATASET_DIR}"; then
-    echo "[FAIL] Step 1/3 (bin/load-raw-ops) failed." >&2
+    echo "[FAIL] Step 1/4 (bin/load-raw-ops) failed." >&2
     exit 1
 fi
 
-echo "==> Step 2/3: Restoring defective staging.hospital_flu..."
+echo "==> Step 2/4: Restoring defective staging.hospital_flu..."
 if bq show --project_id="${PROJECT_ID}" --location="${REGION}" --format=json "${PROJECT_ID}:checkpoint.ws1_staging_hospital_flu" >/dev/null 2>&1; then
     echo "Restoring staging.hospital_flu from Checkpoint ws1_pipeline_v1..."
     if ! "${REPO_ROOT}/bin/checkpoint" ws1_pipeline_v1 --env "${ENV_FILE}"; then
-        echo "[FAIL] Step 2/3 (bin/checkpoint ws1_pipeline_v1) failed." >&2
+        echo "[FAIL] Step 2/4 (bin/checkpoint ws1_pipeline_v1) failed." >&2
         exit 1
     fi
 else
     echo "Checkpoint ws1_staging_hospital_flu not found; running Pipeline v1 on Dataproc Serverless..."
     if ! "${REPO_ROOT}/bin/run-pipeline-v1" --env "${ENV_FILE}"; then
-        echo "[FAIL] Step 2/3 (bin/run-pipeline-v1) failed." >&2
+        echo "[FAIL] Step 2/4 (bin/run-pipeline-v1) failed." >&2
         exit 1
     fi
 fi
 
-echo "==> Step 3/3: Verifying Workstream 1 Start Point (ws1)..."
-if ! "${REPO_ROOT}/bin/verify-start-point" ws1 --env "${ENV_FILE}"; then
-    echo "[FAIL] Step 3/3 (bin/verify-start-point ws1) failed." >&2
+echo "==> Step 3/4: Restoring clean staging.hospital_flu_clean..."
+if bq show --project_id="${PROJECT_ID}" --location="${REGION}" --format=json "${PROJECT_ID}:checkpoint.ws1_staging_hospital_flu_clean" >/dev/null 2>&1; then
+    echo "Restoring staging.hospital_flu_clean from Checkpoint ws1_staging_clean..."
+    if ! "${REPO_ROOT}/bin/checkpoint" ws1_staging_clean --env "${ENV_FILE}"; then
+        echo "[FAIL] Step 3/4 (bin/checkpoint ws1_staging_clean) failed." >&2
+        exit 1
+    fi
+else
+    echo "Checkpoint ws1_staging_hospital_flu_clean not found; running clean pipeline..."
+    if ! "${REPO_ROOT}/bin/run-pipeline-clean" --env "${ENV_FILE}"; then
+        echo "[FAIL] Step 3/4 (bin/run-pipeline-clean) failed." >&2
+        exit 1
+    fi
+fi
+
+echo "==> Step 4/4: Verifying Workstream 2 Start Point (ws2)..."
+if ! "${REPO_ROOT}/bin/verify-start-point" ws2 --env "${ENV_FILE}"; then
+    echo "[FAIL] Step 4/4 (bin/verify-start-point ws2) failed." >&2
     exit 1
 fi
 
-echo "[PASS] Reset to Workstream 1 Start Point (ws1) complete and verified."
+echo "[PASS] Reset to Workstream 2 Start Point (ws2) complete and verified."
 exit 0
