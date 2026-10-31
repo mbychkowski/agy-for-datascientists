@@ -1,0 +1,9 @@
+{
+  "id": "ws1_staging_clean",
+  "workstream": "ws1",
+  "description": "Cleaned Workstream 1 staging table staging.hospital_flu_clean (deduplicated by hospital_id and feed_date with Positivity)",
+  "source_table": "checkpoint.ws1_staging_hospital_flu_clean",
+  "target_table": "staging.hospital_flu_clean",
+  "sql_file": "sql/staging_hospital_flu_clean.sql",
+  "runner": "bin/run-pipeline-clean --sql-fallback"
+}

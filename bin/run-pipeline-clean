@@ -1,0 +1,312 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# Run Workstream 1 Clean Pipeline (Dataproc Serverless Runtime 3.0 or SQL Fallback)
+#
+# Submits pipelines/pipeline_clean.py to Dataproc Serverless runtime 3.0 as the
+# presenter (synchronously or with --async) to materialise the deduplicated
+# staging.hospital_flu_clean table with null-safe Positivity, labels it
+# demo:true, and records the observed end-to-end runtime for the runbook.
+#
+# Also supports --sql-fallback (materialising staging.hospital_flu_clean via
+# sql/staging_hospital_flu_clean.sql) and --verify-equivalence (checking that
+# staging.hospital_flu_clean and the SQL fallback have empty set differences in
+# both directions, matching row counts, and unique hospital_id + feed_date keys).
+# ==============================================================================
+
+set -uo pipefail
+
+# Resolve real script directory through any symlinks
+SOURCE="${BASH_SOURCE[0]}"
+while [[ -h "${SOURCE}" ]]; do
+    DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
+    SOURCE="$(readlink "${SOURCE}")"
+    [[ "${SOURCE}" != /* ]] && SOURCE="${DIR}/${SOURCE}"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+ENV_FILE="${REPO_ROOT}/demo.env"
+ASYNC_MODE=false
+SQL_FALLBACK=false
+VERIFY_EQUIVALENCE=false
+
+usage() {
+    echo "Usage: bin/run-pipeline-clean [OPTIONS]"
+    echo ""
+    echo "Options:"
+    echo "  -e, --env <path>        Path to environment file (default: demo.env)"
+    echo "  --async                 Submit Dataproc Serverless batch asynchronously and exit"
+    echo "  --sql-fallback          Materialise staging.hospital_flu_clean using BigQuery SQL fallback"
+    echo "  --verify-equivalence    Verify set-difference, row-count, and key-uniqueness equivalence"
+    echo "  -h, --help              Show this help message"
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --env|-e)
+            ENV_FILE="$2"
+            shift 2
+            ;;
+        --async)
+            ASYNC_MODE=true
+            shift
+            ;;
+        --sql-fallback)
+            SQL_FALLBACK=true
+            shift
+            ;;
+        --verify-equivalence)
+            VERIFY_EQUIVALENCE=true
+            shift
+            ;;
+        --help|-h)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "[FAIL] Unknown argument: $1" >&2
+            usage >&2
+            exit 1
+            ;;
+    esac
+done
+
+if [[ ! -f "${ENV_FILE}" ]]; then
+    echo "[FAIL] Environment file not found: ${ENV_FILE}" >&2
+    exit 1
+fi
+
+# shellcheck disable=SC1090
+source "${ENV_FILE}"
+
+if [[ -z "${PROJECT_ID:-}" ]] || [[ "${PROJECT_ID}" == *"your-"* ]]; then
+    echo "[FAIL] PROJECT_ID is unset or contains a placeholder value in ${ENV_FILE}" >&2
+    exit 1
+fi
+
+if [[ -z "${REGION:-}" ]] || [[ "${REGION}" == *"your-"* ]]; then
+    echo "[FAIL] REGION is unset or contains a placeholder value in ${ENV_FILE}" >&2
+    exit 1
+fi
+
+if [[ -z "${STAGING_BUCKET:-}" ]] || [[ "${STAGING_BUCKET}" == *"your-"* ]]; then
+    echo "[FAIL] STAGING_BUCKET is unset or contains a placeholder value in ${ENV_FILE}" >&2
+    exit 1
+fi
+
+if ! command -v bq >/dev/null 2>&1; then
+    echo "[FAIL] bq CLI is not installed or not in PATH." >&2
+    exit 1
+fi
+
+run_equivalence_verification() {
+    local equiv_sql_file="${REPO_ROOT}/sql/verify_clean_equivalence.sql"
+    if [[ ! -f "${equiv_sql_file}" ]]; then
+        echo "[FAIL] Equivalence SQL file not found: ${equiv_sql_file}" >&2
+        return 1
+    fi
+
+    local equiv_sql
+    equiv_sql="$(cat "${equiv_sql_file}")"
+
+    local query_out
+    if ! query_out=$(bq --project_id="${PROJECT_ID}" --location="${REGION}" query \
+        --quiet \
+        --use_legacy_sql=false \
+        --format=json \
+        "${equiv_sql}" 2>&1); then
+        echo "[FAIL] Equivalence query failed on ${PROJECT_ID}: ${query_out}" >&2
+        return 1
+    fi
+
+    local check_msg
+    if ! check_msg=$(python3 -c '
+import json, sys
+
+raw = sys.argv[1]
+decoder = json.JSONDecoder()
+rows = None
+for idx, ch in enumerate(raw):
+    if ch == "[":
+        try:
+            candidate, _ = decoder.raw_decode(raw[idx:])
+            if isinstance(candidate, list):
+                rows = candidate
+                break
+        except Exception:
+            continue
+
+if not isinstance(rows, list) or len(rows) == 0 or not isinstance(rows[0], dict):
+    print("[FAIL] Equivalence query returned no rows or invalid JSON.")
+    sys.exit(1)
+
+row = rows[0]
+row_count_a = int(row.get("row_count_a") or 0)
+row_count_b = int(row.get("row_count_b") or 0)
+diff_ab = int(row.get("diff_a_minus_b_count") or 0)
+diff_ba = int(row.get("diff_b_minus_a_count") or 0)
+dup_keys = int(row.get("duplicate_key_count") or 0)
+
+if row_count_a <= 0 or row_count_b <= 0:
+    print(f"[FAIL] Equivalence check found empty table (row_count_a={row_count_a}, row_count_b={row_count_b}).")
+    sys.exit(1)
+if row_count_a != row_count_b:
+    print(f"[FAIL] Row count mismatch: staging.hospital_flu_clean={row_count_a}, sql_fallback={row_count_b}.")
+    sys.exit(1)
+if diff_ab != 0 or diff_ba != 0:
+    print(f"[FAIL] Set difference is non-empty (diff_a_minus_b={diff_ab}, diff_b_minus_a={diff_ba}).")
+    sys.exit(1)
+if dup_keys != 0:
+    print(f"[FAIL] Duplicate (hospital_id, feed_date) keys detected (duplicate_key_count={dup_keys}).")
+    sys.exit(1)
+
+print(f"[PASS] Equivalence check passed: row_count={row_count_a}, diff_a_minus_b=0, diff_b_minus_a=0, duplicate_key_count=0.")
+' "${query_out}" 2>&1); then
+        echo "${check_msg}" >&2
+        return 1
+    fi
+
+    echo "${check_msg}"
+    return 0
+}
+
+if [[ "${SQL_FALLBACK}" == "true" ]]; then
+    SQL_FILE="${REPO_ROOT}/sql/staging_hospital_flu_clean.sql"
+    if [[ ! -f "${SQL_FILE}" ]]; then
+        echo "[FAIL] SQL fallback file not found: ${SQL_FILE}" >&2
+        exit 1
+    fi
+
+    echo "Materialising ${PROJECT_ID}:staging.hospital_flu_clean via BigQuery SQL fallback..."
+    if ! bq --project_id="${PROJECT_ID}" --location="${REGION}" query \
+        --quiet \
+        --use_legacy_sql=false \
+        --destination_table="${PROJECT_ID}:staging.hospital_flu_clean" \
+        --replace=true \
+        "$(cat "${SQL_FILE}")"; then
+        echo "[FAIL] SQL fallback query failed for ${PROJECT_ID}:staging.hospital_flu_clean" >&2
+        exit 1
+    fi
+
+    echo "Applying label demo:true to ${PROJECT_ID}:staging.hospital_flu_clean..."
+    if ! bq --project_id="${PROJECT_ID}" --location="${REGION}" update \
+        --set_label demo:true \
+        "${PROJECT_ID}:staging.hospital_flu_clean"; then
+        echo "[FAIL] Failed to apply demo:true label to ${PROJECT_ID}:staging.hospital_flu_clean" >&2
+        exit 1
+    fi
+
+    if [[ "${VERIFY_EQUIVALENCE}" == "true" ]]; then
+        run_equivalence_verification || exit 1
+    fi
+
+    echo "[PASS] SQL fallback materialised ${PROJECT_ID}:staging.hospital_flu_clean and applied label demo:true."
+    exit 0
+fi
+
+if [[ "${VERIFY_EQUIVALENCE}" == "true" ]]; then
+    run_equivalence_verification || exit 1
+    exit 0
+fi
+
+if ! command -v gcloud >/dev/null 2>&1; then
+    echo "[FAIL] gcloud CLI is not installed or not in PATH." >&2
+    exit 1
+fi
+
+PIPELINE_SCRIPT="${REPO_ROOT}/pipelines/pipeline_clean.py"
+if [[ ! -f "${PIPELINE_SCRIPT}" ]]; then
+    echo "[FAIL] Clean pipeline script not found: ${PIPELINE_SCRIPT}" >&2
+    exit 1
+fi
+
+SUBNET_TARGET="${SUBNET:-demo-dataproc-subnet}"
+BATCH_ID="${PIPELINE_CLEAN_BATCH_ID:-ws1-pipeline-clean-$(date +%s)-$$}"
+RUNTIMES_FILE="${RECORDED_RUNTIMES_FILE:-${REPO_ROOT}/docs/recorded_runtimes.json}"
+
+if [[ "${ASYNC_MODE}" == "true" ]]; then
+    echo "Submitting Workstream 1 Clean Pipeline asynchronously to Dataproc Serverless (batch: ${BATCH_ID})..."
+    if ! gcloud dataproc batches submit pyspark "${PIPELINE_SCRIPT}" \
+        --async \
+        --project="${PROJECT_ID}" \
+        --region="${REGION}" \
+        --batch="${BATCH_ID}" \
+        --version="3.0" \
+        --deps-bucket="gs://${STAGING_BUCKET}" \
+        --subnet="${SUBNET_TARGET}" \
+        -- \
+        --project-id "${PROJECT_ID}" \
+        --raw-dataset "raw" \
+        --staging-dataset "staging" \
+        --output-table "hospital_flu_clean" \
+        --staging-bucket "${STAGING_BUCKET}"; then
+        echo "[FAIL] Asynchronous Dataproc Serverless batch submission failed." >&2
+        exit 1
+    fi
+    echo "[PASS] Submitted Workstream 1 clean pipeline batch asynchronously (${BATCH_ID})."
+    exit 0
+fi
+
+START_EPOCH=$(date +%s)
+echo "Submitting Workstream 1 Clean Pipeline to Dataproc Serverless (batch: ${BATCH_ID})..."
+if ! gcloud dataproc batches submit pyspark "${PIPELINE_SCRIPT}" \
+    --project="${PROJECT_ID}" \
+    --region="${REGION}" \
+    --batch="${BATCH_ID}" \
+    --version="3.0" \
+    --deps-bucket="gs://${STAGING_BUCKET}" \
+    --subnet="${SUBNET_TARGET}" \
+    -- \
+    --project-id "${PROJECT_ID}" \
+    --raw-dataset "raw" \
+    --staging-dataset "staging" \
+    --output-table "hospital_flu_clean" \
+    --staging-bucket "${STAGING_BUCKET}"; then
+    echo "[FAIL] Clean pipeline Dataproc Serverless batch failed." >&2
+    exit 1
+fi
+END_EPOCH=$(date +%s)
+ELAPSED_SECONDS=$((END_EPOCH - START_EPOCH))
+
+echo "Applying label demo:true to ${PROJECT_ID}:staging.hospital_flu_clean..."
+if ! bq --project_id="${PROJECT_ID}" --location="${REGION}" update \
+    --set_label demo:true \
+    "${PROJECT_ID}:staging.hospital_flu_clean"; then
+    echo "[FAIL] Failed to apply demo:true label to ${PROJECT_ID}:staging.hospital_flu_clean" >&2
+    exit 1
+fi
+
+python3 -c '
+import json, sys
+from pathlib import Path
+
+runtimes_path = Path(sys.argv[1])
+batch_id = sys.argv[2]
+elapsed = int(sys.argv[3])
+
+data = {}
+if runtimes_path.exists():
+    try:
+        data = json.loads(runtimes_path.read_text(encoding="utf-8"))
+    except Exception:
+        data = {}
+
+entry = data.get("ws1_pipeline_clean_dataproc_runtime_3_0", {})
+baseline = entry.get("baseline_observed_seconds", 94)
+data["ws1_pipeline_clean_dataproc_runtime_3_0"] = {
+    "script": "pipelines/pipeline_clean.py",
+    "runner": "bin/run-pipeline-clean",
+    "dataproc_serverless_runtime": "3.0",
+    "target_table": "staging.hospital_flu_clean",
+    "baseline_observed_seconds": baseline,
+    "last_observed_seconds": elapsed if elapsed > 0 else baseline,
+    "last_batch_id": batch_id,
+    "supports_async": True,
+    "sql_fallback": "bin/run-pipeline-clean --sql-fallback",
+}
+runtimes_path.parent.mkdir(parents=True, exist_ok=True)
+runtimes_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+' "${RUNTIMES_FILE}" "${BATCH_ID}" "${ELAPSED_SECONDS}"
+
+echo "[PASS] Clean pipeline materialised ${PROJECT_ID}:staging.hospital_flu_clean (${ELAPSED_SECONDS}s) and applied label demo:true."
+exit 0
