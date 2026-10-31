@@ -1,0 +1,16 @@
+{
+  "ds-command-center-guardrails": {
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "./bin/guardrail-hook",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

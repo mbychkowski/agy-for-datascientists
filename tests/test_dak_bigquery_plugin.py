@@ -306,7 +306,7 @@ globalThis.fetch = async (url, opts = {{}}) => {{
                 proc.stdout,
             )
             self.assertIn("differs from installed Data Agent Kit proxy", proc.stdout)
-            self.assertIn("Summary: 6 passed, 0 failed, 1 warning(s).", proc.stdout)
+            self.assertIn("Summary: 7 passed, 0 failed, 1 warning(s).", proc.stdout)
 
     def test_preflight_warns_when_installed_dak_is_missing(self):
         """Preflight must emit [WARN] when installed Data Agent Kit proxy is absent."""

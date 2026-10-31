@@ -316,7 +316,11 @@ class TestPreflightCLI(unittest.TestCase):
                 "[PASS] Vendored BigQuery MCP proxy matches installed Data Agent Kit",
                 proc.stdout,
             )
-            self.assertIn("Summary: 7 passed, 0 failed.", proc.stdout)
+            self.assertIn(
+                "[PASS] ds-command-center plugin rules and guardrail hook enforce dataset boundaries",
+                proc.stdout,
+            )
+            self.assertIn("Summary: 8 passed, 0 failed.", proc.stdout)
 
 
 if __name__ == "__main__":

@@ -454,7 +454,108 @@ if missing:
 }
 
 # ------------------------------------------------------------------------------
-# Check 7 (Warning): Vendored BigQuery MCP Proxy Drift Check
+# Check 7: ds-command-center Plugin Rules & Dataset Boundary Guardrail Hook
+# ------------------------------------------------------------------------------
+check_ds_command_center_guardrails() {
+    local plugin_dir="${REPO_ROOT}/.agents/plugins/ds-command-center"
+    local plugin_json="${plugin_dir}/plugin.json"
+    local hooks_json="${plugin_dir}/hooks.json"
+    local rules_md="${plugin_dir}/rules/AGENTS.md"
+    local guardrail_bin="${plugin_dir}/bin/guardrail-hook"
+
+    for required_file in "${plugin_json}" "${hooks_json}" "${rules_md}" "${guardrail_bin}"; do
+        if [[ ! -f "${required_file}" ]]; then
+            echo "Required ds-command-center plugin file missing: ${required_file}"
+            return 1
+        fi
+    done
+
+    if [[ ! -x "${guardrail_bin}" ]]; then
+        echo "ds-command-center guardrail hook is not executable: ${guardrail_bin}"
+        echo "Run: chmod +x ${guardrail_bin}"
+        return 1
+    fi
+
+    local probe_out
+    if ! probe_out=$(python3 -c "
+import json, subprocess, sys
+
+hook_bin = '${guardrail_bin}'
+
+probes = [
+    (
+        'bq DML/DDL targeting raw',
+        {'toolCall': {'name': 'run_command', 'args': {'CommandLine': 'bq query --use_legacy_sql=false \"DROP TABLE raw.hospital_flu_feeds\"'}}},
+        'deny',
+        'read-only',
+    ),
+    (
+        'BigQuery MCP execute_sql DML targeting ops',
+        {'toolCall': {'name': 'execute_sql', 'args': {'sql': 'DELETE FROM ops.pipeline_run_log WHERE true'}}},
+        'deny',
+        'read-only',
+    ),
+    (
+        'BigQuery MCP execute_sql read targeting checkpoint',
+        {'toolCall': {'name': 'execute_sql', 'args': {'sql': 'SELECT * FROM checkpoint.clean_feeds'}}},
+        'deny',
+        'read-only',
+    ),
+    (
+        'Shell bq read targeting checkpoint',
+        {'toolCall': {'name': 'run_command', 'args': {'CommandLine': 'bq query --use_legacy_sql=false \"SELECT * FROM checkpoint.clean_feeds\"'}}},
+        'deny',
+        'read-only',
+    ),
+    (
+        'BigQuery MCP execute_sql read targeting raw',
+        {'toolCall': {'name': 'execute_sql', 'args': {'sql': 'SELECT COUNT(*) FROM raw.hospital_flu_feeds'}}},
+        'allow',
+        None,
+    ),
+    (
+        'Shell bq read targeting ops',
+        {'toolCall': {'name': 'run_command', 'args': {'CommandLine': 'bq query --use_legacy_sql=false \"SELECT * FROM ops.pipeline_run_log LIMIT 5\"'}}},
+        'allow',
+        None,
+    ),
+]
+
+for label, payload, expected_decision, expected_substr in probes:
+    proc = subprocess.run(
+        [hook_bin],
+        input=json.dumps(payload),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        print(f'Guardrail hook exited with code {proc.returncode} on probe: {label}')
+        sys.exit(1)
+    try:
+        resp = json.loads(proc.stdout.strip())
+    except Exception as exc:
+        print(f'Guardrail hook returned invalid JSON on probe ({label}): {proc.stdout!r} ({exc})')
+        sys.exit(1)
+    actual_decision = resp.get('decision')
+    if actual_decision != expected_decision:
+        print(f'Guardrail hook probe failed ({label}): expected decision={expected_decision!r}, got {actual_decision!r}')
+        sys.exit(1)
+    if expected_substr:
+        reason = resp.get('reason', '')
+        if expected_substr not in reason.lower():
+            print(f'Guardrail hook probe ({label}) missing {expected_substr!r} in reason: {reason!r}')
+            sys.exit(1)
+" 2>&1); then
+        echo "${probe_out}"
+        return 1
+    fi
+
+    return 0
+}
+
+# ------------------------------------------------------------------------------
+# Check 8 (Warning): Vendored BigQuery MCP Proxy Drift Check
 # ------------------------------------------------------------------------------
 check_vendored_proxy_drift() {
     local vendored_proxy="${REPO_ROOT}/.agents/plugins/dak-bigquery/mcp/bin/mcp_proxy_bundle.cjs"
@@ -527,7 +628,10 @@ main() {
     # Check 6: BigQuery MCP authenticates as presenter (no compute metadata fallback)
     run_check "BigQuery MCP authenticates as presenter (no compute metadata fallback)" check_bigquery_mcp_presenter_auth
 
-    # Check 7 (Warning): Vendored BigQuery MCP proxy matches installed Data Agent Kit
+    # Check 7: ds-command-center plugin rules and guardrail hook enforce dataset boundaries
+    run_check "ds-command-center plugin rules and guardrail hook enforce dataset boundaries" check_ds_command_center_guardrails
+
+    # Check 8 (Warning): Vendored BigQuery MCP proxy matches installed Data Agent Kit
     run_warn_check "Vendored BigQuery MCP proxy matches installed Data Agent Kit" check_vendored_proxy_drift
 
     echo ""
