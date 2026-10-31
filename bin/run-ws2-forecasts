@@ -1,0 +1,178 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# Run Workstream 2 Forecasting Benchmark & Leaderboard (ARIMA_PLUS vs TimesFM)
+#
+# Executes the 2025-26 8-week backtest across Cohorts on clean and uncleaned
+# training data versions (sql/ws2_forecasts_and_trials.sql) into
+# ml.experiment_trials, materialises the ranked leaderboard
+# (sql/ws2_leaderboard.sql) into ml.forecast_leaderboard, applies label
+# demo:true to both tables, and records observed runtimes in
+# docs/recorded_runtimes.json for the presenter runbook.
+# ==============================================================================
+
+set -uo pipefail
+
+# Resolve real script directory through any symlinks (CODING_STANDARDS.md §1)
+SOURCE="${BASH_SOURCE[0]}"
+while [[ -h "${SOURCE}" ]]; do
+    DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
+    SOURCE="$(readlink "${SOURCE}")"
+    [[ "${SOURCE}" != /* ]] && SOURCE="${DIR}/${SOURCE}"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+ENV_FILE="${REPO_ROOT}/demo.env"
+
+usage() {
+    echo "Usage: bin/run-ws2-forecasts [OPTIONS]"
+    echo ""
+    echo "Options:"
+    echo "  -e, --env <path>   Path to environment file (default: demo.env)"
+    echo "  -h, --help         Show this help message"
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --env|-e)
+            if [[ $# -lt 2 ]]; then
+                echo "[FAIL] Missing value for $1" >&2
+                usage >&2
+                exit 1
+            fi
+            ENV_FILE="$2"
+            shift 2
+            ;;
+        --help|-h)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "[FAIL] Unknown argument: $1" >&2
+            usage >&2
+            exit 1
+            ;;
+    esac
+done
+
+if [[ ! -f "${ENV_FILE}" ]]; then
+    echo "[FAIL] Environment file not found: ${ENV_FILE}" >&2
+    exit 1
+fi
+
+# shellcheck disable=SC1090
+source "${ENV_FILE}"
+
+if [[ -z "${PROJECT_ID:-}" ]] || [[ "${PROJECT_ID}" == *"your-"* ]]; then
+    echo "[FAIL] PROJECT_ID is unset or contains a placeholder value in ${ENV_FILE}" >&2
+    exit 1
+fi
+
+if [[ -z "${REGION:-}" ]] || [[ "${REGION}" == *"your-"* ]]; then
+    echo "[FAIL] REGION is unset or contains a placeholder value in ${ENV_FILE}" >&2
+    exit 1
+fi
+
+if ! command -v bq >/dev/null 2>&1; then
+    echo "[FAIL] bq CLI is not installed or not in PATH." >&2
+    exit 1
+fi
+
+TRIALS_SQL_FILE="${REPO_ROOT}/sql/ws2_forecasts_and_trials.sql"
+LEADERBOARD_SQL_FILE="${REPO_ROOT}/sql/ws2_leaderboard.sql"
+RUNTIMES_FILE="${RECORDED_RUNTIMES_FILE:-${REPO_ROOT}/docs/recorded_runtimes.json}"
+
+for required_sql in "${TRIALS_SQL_FILE}" "${LEADERBOARD_SQL_FILE}"; do
+    if [[ ! -f "${required_sql}" ]]; then
+        echo "[FAIL] Required SQL file not found: ${required_sql}" >&2
+        exit 1
+    fi
+done
+
+START_EPOCH=$(date +%s)
+echo "Running Workstream 2 backtest trials (ARIMA_PLUS vs TimesFM) into ${PROJECT_ID}:ml.experiment_trials..."
+if ! bq --project_id="${PROJECT_ID}" --location="${REGION}" query \
+    --quiet \
+    --use_legacy_sql=false \
+    --destination_table="${PROJECT_ID}:ml.experiment_trials" \
+    --replace=true \
+    "$(cat "${TRIALS_SQL_FILE}")"; then
+    echo "[FAIL] Backtest trials query failed for ${PROJECT_ID}:ml.experiment_trials" >&2
+    exit 1
+fi
+MID_EPOCH=$(date +%s)
+TRIALS_ELAPSED=$((MID_EPOCH - START_EPOCH))
+
+echo "Applying label demo:true to ${PROJECT_ID}:ml.experiment_trials..."
+if ! bq --project_id="${PROJECT_ID}" --location="${REGION}" update \
+    --set_label demo:true \
+    "${PROJECT_ID}:ml.experiment_trials"; then
+    echo "[FAIL] Failed to apply demo:true label to ${PROJECT_ID}:ml.experiment_trials" >&2
+    exit 1
+fi
+
+echo "Building Workstream 2 forecast leaderboard into ${PROJECT_ID}:ml.forecast_leaderboard..."
+if ! bq --project_id="${PROJECT_ID}" --location="${REGION}" query \
+    --quiet \
+    --use_legacy_sql=false \
+    --destination_table="${PROJECT_ID}:ml.forecast_leaderboard" \
+    --replace=true \
+    "$(cat "${LEADERBOARD_SQL_FILE}")"; then
+    echo "[FAIL] Leaderboard query failed for ${PROJECT_ID}:ml.forecast_leaderboard" >&2
+    exit 1
+fi
+END_EPOCH=$(date +%s)
+TOTAL_ELAPSED=$((END_EPOCH - START_EPOCH))
+
+echo "Applying label demo:true to ${PROJECT_ID}:ml.forecast_leaderboard..."
+if ! bq --project_id="${PROJECT_ID}" --location="${REGION}" update \
+    --set_label demo:true \
+    "${PROJECT_ID}:ml.forecast_leaderboard"; then
+    echo "[FAIL] Failed to apply demo:true label to ${PROJECT_ID}:ml.forecast_leaderboard" >&2
+    exit 1
+fi
+
+python3 -c '
+import json, sys
+from pathlib import Path
+
+runtimes_path = Path(sys.argv[1])
+elapsed = int(sys.argv[2])
+
+data = {}
+if runtimes_path.exists():
+    try:
+        data = json.loads(runtimes_path.read_text(encoding="utf-8"))
+    except Exception:
+        data = {}
+
+arima_entry = data.get("ws2_arima_plus_cohort_training", {})
+arima_baseline = int(arima_entry.get("baseline_observed_seconds", 46))
+data["ws2_arima_plus_cohort_training"] = {
+    "sql_file": "sql/ws2_forecasts_and_trials.sql",
+    "runner": "bin/run-ws2-forecasts",
+    "model_family": "ARIMA_PLUS",
+    "target_table": "ml.experiment_trials",
+    "checkpoint_id": "ws2_experiment_trials",
+    "baseline_observed_seconds": arima_baseline,
+    "last_observed_seconds": elapsed if elapsed > 0 else arima_baseline,
+}
+
+timesfm_entry = data.get("ws2_timesfm_ai_forecast", {})
+timesfm_baseline = int(timesfm_entry.get("baseline_observed_seconds", 14))
+data["ws2_timesfm_ai_forecast"] = {
+    "sql_file": "sql/ws2_forecasts_and_trials.sql",
+    "runner": "bin/run-ws2-forecasts",
+    "model_family": "TimesFM",
+    "target_table": "ml.experiment_trials",
+    "checkpoint_id": "ws2_experiment_trials",
+    "baseline_observed_seconds": timesfm_baseline,
+    "last_observed_seconds": elapsed if elapsed > 0 else timesfm_baseline,
+}
+
+runtimes_path.parent.mkdir(parents=True, exist_ok=True)
+runtimes_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+' "${RUNTIMES_FILE}" "${TRIALS_ELAPSED}"
+
+echo "[PASS] Materialised ${PROJECT_ID}:ml.experiment_trials and ${PROJECT_ID}:ml.forecast_leaderboard (${TOTAL_ELAPSED}s) with label demo:true."
+exit 0

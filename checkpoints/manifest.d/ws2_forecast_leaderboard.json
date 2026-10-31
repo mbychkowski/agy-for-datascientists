@@ -1,0 +1,8 @@
+{
+  "id": "ws2_forecast_leaderboard",
+  "workstream": "ws2",
+  "description": "Workstream 2 forecast leaderboard ranking ARIMA_PLUS and TimesFM across Cohorts by backtest WAPE",
+  "source_table": "checkpoint.ws2_forecast_leaderboard",
+  "target_table": "ml.forecast_leaderboard",
+  "sql_file": "sql/ws2_leaderboard.sql"
+}

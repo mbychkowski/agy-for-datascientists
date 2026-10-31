@@ -1,0 +1,8 @@
+{
+  "id": "ws2_experiment_trials",
+  "workstream": "ws2",
+  "description": "Workstream 2 ARIMA_PLUS and TimesFM backtest experiment trials across Cohorts and clean/uncleaned data",
+  "source_table": "checkpoint.ws2_experiment_trials",
+  "target_table": "ml.experiment_trials",
+  "sql_file": "sql/ws2_forecasts_and_trials.sql"
+}

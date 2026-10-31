@@ -18,5 +18,23 @@
     "last_batch_id": "ws1-pipeline-clean-baseline",
     "supports_async": true,
     "sql_fallback": "bin/run-pipeline-clean --sql-fallback"
+  },
+  "ws2_arima_plus_cohort_training": {
+    "sql_file": "sql/ws2_forecasts_and_trials.sql",
+    "runner": "bin/run-ws2-forecasts",
+    "model_family": "ARIMA_PLUS",
+    "target_table": "ml.experiment_trials",
+    "checkpoint_id": "ws2_experiment_trials",
+    "baseline_observed_seconds": 46,
+    "last_observed_seconds": 46
+  },
+  "ws2_timesfm_ai_forecast": {
+    "sql_file": "sql/ws2_forecasts_and_trials.sql",
+    "runner": "bin/run-ws2-forecasts",
+    "model_family": "TimesFM",
+    "target_table": "ml.experiment_trials",
+    "checkpoint_id": "ws2_experiment_trials",
+    "baseline_observed_seconds": 14,
+    "last_observed_seconds": 14
   }
 }
