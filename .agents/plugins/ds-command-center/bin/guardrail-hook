@@ -1,0 +1,444 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# Antigravity Command Center PreToolUse Guardrail Hook (ds-command-center)
+#
+# Enforces repository and dataset boundary constraints before tool execution:
+#   1. Blocks direct `git push origin main` (requires feature-branch PR flow).
+#   2. Blocks `--service-account` on `gcloud dataproc batches submit` (ADR 0002).
+#   3. Blocks invalid `spark.dataproc.ShieldedVm.*` properties on Dataproc Serverless.
+#   4. Blocks all agent access (read or write, SQL or CLI or MCP) to `checkpoint`.
+#   5. Blocks DML/DDL and mutating CLI commands against read-only `raw` and `ops`.
+# ==============================================================================
+
+set -uo pipefail
+
+# Resolve real script directory through any symlinks (CODING_STANDARDS.md §1)
+SOURCE="${BASH_SOURCE[0]}"
+while [[ -h "${SOURCE}" ]]; do
+    DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
+    SOURCE="$(readlink "${SOURCE}")"
+    [[ "${SOURCE}" != /* ]] && SOURCE="${DIR}/${SOURCE}"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
+PLUGIN_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+REPO_ROOT="$(cd "${PLUGIN_DIR}/../../.." && pwd)"
+export PLUGIN_DIR REPO_ROOT
+
+payload="$(cat)"
+
+python3 -c '
+import json
+import re
+import shlex
+import sys
+
+CHECKPOINT_DENY_REASON = (
+    "Access to the checkpoint dataset is blocked for agents "
+    "(Checkpoint tables are reserved for presenter Checkpoint swaps outside the agent). "
+    "Proceed read-only by querying raw and ops with SELECT "
+    "(or reading working tables in staging, features, and ml)."
+)
+
+RAW_OPS_DENY_REASON = (
+    "DML/DDL against raw or ops is blocked because raw and ops are strictly read-only source datasets. "
+    "Proceed read-only by running SELECT queries against raw and ops, "
+    "and write any derived tables or models to staging, features, or ml."
+)
+
+
+def allow():
+    print(json.dumps({"decision": "allow"}))
+    sys.exit(0)
+
+
+def deny(reason: str):
+    print(json.dumps({"decision": "deny", "reason": reason}))
+    sys.exit(0)
+
+
+def parse_dict_maybe(val):
+    if isinstance(val, dict):
+        return val
+    if isinstance(val, str):
+        s = val.strip()
+        if s.startswith("{") and s.endswith("}"):
+            try:
+                parsed = json.loads(s)
+                if isinstance(parsed, dict):
+                    return parsed
+            except Exception:
+                pass
+    return {}
+
+
+def extract_invocations(data):
+    if not isinstance(data, dict):
+        return []
+
+    for wrapper_key in ("preToolHookArgs", "toolHookArgs", "hookArgs"):
+        if isinstance(data.get(wrapper_key), dict):
+            data = data[wrapper_key]
+            break
+
+    tc = data.get("toolCall") or data.get("tool_call")
+    if isinstance(tc, dict):
+        name = tc.get("name") or tc.get("toolName") or tc.get("tool_name") or ""
+        args = (
+            tc.get("args")
+            if "args" in tc
+            else tc.get("arguments")
+            if "arguments" in tc
+            else tc.get("tool_input")
+            if "tool_input" in tc
+            else tc.get("toolArgs")
+            if "toolArgs" in tc
+            else tc.get("parameters")
+            if "parameters" in tc
+            else tc.get("input", {})
+        )
+    else:
+        name = data.get("tool_name") or data.get("toolName") or data.get("name") or ""
+        args = (
+            data.get("tool_input")
+            if "tool_input" in data
+            else data.get("toolArgs")
+            if "toolArgs" in data
+            else data.get("args")
+            if "args" in data
+            else data.get("arguments")
+            if "arguments" in data
+            else data.get("parameters")
+            if "parameters" in data
+            else data.get("input", {})
+        )
+
+    args_dict = parse_dict_maybe(args)
+    invocations = [(str(name), args_dict)]
+
+    if str(name) == "call_mcp_tool" or str(name).endswith("call_mcp_tool"):
+        inner_name = (
+            args_dict.get("ToolName")
+            or args_dict.get("tool_name")
+            or args_dict.get("toolName")
+            or args_dict.get("name")
+            or ""
+        )
+        inner_args = (
+            args_dict.get("Arguments")
+            if "Arguments" in args_dict
+            else args_dict.get("arguments")
+            if "arguments" in args_dict
+            else args_dict.get("args")
+            if "args" in args_dict
+            else args_dict.get("tool_input", {})
+        )
+        invocations.append((str(inner_name), parse_dict_maybe(inner_args)))
+
+    return invocations
+
+
+def normalize_sql(sql: str, is_shell_cmd: bool = False) -> str:
+    s = re.sub(r"/\*.*?\*/", " ", sql, flags=re.DOTALL)
+    if is_shell_cmd:
+        s = re.sub(r"--(?![a-zA-Z0-9_-]+=)[^\r\n]*", " ", s)
+    else:
+        s = re.sub(r"--[^\r\n]*", " ", s)
+    s = s.replace("\\`", "").replace("`", "").replace("[", " ").replace("]", " ")
+    return s
+
+
+PROJ_PREFIX = r"(?:[A-Za-z0-9_${}-]+[:.])?"
+
+CHECKPOINT_SQL_RE = re.compile(
+    rf"(?:(?<![A-Za-z0-9_${{}}-]){PROJ_PREFIX}checkpoint\s*\.\s*"
+    r"(?!(?:py|sh|md|json|yaml|yml|txt|csv|sql|js|ts|env|lock|toml)\b)[A-Za-z0-9_${}*]+)"
+    rf"|(?:\b(?:SCHEMA|DATABASE)\s+(?:IF\s+(?:NOT\s+)?EXISTS\s+)?{PROJ_PREFIX}checkpoint\b)",
+    re.IGNORECASE,
+)
+
+TARGET_RAW_OPS = rf"{PROJ_PREFIX}(?:raw|ops)\s*\.\s*[A-Za-z0-9_${{}}]+"
+SCHEMA_RAW_OPS = rf"{PROJ_PREFIX}(?:raw|ops)\b"
+
+RAW_OPS_MUTATION_RE = re.compile(
+    "|".join(
+        [
+            rf"\bINSERT\s+(?:(?:OR\s+IGNORE|OR\s+REPLACE)\s+)?(?:INTO\s+)?{TARGET_RAW_OPS}",
+            rf"\bUPDATE\s+{TARGET_RAW_OPS}",
+            rf"\bDELETE\s+(?:FROM\s+)?{TARGET_RAW_OPS}",
+            rf"\bMERGE\s+(?:INTO\s+)?{TARGET_RAW_OPS}",
+            rf"\bTRUNCATE\s+(?:TABLE\s+)?{TARGET_RAW_OPS}",
+            rf"\bCREATE\s+(?:OR\s+REPLACE\s+)?(?:TEMP(?:ORARY)?\s+)?(?:(?:EXTERNAL|MATERIALIZED|SNAPSHOT)\s+)?"
+            rf"(?:TABLE(?:\s+(?:SNAPSHOT|CLONE))?|VIEW|MODEL|(?:(?:AGGREGATE|TABLE)\s+)?FUNCTION|PROCEDURE)\s+"
+            rf"(?:IF\s+NOT\s+EXISTS\s+)?{TARGET_RAW_OPS}",
+            rf"\bALTER\s+(?:MATERIALIZED\s+)?(?:TABLE|VIEW|MODEL|PROCEDURE|FUNCTION)\s+(?:IF\s+EXISTS\s+)?{TARGET_RAW_OPS}",
+            rf"\bDROP\s+(?:(?:EXTERNAL|MATERIALIZED|SNAPSHOT)\s+)?"
+            rf"(?:TABLE(?:\s+SNAPSHOT)?|VIEW|MODEL|(?:TABLE\s+)?FUNCTION|PROCEDURE)\s+"
+            rf"(?:IF\s+EXISTS\s+)?{TARGET_RAW_OPS}",
+            rf"\bUNDROP\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?{TARGET_RAW_OPS}",
+            rf"\b(?:CREATE(?:\s+OR\s+REPLACE)?|ALTER|DROP|UNDROP)\s+(?:SCHEMA|DATABASE)\s+"
+            rf"(?:IF\s+(?:NOT\s+)?EXISTS\s+)?{SCHEMA_RAW_OPS}",
+            rf"\bLOAD\s+DATA\s+(?:INTO|OVERWRITE)\s+(?:TABLE\s+)?{TARGET_RAW_OPS}",
+            rf"\b(?:GRANT|REVOKE)\b[^;]*?\bON\s+(?:(?:TABLE|VIEW|SCHEMA|EXTERNAL\s+TABLE)\s+)?(?:{TARGET_RAW_OPS}|{SCHEMA_RAW_OPS})",
+        ]
+    ),
+    re.IGNORECASE | re.DOTALL,
+)
+
+UNQUALIFIED_MUTATION_RE = re.compile(
+    r"\b(?:INSERT\s+(?:(?:OR\s+IGNORE|OR\s+REPLACE)\s+)?(?:INTO\s+)?"
+    r"|UPDATE\s+"
+    r"|DELETE\s+(?:FROM\s+)?"
+    r"|MERGE\s+(?:INTO\s+)?"
+    r"|TRUNCATE\s+(?:TABLE\s+)?"
+    r"|CREATE\s+(?:OR\s+REPLACE\s+)?(?:TEMP(?:ORARY)?\s+)?(?:(?:EXTERNAL|MATERIALIZED|SNAPSHOT)\s+)?"
+    r"(?:TABLE(?:\s+(?:SNAPSHOT|CLONE))?|VIEW|MODEL|(?:(?:AGGREGATE|TABLE)\s+)?FUNCTION|PROCEDURE)\s+(?:IF\s+NOT\s+EXISTS\s+)?"
+    r"|ALTER\s+(?:MATERIALIZED\s+)?(?:TABLE|VIEW|MODEL|PROCEDURE|FUNCTION)\s+(?:IF\s+EXISTS\s+)?"
+    r"|DROP\s+(?:(?:EXTERNAL|MATERIALIZED|SNAPSHOT)\s+)?(?:TABLE(?:\s+SNAPSHOT)?|VIEW|MODEL|(?:TABLE\s+)?FUNCTION|PROCEDURE)\s+(?:IF\s+EXISTS\s+)?"
+    r"|UNDROP\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?"
+    r"|LOAD\s+DATA\s+(?:INTO|OVERWRITE)\s+(?:TABLE\s+)?)"
+    r"([A-Za-z0-9_${}]+)(?!\s*\.)",
+    re.IGNORECASE,
+)
+
+
+def sql_touches_checkpoint(sql: str, is_shell_cmd: bool = False) -> bool:
+    cleaned = normalize_sql(sql, is_shell_cmd=is_shell_cmd)
+    return bool(CHECKPOINT_SQL_RE.search(cleaned))
+
+
+def sql_mutates_raw_or_ops(sql: str, default_dataset: str = "", is_shell_cmd: bool = False) -> bool:
+    cleaned = normalize_sql(sql, is_shell_cmd=is_shell_cmd)
+    if RAW_OPS_MUTATION_RE.search(cleaned):
+        return True
+    ds = default_dataset.strip().strip("\"\x27`[]").lower().split(":")[-1].split(".")[-1]
+    if ds in ("raw", "ops") and UNQUALIFIED_MUTATION_RE.search(cleaned):
+        return True
+    return False
+
+
+def arg_targets_dataset(arg: str, datasets: tuple[str, ...]) -> bool:
+    val = arg.strip().strip("\"\x27`[]")
+    if val.startswith("--dataset_id=") or val.startswith("--dataset="):
+        val = val.split("=", 1)[1].strip().strip("\"\x27`[]")
+    elif val.startswith("-"):
+        return False
+    ds_group = "|".join(re.escape(d) for d in datasets)
+    pattern = rf"^(?:[A-Za-z0-9_${{}}-]+[:.])?(?:{ds_group})(?:[.:][A-Za-z0-9_${{}}-]+)?$"
+    return bool(re.match(pattern, val, re.IGNORECASE))
+
+
+BQ_SUBCOMMANDS = {
+    "query",
+    "show",
+    "ls",
+    "head",
+    "rm",
+    "mk",
+    "load",
+    "cp",
+    "extract",
+    "update",
+    "insert",
+    "truncate",
+    "partition",
+    "mkdef",
+    "shell",
+}
+
+BQ_MUTATING_SUBCOMMANDS = {"rm", "mk", "load", "update", "insert", "truncate", "partition"}
+BQ_VALUE_FLAGS = {"--project_id", "--project", "--location", "--dataset_id", "--dataset", "--format", "--job_id"}
+
+
+def check_bq_segment(segment: str, fallback_ds: str = ""):
+    try:
+        tokens = shlex.split(segment, posix=True)
+    except Exception:
+        tokens = segment.split()
+
+    bq_idx = -1
+    for idx, tok in enumerate(tokens):
+        base = tok.rsplit("/", 1)[-1]
+        if base == "bq":
+            bq_idx = idx
+            break
+    if bq_idx == -1:
+        return
+
+    rest = tokens[bq_idx + 1 :]
+    default_ds = fallback_ds
+    subcommand = ""
+    sub_idx = -1
+
+    i = 0
+    while i < len(rest):
+        tok = rest[i]
+        if tok in ("--dataset_id", "--dataset") and i + 1 < len(rest):
+            default_ds = rest[i + 1]
+            i += 2
+            continue
+        if tok.startswith("--dataset_id=") or tok.startswith("--dataset="):
+            default_ds = tok.split("=", 1)[1]
+        if not subcommand and tok.lower() in BQ_SUBCOMMANDS:
+            subcommand = tok.lower()
+            sub_idx = i
+        i += 1
+
+    if default_ds and arg_targets_dataset(default_ds, ("checkpoint",)):
+        deny(CHECKPOINT_DENY_REASON)
+
+    for tok in rest:
+        if arg_targets_dataset(tok, ("checkpoint",)):
+            deny(CHECKPOINT_DENY_REASON)
+        if not tok.startswith("-"):
+            if sql_touches_checkpoint(tok, is_shell_cmd=False):
+                deny(CHECKPOINT_DENY_REASON)
+            if sql_mutates_raw_or_ops(tok, default_dataset=default_ds, is_shell_cmd=False):
+                deny(RAW_OPS_DENY_REASON)
+
+    if sql_touches_checkpoint(segment, is_shell_cmd=True):
+        deny(CHECKPOINT_DENY_REASON)
+
+    if sql_mutates_raw_or_ops(segment, default_dataset=default_ds, is_shell_cmd=True):
+        deny(RAW_OPS_DENY_REASON)
+
+    if subcommand in BQ_MUTATING_SUBCOMMANDS:
+        if default_ds and arg_targets_dataset(default_ds, ("raw", "ops")):
+            deny(RAW_OPS_DENY_REASON)
+        for tok in rest[sub_idx + 1 :]:
+            if arg_targets_dataset(tok, ("raw", "ops")):
+                deny(RAW_OPS_DENY_REASON)
+
+    if subcommand == "cp" and sub_idx != -1:
+        pos_args = []
+        j = sub_idx + 1
+        while j < len(rest):
+            tok = rest[j]
+            if tok in BQ_VALUE_FLAGS:
+                j += 2
+                continue
+            if tok.startswith("-"):
+                j += 1
+                continue
+            pos_args.append(tok)
+            j += 1
+        if pos_args:
+            dest = pos_args[-1]
+            if arg_targets_dataset(dest, ("raw", "ops")):
+                deny(RAW_OPS_DENY_REASON)
+            if (
+                default_ds
+                and arg_targets_dataset(default_ds, ("raw", "ops"))
+                and "." not in dest
+                and ":" not in dest
+            ):
+                deny(RAW_OPS_DENY_REASON)
+
+
+def check_shell_command(cmd: str):
+    if not cmd or not cmd.strip():
+        return
+
+    # Collapse backslash-newline line continuations before inspecting commands
+    cmd = re.sub(r"\\\r?\n", " ", cmd)
+
+    # 1. Block direct git push to main
+    if re.search(r"\bgit\b[^\n;|&]*\bpush\b[^\n;|&]*\borigin\s+main(\s|$|;|&|\|)", cmd):
+        deny(
+            "Direct push to main is blocked (GH006). "
+            "Push a feature branch from .worktree/issue-XXX and open a PR with gh pr create."
+        )
+
+    # 2. Block ADR 0002 --service-account or invalid ShieldedVm properties on Dataproc Serverless batches
+    if "dataproc batches submit" in cmd:
+        if "--service-account" in cmd:
+            deny(
+                "ADR 0002 violation: Dataproc Serverless batches must run as the presenter identity "
+                "without --service-account."
+            )
+        if "spark.dataproc.ShieldedVm" in cmd:
+            deny(
+                "Dataproc Serverless for Spark uses Shielded VMs natively and rejects "
+                "spark.dataproc.ShieldedVm.* properties."
+            )
+
+    # 3. Inspect bq CLI commands and embedded SQL
+    if re.search(r"\bbq\b", cmd):
+        cmd_ds_list = re.findall(
+            r"--dataset(?:_id)?(?:\s*=\s*|\s+)[\"\x27]?([A-Za-z0-9_${}.:-]+)",
+            cmd,
+        )
+        fallback_ds = ""
+        for ds_candidate in cmd_ds_list:
+            if arg_targets_dataset(ds_candidate, ("checkpoint",)):
+                deny(CHECKPOINT_DENY_REASON)
+            if arg_targets_dataset(ds_candidate, ("raw", "ops")):
+                fallback_ds = ds_candidate
+
+        segments = re.split(r"(?:&&|\|\||[;|\n])+", cmd)
+        for seg in segments:
+            if re.search(r"\bbq\b", seg):
+                check_bq_segment(seg, fallback_ds=fallback_ds)
+        if sql_touches_checkpoint(cmd, is_shell_cmd=True):
+            deny(CHECKPOINT_DENY_REASON)
+        if sql_mutates_raw_or_ops(cmd, default_dataset=fallback_ds, is_shell_cmd=True):
+            deny(RAW_OPS_DENY_REASON)
+    elif re.search(
+        r"\b(?:SELECT|FROM|JOIN|INSERT|UPDATE|DELETE|MERGE|CREATE|DROP|ALTER|TRUNCATE)\b",
+        cmd,
+        re.IGNORECASE,
+    ):
+        if sql_touches_checkpoint(cmd, is_shell_cmd=True):
+            deny(CHECKPOINT_DENY_REASON)
+        if sql_mutates_raw_or_ops(cmd, is_shell_cmd=True):
+            deny(RAW_OPS_DENY_REASON)
+
+
+def check_mcp_invocation(tool_name: str, args_dict: dict):
+    if not isinstance(args_dict, dict):
+        return
+
+    default_ds = ""
+    for ds_key in ("dataset_id", "datasetId", "dataset"):
+        val = args_dict.get(ds_key)
+        if isinstance(val, str) and val.strip():
+            default_ds = val.strip()
+            if arg_targets_dataset(default_ds, ("checkpoint",)):
+                deny(CHECKPOINT_DENY_REASON)
+
+    for tbl_key in ("table_id", "tableId", "table"):
+        val = args_dict.get(tbl_key)
+        if isinstance(val, str) and val.strip():
+            if arg_targets_dataset(val.strip(), ("checkpoint",)):
+                deny(CHECKPOINT_DENY_REASON)
+
+    for sql_key in ("sql", "query", "statement", "q"):
+        val = args_dict.get(sql_key)
+        if isinstance(val, str) and val.strip():
+            if sql_touches_checkpoint(val, is_shell_cmd=False):
+                deny(CHECKPOINT_DENY_REASON)
+            if sql_mutates_raw_or_ops(val, default_dataset=default_ds, is_shell_cmd=False):
+                deny(RAW_OPS_DENY_REASON)
+
+
+raw = sys.stdin.read().strip()
+if not raw:
+    allow()
+
+try:
+    data = json.loads(raw)
+except Exception:
+    allow()
+
+for tool_name, args_dict in extract_invocations(data):
+    cmd = (
+        args_dict.get("CommandLine")
+        or args_dict.get("command")
+        or args_dict.get("cmd")
+        or ""
+    )
+    if isinstance(cmd, str) and cmd:
+        check_shell_command(cmd)
+    check_mcp_invocation(tool_name, args_dict)
+
+allow()
+' <<< "${payload}"

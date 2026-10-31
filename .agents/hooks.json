@@ -10,6 +10,16 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "matcher": "call_mcp_tool|.*execute_sql.*|.*table.*|.*dataset.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "../bin/agent-pre-command-hook",
+            "timeout": 10
+          }
+        ]
       }
     ]
   }

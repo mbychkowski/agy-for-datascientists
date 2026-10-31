@@ -1,0 +1,8 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "ds-command-center",
+  "displayName": "Command Center (ds-command-center)",
+  "version": "1.0.0",
+  "description": "Team-owned Command Center rules, live-captured skills, and dataset boundary guardrail hook for Antigravity for Data Scientists.",
+  "license": "Apache-2.0"
+}

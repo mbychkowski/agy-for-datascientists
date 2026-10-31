@@ -1,6 +1,7 @@
 {
   "entries": [
     { "path": ".gemini/skills" },
-    { "path": ".agents/skills" }
+    { "path": ".agents/skills" },
+    { "path": ".agents/plugins/ds-command-center/skills" }
   ]
 }
