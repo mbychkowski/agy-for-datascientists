@@ -10,5 +10,8 @@
     "agents/sampling-triage.md",
     "agents/pipeline-triage.md",
     "agents/stats-reviewer.md"
+  ],
+  "skills": [
+    "skills/cohort-forecast-refresh/SKILL.md"
   ]
 }
