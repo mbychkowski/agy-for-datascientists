@@ -1,0 +1,262 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# Run Workstream 2 Cohort Forecast Refresh Skill (cohort-forecast-refresh)
+#
+# Executes the repeatable 4-step workflow codified in
+# .agents/plugins/ds-command-center/skills/cohort-forecast-refresh/SKILL.md:
+#   1. Refresh deduplicated staging & per-hospital seasonal features
+#      (features.hospital_seasonal_features) up to <cutoff_date>.
+#   2. Refresh 4-Cohort BQML K-means model (ml.hospital_cohort_kmeans) and
+#      assignments (features.hospital_cohorts).
+#   3. Evaluate multi-series ARIMA_PLUS and zero-shot TimesFM (AI.FORECAST)
+#      for <period_label> and append new trial rows to ml.experiment_trials.
+#   4. Rebuild the ranked WAPE leaderboard (ml.forecast_leaderboard).
+# ==============================================================================
+
+set -uo pipefail
+
+# Resolve real script directory through any symlinks (CODING_STANDARDS.md §1)
+SOURCE="${BASH_SOURCE[0]}"
+while [[ -h "${SOURCE}" ]]; do
+    DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
+    SOURCE="$(readlink "${SOURCE}")"
+    [[ "${SOURCE}" != /* ]] && SOURCE="${DIR}/${SOURCE}"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+ENV_FILE="${REPO_ROOT}/demo.env"
+PERIOD_LABEL="2026-W44"
+CUTOFF_DATE="2026-11-07"
+DATASET_DIR="${REPO_ROOT}/fixtures/mock_dataset"
+OUTPUT_JSON=""
+
+usage() {
+    echo "Usage: bin/run-cohort-forecast-refresh [OPTIONS]"
+    echo ""
+    echo "Options:"
+    echo "  --period <label>        Target epidemiological period label (default: 2026-W44)"
+    echo "  --cutoff-date <date>    Cutoff date YYYY-MM-DD for feature refresh (default: 2026-11-07)"
+    echo "  -e, --env <path>        Path to environment file (default: demo.env)"
+    echo "  --dataset-dir <path>    Path to dataset directory (default: fixtures/mock_dataset)"
+    echo "  --output-json <path>    Optional path to write refresh output JSON (trials, cohorts, leaderboard)"
+    echo "  -h, --help              Show this help message"
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --period)
+            PERIOD_LABEL="$2"
+            shift 2
+            ;;
+        --cutoff-date)
+            CUTOFF_DATE="$2"
+            shift 2
+            ;;
+        --env|-e)
+            ENV_FILE="$2"
+            shift 2
+            ;;
+        --dataset-dir)
+            DATASET_DIR="$2"
+            shift 2
+            ;;
+        --output-json)
+            OUTPUT_JSON="$2"
+            shift 2
+            ;;
+        --help|-h)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "[FAIL] Unknown argument: $1" >&2
+            usage >&2
+            exit 1
+            ;;
+    esac
+done
+
+if [[ ! -f "${ENV_FILE}" ]]; then
+    echo "[FAIL] Environment file not found: ${ENV_FILE}" >&2
+    exit 1
+fi
+
+# shellcheck disable=SC1090
+source "${ENV_FILE}"
+
+if [[ -z "${PROJECT_ID:-}" ]] || [[ "${PROJECT_ID}" == *"your-"* ]]; then
+    echo "[FAIL] PROJECT_ID is unset or contains a placeholder value in ${ENV_FILE}" >&2
+    exit 1
+fi
+
+if [[ -z "${REGION:-}" ]] || [[ "${REGION}" == *"your-"* ]]; then
+    echo "[FAIL] REGION is unset or contains a placeholder value in ${ENV_FILE}" >&2
+    exit 1
+fi
+
+if [[ ! -d "${DATASET_DIR}" ]]; then
+    echo "[FAIL] Dataset directory not found: ${DATASET_DIR}" >&2
+    exit 1
+fi
+
+if ! command -v bq >/dev/null 2>&1; then
+    echo "[FAIL] bq CLI is not installed or not in PATH." >&2
+    exit 1
+fi
+
+STATE_FILE="${COHORT_REFRESH_STATE_FILE:-}"
+TMP_PLAN="$(mktemp)"
+trap 'rm -f "${TMP_PLAN}"' EXIT
+
+if ! PYTHONPATH="${REPO_ROOT}" python3 -c '
+import json
+import sys
+from pathlib import Path
+from lib.cohort_forecast_refresh import execute_refresh_for_period
+
+period_label = sys.argv[1]
+cutoff_date = sys.argv[2]
+dataset_dir = Path(sys.argv[3])
+project_id = sys.argv[4]
+region = sys.argv[5]
+state_file = sys.argv[6]
+out_path = Path(sys.argv[7])
+
+existing_trials = None
+if state_file and Path(state_file).exists():
+    try:
+        loaded = json.loads(Path(state_file).read_text(encoding="utf-8"))
+        if isinstance(loaded, dict) and isinstance(loaded.get("experiment_trials"), list):
+            existing_trials = loaded["experiment_trials"]
+    except Exception:
+        existing_trials = None
+
+result = execute_refresh_for_period(
+    period_label=period_label,
+    cutoff_date=cutoff_date,
+    dataset_dir=dataset_dir,
+    existing_trials=existing_trials,
+    project_id=project_id,
+    region=region,
+)
+out_path.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+if state_file:
+    Path(state_file).parent.mkdir(parents=True, exist_ok=True)
+    Path(state_file).write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+' "${PERIOD_LABEL}" "${CUTOFF_DATE}" "${DATASET_DIR}" "${PROJECT_ID}" "${REGION}" "${STATE_FILE}" "${TMP_PLAN}"; then
+    echo "[FAIL] Failed to compute Cohort forecast refresh artifacts for ${PERIOD_LABEL}." >&2
+    exit 1
+fi
+
+extract_sql() {
+    local key="$1"
+    python3 -c '
+import json, sys
+data = json.loads(open(sys.argv[1], encoding="utf-8").read())
+sql = data["sql_statements"][sys.argv[2]]
+print(" ".join(sql.split()))
+' "${TMP_PLAN}" "${key}"
+}
+
+STEP1_SQL="$(extract_sql "step1_seasonal_features")"
+STEP2_MODEL_SQL="$(extract_sql "step2_kmeans_model")"
+STEP2_COHORTS_SQL="$(extract_sql "step2_hospital_cohorts")"
+STEP3_INSERT_SQL="$(extract_sql "step3_insert_experiment_trials")"
+STEP4_LEADERBOARD_SQL="$(extract_sql "step4_forecast_leaderboard")"
+
+echo "Step 1/4: Refreshing ${PROJECT_ID}:features.hospital_seasonal_features up to ${CUTOFF_DATE}..."
+if ! bq --project_id="${PROJECT_ID}" --location="${REGION}" query \
+    --quiet \
+    --use_legacy_sql=false \
+    --destination_table="${PROJECT_ID}:features.hospital_seasonal_features" \
+    --replace=true \
+    "${STEP1_SQL}"; then
+    echo "[FAIL] Step 1 failed for ${PROJECT_ID}:features.hospital_seasonal_features" >&2
+    exit 1
+fi
+
+if ! bq --project_id="${PROJECT_ID}" --location="${REGION}" update \
+    --set_label demo:true \
+    "${PROJECT_ID}:features.hospital_seasonal_features"; then
+    echo "[FAIL] Failed to apply demo:true label to ${PROJECT_ID}:features.hospital_seasonal_features" >&2
+    exit 1
+fi
+
+echo "Step 2/4: Refreshing BQML K-means model and ${PROJECT_ID}:features.hospital_cohorts..."
+if ! bq --project_id="${PROJECT_ID}" --location="${REGION}" query \
+    --quiet \
+    --use_legacy_sql=false \
+    "${STEP2_MODEL_SQL}"; then
+    echo "[FAIL] Step 2 K-means model training failed for ${PROJECT_ID}:ml.hospital_cohort_kmeans" >&2
+    exit 1
+fi
+
+if ! bq --project_id="${PROJECT_ID}" --location="${REGION}" query \
+    --quiet \
+    --use_legacy_sql=false \
+    --destination_table="${PROJECT_ID}:features.hospital_cohorts" \
+    --replace=true \
+    "${STEP2_COHORTS_SQL}"; then
+    echo "[FAIL] Step 2 Cohort assignment query failed for ${PROJECT_ID}:features.hospital_cohorts" >&2
+    exit 1
+fi
+
+if ! bq --project_id="${PROJECT_ID}" --location="${REGION}" update \
+    --set_label demo:true \
+    "${PROJECT_ID}:features.hospital_cohorts"; then
+    echo "[FAIL] Failed to apply demo:true label to ${PROJECT_ID}:features.hospital_cohorts" >&2
+    exit 1
+fi
+
+echo "Step 3/4: Evaluating ARIMA_PLUS and TimesFM (AI.FORECAST) for ${PERIOD_LABEL} and appending to ${PROJECT_ID}:ml.experiment_trials..."
+if ! bq --project_id="${PROJECT_ID}" --location="${REGION}" query \
+    --quiet \
+    --use_legacy_sql=false \
+    "${STEP3_INSERT_SQL}"; then
+    echo "[FAIL] Step 3 trial insertion failed for ${PROJECT_ID}:ml.experiment_trials" >&2
+    exit 1
+fi
+
+if ! bq --project_id="${PROJECT_ID}" --location="${REGION}" update \
+    --set_label demo:true \
+    "${PROJECT_ID}:ml.experiment_trials"; then
+    echo "[FAIL] Failed to apply demo:true label to ${PROJECT_ID}:ml.experiment_trials" >&2
+    exit 1
+fi
+
+echo "Step 4/4: Rebuilding ranked WAPE leaderboard ${PROJECT_ID}:ml.forecast_leaderboard..."
+if ! bq --project_id="${PROJECT_ID}" --location="${REGION}" query \
+    --quiet \
+    --use_legacy_sql=false \
+    --destination_table="${PROJECT_ID}:ml.forecast_leaderboard" \
+    --replace=true \
+    "${STEP4_LEADERBOARD_SQL}"; then
+    echo "[FAIL] Step 4 leaderboard query failed for ${PROJECT_ID}:ml.forecast_leaderboard" >&2
+    exit 1
+fi
+
+if ! bq --project_id="${PROJECT_ID}" --location="${REGION}" update \
+    --set_label demo:true \
+    "${PROJECT_ID}:ml.forecast_leaderboard"; then
+    echo "[FAIL] Failed to apply demo:true label to ${PROJECT_ID}:ml.forecast_leaderboard" >&2
+    exit 1
+fi
+
+if [[ -n "${OUTPUT_JSON}" ]]; then
+    mkdir -p "$(dirname "${OUTPUT_JSON}")"
+    cp "${TMP_PLAN}" "${OUTPUT_JSON}"
+fi
+
+SUMMARY_LINE="$(python3 -c '
+import json, sys
+data = json.loads(open(sys.argv[1], encoding="utf-8").read())
+p = data["period_label"]
+c = data["cutoff_date"]
+n = data["new_trial_count"]
+t = data["total_trial_count"]
+print(f"period={p}, cutoff_date={c}, new_trials={n}, total_trials={t}")
+' "${TMP_PLAN}")"
+
+echo "[PASS] Cohort forecast refresh completed (${SUMMARY_LINE}) on ${PROJECT_ID} (${REGION})."
+exit 0
