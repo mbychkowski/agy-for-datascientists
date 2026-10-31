@@ -741,7 +741,31 @@ check_workspace_dak_skills_visibility() {
 }
 
 # ------------------------------------------------------------------------------
-# Check 12 (Warning): Vendored BigQuery MCP Proxy Drift Check
+# Check 12: Java 21 Runtime Available for Local Spark 4 Testing
+# ------------------------------------------------------------------------------
+check_java_21_available() {
+    local check_out
+    if ! check_out=$(python3 -c '
+import os, sys
+from pathlib import Path
+sys.path.insert(0, str(Path(sys.argv[1])))
+from pipelines.pipeline_clean import ensure_java_21_env
+
+try:
+    ensure_java_21_env(dict(os.environ))
+except RuntimeError as exc:
+    print(str(exc))
+    sys.exit(1)
+' "${REPO_ROOT}" 2>&1); then
+        echo "${check_out}"
+        return 1
+    fi
+
+    return 0
+}
+
+# ------------------------------------------------------------------------------
+# Check 13 (Warning): Vendored BigQuery MCP Proxy Drift Check
 # ------------------------------------------------------------------------------
 check_vendored_proxy_drift() {
     local vendored_proxy="${REPO_ROOT}/.agents/plugins/dak-bigquery/mcp/bin/mcp_proxy_bundle.cjs"
@@ -829,7 +853,10 @@ main() {
     # Check 11: Fresh agent sees Data Agent Kit skills installed in the workspace
     run_check "Fresh agent sees Data Agent Kit skills installed in the workspace" check_workspace_dak_skills_visibility
 
-    # Check 12 (Warning): Vendored BigQuery MCP proxy matches installed Data Agent Kit
+    # Check 12: Java 21 runtime is available for local Spark 4 testing
+    run_check "Java 21 runtime is available for local Spark 4 testing" check_java_21_available
+
+    # Check 13 (Warning): Vendored BigQuery MCP proxy matches installed Data Agent Kit
     run_warn_check "Vendored BigQuery MCP proxy matches installed Data Agent Kit" check_vendored_proxy_drift
 
     echo ""
