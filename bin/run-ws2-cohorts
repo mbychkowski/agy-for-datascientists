@@ -1,0 +1,132 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# Run Workstream 2 Seasonal Feature Engineering & K-Means Cohort Assignment
+#
+# Materialises features.hospital_seasonal_features from staging.hospital_flu_clean
+# using sql/ws2_seasonal_features.sql, trains BigQuery ML model
+# ml.hospital_cohort_kmeans (K-means with four seasonal Cohorts), materialises
+# features.hospital_cohorts using sql/ws2_kmeans_cohorts.sql, and applies label
+# demo:true to both output tables.
+# ==============================================================================
+
+set -uo pipefail
+
+# Resolve real script directory through any symlinks (CODING_STANDARDS.md §1)
+SOURCE="${BASH_SOURCE[0]}"
+while [[ -h "${SOURCE}" ]]; do
+    DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
+    SOURCE="$(readlink "${SOURCE}")"
+    [[ "${SOURCE}" != /* ]] && SOURCE="${DIR}/${SOURCE}"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+ENV_FILE="${REPO_ROOT}/demo.env"
+
+usage() {
+    echo "Usage: bin/run-ws2-cohorts [OPTIONS]"
+    echo ""
+    echo "Options:"
+    echo "  -e, --env <path>        Path to environment file (default: demo.env)"
+    echo "  -h, --help              Show this help message"
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --env|-e)
+            if [[ $# -lt 2 ]]; then
+                echo "[FAIL] Missing value for $1" >&2
+                usage >&2
+                exit 1
+            fi
+            ENV_FILE="$2"
+            shift 2
+            ;;
+        --help|-h)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "[FAIL] Unknown argument: $1" >&2
+            usage >&2
+            exit 1
+            ;;
+    esac
+done
+
+if [[ ! -f "${ENV_FILE}" ]]; then
+    echo "[FAIL] Environment file not found: ${ENV_FILE}" >&2
+    exit 1
+fi
+
+# shellcheck disable=SC1090
+source "${ENV_FILE}"
+
+if [[ -z "${PROJECT_ID:-}" ]] || [[ "${PROJECT_ID}" == *"your-"* ]]; then
+    echo "[FAIL] PROJECT_ID is unset or contains a placeholder value in ${ENV_FILE}" >&2
+    exit 1
+fi
+
+if [[ -z "${REGION:-}" ]] || [[ "${REGION}" == *"your-"* ]]; then
+    echo "[FAIL] REGION is unset or contains a placeholder value in ${ENV_FILE}" >&2
+    exit 1
+fi
+
+if ! command -v bq >/dev/null 2>&1; then
+    echo "[FAIL] bq CLI is not installed or not in PATH." >&2
+    exit 1
+fi
+
+FEATURES_SQL_FILE="${REPO_ROOT}/sql/ws2_seasonal_features.sql"
+KMEANS_SQL_FILE="${REPO_ROOT}/sql/ws2_kmeans_cohorts.sql"
+
+if [[ ! -f "${FEATURES_SQL_FILE}" ]]; then
+    echo "[FAIL] Seasonal features SQL file not found: ${FEATURES_SQL_FILE}" >&2
+    exit 1
+fi
+
+if [[ ! -f "${KMEANS_SQL_FILE}" ]]; then
+    echo "[FAIL] K-means Cohorts SQL file not found: ${KMEANS_SQL_FILE}" >&2
+    exit 1
+fi
+
+echo "Materialising ${PROJECT_ID}:features.hospital_seasonal_features from ${FEATURES_SQL_FILE}..."
+if ! bq --project_id="${PROJECT_ID}" --location="${REGION}" query \
+    --quiet \
+    --use_legacy_sql=false \
+    --destination_table="${PROJECT_ID}:features.hospital_seasonal_features" \
+    --replace=true \
+    "$(cat "${FEATURES_SQL_FILE}")"; then
+    echo "[FAIL] Failed to materialise ${PROJECT_ID}:features.hospital_seasonal_features" >&2
+    exit 1
+fi
+
+echo "Applying label demo:true to ${PROJECT_ID}:features.hospital_seasonal_features..."
+if ! bq --project_id="${PROJECT_ID}" --location="${REGION}" update \
+    --set_label demo:true \
+    "${PROJECT_ID}:features.hospital_seasonal_features"; then
+    echo "[FAIL] Failed to apply demo:true label to ${PROJECT_ID}:features.hospital_seasonal_features" >&2
+    exit 1
+fi
+
+RENDERED_KMEANS_SQL="$(sed "s/\${PROJECT_ID}/${PROJECT_ID}/g" "${KMEANS_SQL_FILE}")"
+
+echo "Training ${PROJECT_ID}:ml.hospital_cohort_kmeans and materialising ${PROJECT_ID}:features.hospital_cohorts..."
+if ! bq --project_id="${PROJECT_ID}" --location="${REGION}" query \
+    --quiet \
+    --use_legacy_sql=false \
+    "${RENDERED_KMEANS_SQL}"; then
+    echo "[FAIL] Failed to train ${PROJECT_ID}:ml.hospital_cohort_kmeans or materialise ${PROJECT_ID}:features.hospital_cohorts" >&2
+    exit 1
+fi
+
+echo "Applying label demo:true to ${PROJECT_ID}:features.hospital_cohorts..."
+if ! bq --project_id="${PROJECT_ID}" --location="${REGION}" update \
+    --set_label demo:true \
+    "${PROJECT_ID}:features.hospital_cohorts"; then
+    echo "[FAIL] Failed to apply demo:true label to ${PROJECT_ID}:features.hospital_cohorts" >&2
+    exit 1
+fi
+
+echo "[PASS] Workstream 2 seasonal features and K-means hospital Cohorts materialised and labelled demo:true."
+exit 0

@@ -91,6 +91,15 @@ In **Workstream 2**, BQML K-means clusters the 90 hospitals into four distinct s
 #### Why Is That the Right Check?
 Training 90 separate hospital models leads to high variance and overfitting on smaller facilities with noisy feeds. Conversely, training a single aggregate model obscures regional and clinical heterogeneity. Grouping hospitals into four Cohorts strikes the ideal bias-variance balance: facilities with similar seasonal dynamics share statistical strength.
 
+#### Why These Four Seasonal Features (Peak Arrival Week, Peak Volume, Curve Width, and Trend)
+Each of the four features in `features.hospital_seasonal_features` captures an orthogonal geometry of a hospital's flu curve computed from `staging.hospital_flu_clean`:
+1. **Peak Arrival Week (`peak_arrival_week`) — Timing**: Measures *when* the seasonal wave crests (average weeks after MMWR Week 40). Separating early-peaking urban medical centers (~12.5 weeks) from late-peaking rural clinics (~22.0 weeks) prevents a shared forecast from averaging two distinct peaks into a flat, mistimed plateau.
+2. **Peak Volume (`peak_volume`) — Scale**: Measures *how high* weekly positive flu tests climb at the crest of the season (~289 weekly positives in large urban centers vs ~62 in rural clinics), anchoring the amplitude of each **Cohort**.
+3. **Curve Width (`curve_width`) — Wave Shape**: Measures *how broad or sharp* the seasonal wave is by counting the weeks per season where weekly positive tests reach at least 50% of that season's peak (full width at half maximum). Suburban hospitals sustain broad plateaus (~17 weeks above half-peak), whereas rural hospitals experience sharp, narrow spikes (~5 weeks above half-peak).
+4. **Seasonal Trend (`seasonal_trend`) — Early-Season Inflection**: Measures the ratio of **Positivity** in the **Spike** week ending on the **Cutoff** (`2026-10-25`..`2026-10-31`) to the prior week (`2026-10-18`..`2026-10-24`). While facilities on the normal **Seasonal Ramp** hover near `1.01`, hospitals experiencing an active **Outbreak** surge to `2.71` (~16.3% vs ~6.0% **Positivity**).
+
+On the mock dataset, standardized 4-means (`ml.hospital_cohort_kmeans`) isolates the three Northeast **Outbreak** hospitals (`HOSP_NE_001`, `HOSP_NE_004`, `HOSP_NE_006`) into their own dedicated three-hospital **Cohort** (`COHORT_4`), with `seasonal_trend = 2.7143` (compared to $\le 1.0353$ across all non-**Outbreak** hospitals) and a minimum inter-**Cohort** centroid distance above `3.49` standard deviations. Isolating the **Outbreak** hospitals into their own **Cohort** allows downstream forecasting models to track their steep trajectory without contaminating baseline **Cohorts**.
+
 #### Common Pitfall / Skeptic's Challenge
 > *"Why not cluster by geography or bed count instead of seasonal curve features?"*
 > 

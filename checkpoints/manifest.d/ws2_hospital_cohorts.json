@@ -1,0 +1,8 @@
+{
+  "id": "ws2_hospital_cohorts",
+  "workstream": "ws2",
+  "description": "Workstream 2 K-means hospital Cohort assignments across four seasonal Cohorts",
+  "source_table": "checkpoint.ws2_hospital_cohorts",
+  "target_table": "features.hospital_cohorts",
+  "sql_file": "sql/ws2_kmeans_cohorts.sql"
+}
