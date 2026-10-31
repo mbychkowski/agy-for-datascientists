@@ -1,0 +1,8 @@
+{
+  "id": "ws2_seasonal_features",
+  "workstream": "ws2",
+  "description": "Workstream 2 per-hospital seasonal features (peak arrival week, peak volume, curve width, trend)",
+  "source_table": "checkpoint.ws2_seasonal_features",
+  "target_table": "features.hospital_seasonal_features",
+  "sql_file": "sql/ws2_seasonal_features.sql"
+}

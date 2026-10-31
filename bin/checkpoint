@@ -267,11 +267,12 @@ if [[ "${MODE}" == "build" ]]; then
                 exit 1
             fi
             echo "Building Checkpoint '${cid}' into ${PROJECT_ID}:${src} from ${sql_file}..."
+            RENDERED_SQL="$(sed "s/\${PROJECT_ID}/${PROJECT_ID}/g" "${SQL_PATH}")"
             if ! bq --project_id="${PROJECT_ID}" --location="${REGION}" query \
                 --use_legacy_sql=false \
                 --destination_table="${PROJECT_ID}:${src}" \
                 --replace=true \
-                "$(cat "${SQL_PATH}")"; then
+                "${RENDERED_SQL}"; then
                 echo "[FAIL] Failed to build Checkpoint '${cid}' via query into ${PROJECT_ID}:${src}" >&2
                 exit 1
             fi
