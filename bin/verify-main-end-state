@@ -28,6 +28,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 ENV_FILE="${REPO_ROOT}/demo.env"
 DATASET_DIR="${REPO_ROOT}/fixtures/mock_dataset"
+CLI_DATASET_SET=false
 WITHHELD_DIR=""
 ANSWER_KEY_LOC=""
 REVEAL_LOC=""
@@ -44,7 +45,7 @@ usage() {
     echo ""
     echo "Options:"
     echo "  -e, --env <path>            Path to environment file (default: demo.env)"
-    echo "  -d, --dataset-dir <path>    Path to visible dataset directory (default: fixtures/mock_dataset)"
+    echo "  -d, --dataset-dir <path>    Path or gs:// URI to visible dataset directory (default: DATASET_LOCATION or fixtures/mock_dataset)"
     echo "  -h, --help                  Show this help message"
 }
 
@@ -66,6 +67,7 @@ while [[ $# -gt 0 ]]; do
                 exit 1
             fi
             DATASET_DIR="$2"
+            CLI_DATASET_SET=true
             shift 2
             ;;
         --withheld-dir|-w)
@@ -135,6 +137,10 @@ fi
 
 # shellcheck disable=SC1090
 source "${ENV_FILE}"
+
+if [[ "${CLI_DATASET_SET}" == "false" ]] && [[ -n "${DATASET_LOCATION:-}" ]] && [[ "${DATASET_LOCATION}" != *"your-"* ]]; then
+    DATASET_DIR="${DATASET_LOCATION}"
+fi
 
 if [[ -z "${PROJECT_ID:-}" ]] || [[ "${PROJECT_ID}" == *"your-"* ]]; then
     echo "[FAIL] PROJECT_ID is unset or contains a placeholder value in ${ENV_FILE}" >&2
@@ -267,6 +273,72 @@ if ! query_out=$(bq query \
 fi
 
 # 4. Verify Attribution against runtime Answer Key and Uncleaned Forecast Overshoot in Reveal
+STAGE_TMP_DIR=""
+cleanup_stage_tmp() {
+    if [[ -n "${STAGE_TMP_DIR}" ]] && [[ -d "${STAGE_TMP_DIR}" ]]; then
+        rm -rf "${STAGE_TMP_DIR}"
+    fi
+}
+trap cleanup_stage_tmp EXIT
+
+LOCAL_DATASET_DIR="${DATASET_DIR}"
+if [[ "${DATASET_DIR}" == gs://* ]]; then
+    STAGE_TMP_DIR="$(mktemp -d)"
+    LOCAL_DATASET_DIR="${STAGE_TMP_DIR}/dataset"
+    mkdir -p "${LOCAL_DATASET_DIR}/raw/hospital_flu_feeds" "${LOCAL_DATASET_DIR}/ops"
+    DS_ROOT="${DATASET_DIR%/}"
+    if ! gcloud storage cp --project="${PROJECT_ID}" \
+        "${DS_ROOT}/raw/hospital_reference.csv" \
+        "${LOCAL_DATASET_DIR}/raw/hospital_reference.csv" >/dev/null 2>&1; then
+        echo "[FAIL] Failed to stage ${DS_ROOT}/raw/hospital_reference.csv from Cloud Storage" >&2
+        exit 1
+    fi
+    if ! gcloud storage cp --project="${PROJECT_ID}" \
+        "${DS_ROOT}/raw/hospital_flu_feeds/feeds.csv" \
+        "${LOCAL_DATASET_DIR}/raw/hospital_flu_feeds/feeds.csv" >/dev/null 2>&1; then
+        echo "[FAIL] Failed to stage ${DS_ROOT}/raw/hospital_flu_feeds/feeds.csv from Cloud Storage" >&2
+        exit 1
+    fi
+    if ! gcloud storage cp --project="${PROJECT_ID}" \
+        "${DS_ROOT}/ops/pipeline_run_log.csv" \
+        "${LOCAL_DATASET_DIR}/ops/pipeline_run_log.csv" >/dev/null 2>&1; then
+        echo "[FAIL] Failed to stage ${DS_ROOT}/ops/pipeline_run_log.csv from Cloud Storage" >&2
+        exit 1
+    fi
+fi
+
+LOCAL_ANSWER_KEY="${ANSWER_KEY_LOC}"
+if [[ "${ANSWER_KEY_LOC}" == gs://* ]]; then
+    [[ -z "${STAGE_TMP_DIR}" ]] && STAGE_TMP_DIR="$(mktemp -d)"
+    LOCAL_ANSWER_KEY="${STAGE_TMP_DIR}/answer_key.json"
+    AK_SRC="${ANSWER_KEY_LOC%/}"
+    [[ "${AK_SRC}" != *.json ]] && AK_SRC="${AK_SRC}/answer_key.json"
+    if ! gcloud storage cp --project="${PROJECT_ID}" "${AK_SRC}" "${LOCAL_ANSWER_KEY}" >/dev/null 2>&1; then
+        echo "[FAIL] Failed to stage Answer Key from Cloud Storage: ${AK_SRC}" >&2
+        exit 1
+    fi
+fi
+
+LOCAL_REVEAL="${REVEAL_LOC}"
+if [[ "${REVEAL_LOC}" == gs://* ]]; then
+    [[ -z "${STAGE_TMP_DIR}" ]] && STAGE_TMP_DIR="$(mktemp -d)"
+    LOCAL_REVEAL="${STAGE_TMP_DIR}/reveal.csv"
+    REV_SRC="${REVEAL_LOC%/}"
+    if [[ "${REV_SRC}" != *.csv ]]; then
+        if [[ "${REV_SRC}" == */hospital_flu_feeds_reveal ]]; then
+            REV_SRC="${REV_SRC}/reveal.csv"
+        elif [[ "${REV_SRC}" == */reveal ]]; then
+            REV_SRC="${REV_SRC}/hospital_flu_feeds_reveal/reveal.csv"
+        else
+            REV_SRC="${REV_SRC}/reveal/hospital_flu_feeds_reveal/reveal.csv"
+        fi
+    fi
+    if ! gcloud storage cp --project="${PROJECT_ID}" "${REV_SRC}" "${LOCAL_REVEAL}" >/dev/null 2>&1; then
+        echo "[FAIL] Failed to stage Reveal CSV from Cloud Storage: ${REV_SRC}" >&2
+        exit 1
+    fi
+fi
+
 if ! verify_msg=$(PYTHONPATH="${REPO_ROOT}" python3 -c '
 import json
 import sys
@@ -331,7 +403,7 @@ if not overshoot["uncleaned_visibly_overshoots"]:
         f"uncleaned_mean_overshoot_pct={u_over}%"
     )
     sys.exit(1)
-' "${DATASET_DIR}" "${ANSWER_KEY_LOC}" "${REVEAL_LOC}" 2>&1); then
+' "${LOCAL_DATASET_DIR}" "${LOCAL_ANSWER_KEY}" "${LOCAL_REVEAL}" 2>&1); then
     echo "${verify_msg}" >&2
     exit 1
 fi

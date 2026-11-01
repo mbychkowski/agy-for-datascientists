@@ -1,12 +1,14 @@
--- =============================================================================
--- Workstream 1 Equivalence Check: PySpark vs SQL Fallback on staging.hospital_flu_clean
---
--- Verifies that staging.hospital_flu_clean matches the SQL fallback:
---   1. Set difference is empty in both directions (diff_a_minus_b_count = 0
---      and diff_b_minus_a_count = 0).
---   2. Row counts match (row_count_a = row_count_b > 0).
---   3. (hospital_id, feed_date) is unique (duplicate_key_count = 0).
--- =============================================================================
+/*
+ * =============================================================================
+ * Workstream 1 Equivalence Check: PySpark vs SQL Fallback on staging.hospital_flu_clean
+ *
+ * Verifies that staging.hospital_flu_clean matches the SQL fallback:
+ *   1. Set difference is empty in both directions (diff_a_minus_b_count = 0
+ *      and diff_b_minus_a_count = 0).
+ *   2. Row counts match (row_count_a = row_count_b > 0).
+ *   3. (hospital_id, feed_date) is unique (duplicate_key_count = 0).
+ * =============================================================================
+ */
 
 WITH
   pyspark_clean AS (

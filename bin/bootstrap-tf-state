@@ -60,7 +60,7 @@ if ! gcloud storage buckets describe "gs://${STATE_BUCKET}" --project="${PROJECT
         --project="${PROJECT_ID}" \
         --location="${REGION}" \
         --uniform-bucket-level-access \
-        --pap=enforced
+        --public-access-prevention
 fi
 
 echo "Applying versioning and demo:true label to gs://${STATE_BUCKET}..."

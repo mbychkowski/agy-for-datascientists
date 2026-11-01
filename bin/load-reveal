@@ -26,6 +26,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 ENV_FILE="${REPO_ROOT}/demo.env"
 DATASET_DIR="${REPO_ROOT}/fixtures/mock_dataset"
+CLI_DATASET_SET=false
 REVEAL_LOCATION=""
 CHART_OUT=""
 
@@ -38,7 +39,7 @@ usage() {
     echo "Options:"
     echo "  -r, --reveal-location <path>  Runtime path or gs:// URI to withheld Reveal CSV or directory"
     echo "  -e, --env <path>              Path to environment file (default: demo.env)"
-    echo "  -d, --dataset-dir <path>      Path to visible dataset directory for local chart rendering (default: fixtures/mock_dataset)"
+    echo "  -d, --dataset-dir <path>      Path to visible dataset directory for local chart rendering (default: DATASET_LOCATION or fixtures/mock_dataset)"
     echo "  --chart-out <path>            Optional file path to write the rendered Reveal SVG chart"
     echo "  -h, --help                    Show this help message"
 }
@@ -61,6 +62,7 @@ while [[ $# -gt 0 ]]; do
                 exit 1
             fi
             DATASET_DIR="$2"
+            CLI_DATASET_SET=true
             shift 2
             ;;
         --reveal-location|-r)
@@ -116,6 +118,10 @@ fi
 
 # shellcheck disable=SC1090
 source "${ENV_FILE}"
+
+if [[ "${CLI_DATASET_SET}" == "false" ]] && [[ -n "${DATASET_LOCATION:-}" ]] && [[ "${DATASET_LOCATION}" != *"your-"* ]]; then
+    DATASET_DIR="${DATASET_LOCATION}"
+fi
 
 if [[ -z "${PROJECT_ID:-}" ]] || [[ "${PROJECT_ID}" == *"your-"* ]]; then
     echo "[FAIL] PROJECT_ID is unset or contains a placeholder value in ${ENV_FILE}" >&2

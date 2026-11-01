@@ -31,6 +31,7 @@ DATASET_DIR="${REPO_ROOT}/fixtures/mock_dataset"
 TARGET=""
 AUTO_YES=false
 POSITIONAL_DATASET_SET=false
+CLI_DATASET_SET=false
 
 usage() {
     echo "Usage: bin/reset <ws1|ws2> [OPTIONS] [dataset_location]"
@@ -41,7 +42,7 @@ usage() {
     echo ""
     echo "Options:"
     echo "  -e, --env <path>          Path to environment file (default: demo.env)"
-    echo "  -d, --dataset-dir <path>  Path or gs:// URI to dataset root (default: fixtures/mock_dataset)"
+    echo "  -d, --dataset-dir <path>  Path or gs:// URI to dataset root (default: DATASET_LOCATION or fixtures/mock_dataset)"
     echo "  -y, --yes                 Skip interactive confirmation prompt"
     echo "  -h, --help                Show this help message"
 }
@@ -64,6 +65,7 @@ while [[ $# -gt 0 ]]; do
                 exit 1
             fi
             DATASET_DIR="$2"
+            CLI_DATASET_SET=true
             shift 2
             ;;
         --yes|-y)
@@ -86,6 +88,7 @@ while [[ $# -gt 0 ]]; do
             elif [[ "${POSITIONAL_DATASET_SET}" == "false" ]]; then
                 DATASET_DIR="$1"
                 POSITIONAL_DATASET_SET=true
+                CLI_DATASET_SET=true
                 shift
             else
                 echo "[FAIL] Unexpected argument: $1" >&2
@@ -123,6 +126,10 @@ fi
 
 # shellcheck disable=SC1090
 source "${ENV_FILE}"
+
+if [[ "${CLI_DATASET_SET}" == "false" ]] && [[ -n "${DATASET_LOCATION:-}" ]] && [[ "${DATASET_LOCATION}" != *"your-"* ]]; then
+    DATASET_DIR="${DATASET_LOCATION}"
+fi
 
 if [[ -z "${PROJECT_ID:-}" ]] || [[ "${PROJECT_ID}" == *"your-"* ]]; then
     echo "[FAIL] PROJECT_ID is unset or contains a placeholder value in ${ENV_FILE}" >&2

@@ -1,10 +1,12 @@
--- =============================================================================
--- Workstream 1 SQL Fallback: staging.hospital_flu_clean
---
--- Deduplicates raw.hospital_flu_feeds by (hospital_id, feed_date) using a
--- window function (keeping latest ingested_at, then lexicographically greatest
--- batch_id), joins raw.hospital_reference, and computes null-safe Positivity.
--- =============================================================================
+/*
+ * =============================================================================
+ * Workstream 1 SQL Fallback: staging.hospital_flu_clean
+ *
+ * Deduplicates raw.hospital_flu_feeds by (hospital_id, feed_date) using a
+ * window function (keeping latest ingested_at, then lexicographically greatest
+ * batch_id), joins raw.hospital_reference, and computes null-safe Positivity.
+ * =============================================================================
+ */
 
 SELECT
   f.hospital_id,

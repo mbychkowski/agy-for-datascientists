@@ -1,41 +1,43 @@
--- =============================================================================
--- Workstream 2 Forecasting & Experiment Trial Logging: ml.experiment_trials
---
--- Backtests ARIMA_PLUS (trained per Cohort as multiple time series) and
--- zero-shot TimesFM (via AI.FORECAST) on the 2025-26 flu season:
---   * Training window : feed_date <= DATE '2026-01-03' (up to start of peak)
---   * Forecast horizon: 8 weeks (horizon = 56 days: 2026-01-04..2026-02-28)
---   * Data versions   : 'clean' (staging.hospital_flu_clean) and
---                       'uncleaned' (staging.hospital_flu)
---
--- Reference BQML Per-Cohort Multi-Series Training Statements:
---   CREATE OR REPLACE MODEL `ml.arima_plus_clean_cohort`
---   OPTIONS(
---     model_type='ARIMA_PLUS',
---     time_series_timestamp_col='feed_date',
---     time_series_data_col='positive_flu_tests',
---     time_series_id_col='hospital_id',
---     auto_arima=TRUE,
---     data_frequency='DAILY'
---   ) AS
---   SELECT feed_date, hospital_id, positive_flu_tests
---   FROM `staging.hospital_flu_clean`
---   WHERE feed_date <= DATE '2026-01-03';
---
---   CREATE OR REPLACE MODEL `ml.arima_plus_uncleaned_cohort`
---   OPTIONS(
---     model_type='ARIMA_PLUS',
---     time_series_timestamp_col='feed_date',
---     time_series_data_col='positive_flu_tests',
---     time_series_id_col='hospital_id',
---     auto_arima=TRUE,
---     data_frequency='DAILY'
---   ) AS
---   SELECT feed_date, hospital_id, SUM(positive_flu_tests) AS positive_flu_tests
---   FROM `staging.hospital_flu`
---   WHERE feed_date <= DATE '2026-01-03'
---   GROUP BY feed_date, hospital_id;
--- =============================================================================
+/*
+ * =============================================================================
+ * Workstream 2 Forecasting & Experiment Trial Logging: ml.experiment_trials
+ *
+ * Backtests ARIMA_PLUS (trained per Cohort as multiple time series) and
+ * zero-shot TimesFM (via AI.FORECAST) on the 2025-26 flu season:
+ *   * Training window : feed_date <= DATE '2026-01-03' (up to start of peak)
+ *   * Forecast horizon: 8 weeks (horizon = 56 days: 2026-01-04..2026-02-28)
+ *   * Data versions   : 'clean' (staging.hospital_flu_clean) and
+ *                       'uncleaned' (staging.hospital_flu)
+ *
+ * Reference BQML Per-Cohort Multi-Series Training Statements:
+ *   CREATE OR REPLACE MODEL `ml.arima_plus_clean_cohort`
+ *   OPTIONS(
+ *     model_type='ARIMA_PLUS',
+ *     time_series_timestamp_col='feed_date',
+ *     time_series_data_col='positive_flu_tests',
+ *     time_series_id_col='hospital_id',
+ *     auto_arima=TRUE,
+ *     data_frequency='DAILY'
+ *   ) AS
+ *   SELECT feed_date, hospital_id, positive_flu_tests
+ *   FROM `staging.hospital_flu_clean`
+ *   WHERE feed_date <= DATE '2026-01-03';
+ *
+ *   CREATE OR REPLACE MODEL `ml.arima_plus_uncleaned_cohort`
+ *   OPTIONS(
+ *     model_type='ARIMA_PLUS',
+ *     time_series_timestamp_col='feed_date',
+ *     time_series_data_col='positive_flu_tests',
+ *     time_series_id_col='hospital_id',
+ *     auto_arima=TRUE,
+ *     data_frequency='DAILY'
+ *   ) AS
+ *   SELECT feed_date, hospital_id, SUM(positive_flu_tests) AS positive_flu_tests
+ *   FROM `staging.hospital_flu`
+ *   WHERE feed_date <= DATE '2026-01-03'
+ *   GROUP BY feed_date, hospital_id;
+ * =============================================================================
+ */
 
 WITH
   clean_daily AS (
