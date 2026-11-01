@@ -15,9 +15,19 @@
     "target_table": "staging.hospital_flu_clean",
     "baseline_observed_seconds": 94,
     "last_observed_seconds": 94,
+    "sql_fallback_observed_seconds": 5,
     "last_batch_id": "ws1-pipeline-clean-baseline",
     "supports_async": true,
     "sql_fallback": "bin/run-pipeline-clean --sql-fallback"
+  },
+  "ws2_seasonal_features_and_kmeans": {
+    "sql_file": "sql/ws2_kmeans_cohorts.sql",
+    "runner": "bin/run-ws2-cohorts",
+    "model_family": "KMEANS",
+    "target_table": "features.hospital_cohorts",
+    "checkpoint_id": "ws2_hospital_cohorts",
+    "baseline_observed_seconds": 57,
+    "last_observed_seconds": 57
   },
   "ws2_arima_plus_cohort_training": {
     "sql_file": "sql/ws2_forecasts_and_trials.sql",
@@ -26,7 +36,7 @@
     "target_table": "ml.experiment_trials",
     "checkpoint_id": "ws2_experiment_trials",
     "baseline_observed_seconds": 46,
-    "last_observed_seconds": 46
+    "last_observed_seconds": 18
   },
   "ws2_timesfm_ai_forecast": {
     "sql_file": "sql/ws2_forecasts_and_trials.sql",
@@ -35,6 +45,20 @@
     "target_table": "ml.experiment_trials",
     "checkpoint_id": "ws2_experiment_trials",
     "baseline_observed_seconds": 14,
-    "last_observed_seconds": 14
+    "last_observed_seconds": 13
+  },
+  "refined_dataset_verification": {
+    "scale": "full",
+    "hospitals": 90,
+    "feed_rows": 101470,
+    "reveal_rows": 3780,
+    "load_raw_ops_seconds": 15,
+    "verify_ws1_seconds": 12,
+    "verify_ws2_seconds": 9,
+    "load_reveal_seconds": 11,
+    "verify_main_seconds": 23,
+    "reset_ws1_seconds": 68,
+    "reset_ws2_seconds": 59,
+    "checkpoint_swap_seconds": 6
   }
 }

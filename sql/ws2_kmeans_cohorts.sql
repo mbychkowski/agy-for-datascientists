@@ -1,13 +1,15 @@
--- =============================================================================
--- Workstream 2 K-Means Hospital Cohort Assignment
---
--- Statement 1: Trains BigQuery ML K-means model ml.hospital_cohort_kmeans with
---              four seasonal Cohorts on standardized per-hospital features.
--- Statement 2: Materializes features.hospital_cohorts with a Cohort assignment
---              and centroid distance per hospital. On the mock dataset, the
---              three Outbreak hospitals (HOSP_NE_001, HOSP_NE_004, HOSP_NE_006)
---              are visibly distinct in their own Cohort.
--- =============================================================================
+/*
+ * =============================================================================
+ * Workstream 2 K-Means Hospital Cohort Assignment
+ *
+ * Statement 1: Trains BigQuery ML K-means model ml.hospital_cohort_kmeans with
+ *              four seasonal Cohorts on standardized per-hospital features.
+ * Statement 2: Materializes features.hospital_cohorts with a Cohort assignment
+ *              and centroid distance per hospital. On the mock dataset, the
+ *              three Outbreak hospitals (HOSP_NE_001, HOSP_NE_004, HOSP_NE_006)
+ *              are visibly distinct in their own Cohort.
+ * =============================================================================
+ */
 
 CREATE OR REPLACE MODEL `${PROJECT_ID}.ml.hospital_cohort_kmeans`
 OPTIONS(

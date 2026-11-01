@@ -30,6 +30,7 @@ def create_demo_env_file(
     staging_bucket: str = "demo-staging-bucket",
     state_bucket: str = "demo-state-bucket",
     subnet: str = "",
+    dataset_location: str = "",
     exported: bool = True,
 ) -> Path:
     """Write a temporary demo.env file with optional export directives."""
@@ -40,6 +41,7 @@ export REGION
 export STAGING_BUCKET
 export STATE_BUCKET
 export SUBNET
+export DATASET_LOCATION
 
 export CLOUDSDK_CORE_PROJECT="${PROJECT_ID}"
 export CLOUDSDK_COMPUTE_REGION="${REGION}"
@@ -69,6 +71,7 @@ REGION="{region}"
 STAGING_BUCKET="{staging_bucket}"
 STATE_BUCKET="{state_bucket}"
 SUBNET="{subnet}"
+DATASET_LOCATION="{dataset_location}"
 {export_lines}
 """
     env_file = Path(tmpdir) / "demo.env"
@@ -82,6 +85,9 @@ def setup_preflight_test_env(
     project_id: str = "demo-proj-123",
     region: str = "us-central1",
     subnet: str = "",
+    dataset_location: str = "",
+    gcs_dataset_dir: str | Path | None = None,
+    gcs_withheld_dir: str | Path | None = None,
     exported: bool = True,
     active_project: str | None = None,
     active_region: str = "us-central1",
@@ -188,6 +194,17 @@ open(path, "w", encoding="utf-8").write(json.dumps(state))
     exit 0"""
     )
 
+    resolved_gcs_dataset_dir = (
+        str(gcs_dataset_dir)
+        if gcs_dataset_dir is not None
+        else str(WORKTREE_ROOT / "fixtures" / "mock_dataset")
+    )
+    resolved_gcs_withheld_dir = (
+        str(gcs_withheld_dir)
+        if gcs_withheld_dir is not None
+        else str(WORKTREE_ROOT / "fixtures" / "mock_withheld")
+    )
+
     fake_gcloud = bin_dir / "gcloud"
     fake_gcloud.write_text(
         f"""#!/usr/bin/env bash
@@ -210,6 +227,33 @@ if [[ "$*" == *"print-access-token"* ]]; then
 fi
 if [[ "$*" == *"dataproc batches submit"* ]]; then
     {batch_script}
+fi
+if [[ "$*" == *"storage cp"* ]]; then
+    python3 -c '
+import shutil, sys
+from pathlib import Path
+ds_root = Path(sys.argv[1]) if sys.argv[1] else None
+wh_root = Path(sys.argv[2]) if sys.argv[2] else None
+args = [a for a in sys.argv[3:] if not a.startswith("-")]
+if "storage" in args:
+    idx = args.index("storage")
+    args = args[idx + 2:]
+if len(args) >= 2:
+    src, dst = args[-2], args[-1]
+    dst_path = Path(dst)
+    dst_path.parent.mkdir(parents=True, exist_ok=True)
+    if ds_root and ds_root.is_dir():
+        for rel in ("raw/hospital_reference.csv", "raw/hospital_flu_feeds/feeds.csv", "ops/pipeline_run_log.csv"):
+            if src.endswith(rel) and (ds_root / rel).is_file():
+                shutil.copyfile(ds_root / rel, dst_path)
+                sys.exit(0)
+    if wh_root and wh_root.is_dir():
+        for rel in ("answer_key.json", "reveal/hospital_flu_feeds_reveal/reveal.csv"):
+            if src.endswith(Path(rel).name) and (wh_root / rel).is_file():
+                shutil.copyfile(wh_root / rel, dst_path)
+                sys.exit(0)
+' "{resolved_gcs_dataset_dir}" "{resolved_gcs_withheld_dir}" "$@"
+    exit $?
 fi
 exit 0
 """,
@@ -498,6 +542,7 @@ exit 0
         project_id=project_id,
         region=region,
         subnet=subnet,
+        dataset_location=dataset_location,
         exported=exported,
     )
 

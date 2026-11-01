@@ -268,13 +268,44 @@ if [[ "${MODE}" == "build" ]]; then
             fi
             echo "Building Checkpoint '${cid}' into ${PROJECT_ID}:${src} from ${sql_file}..."
             RENDERED_SQL="$(sed "s/\${PROJECT_ID}/${PROJECT_ID}/g" "${SQL_PATH}")"
-            if ! bq --project_id="${PROJECT_ID}" --location="${REGION}" query \
-                --use_legacy_sql=false \
-                --destination_table="${PROJECT_ID}:${src}" \
-                --replace=true \
-                "${RENDERED_SQL}"; then
-                echo "[FAIL] Failed to build Checkpoint '${cid}' via query into ${PROJECT_ID}:${src}" >&2
-                exit 1
+            if [[ "${RENDERED_SQL}" == *"CREATE OR REPLACE TABLE"* ]]; then
+                MODEL_SQL="$(python3 -c '
+import re, sys
+sql = sys.argv[1]
+m = re.search(r"(CREATE\s+OR\s+REPLACE\s+MODEL\b.*?;)", sql, re.IGNORECASE | re.DOTALL)
+print(m.group(1).strip() if m else "")
+' "${RENDERED_SQL}")"
+                if [[ -n "${MODEL_SQL}" ]]; then
+                    if ! bq --project_id="${PROJECT_ID}" --location="${REGION}" query \
+                        --use_legacy_sql=false \
+                        "${MODEL_SQL}"; then
+                        echo "[FAIL] Failed to execute model DDL for Checkpoint '${cid}' (${sql_file})" >&2
+                        exit 1
+                    fi
+                fi
+                SELECT_SQL="$(python3 -c '
+import re, sys
+sql = sys.argv[1]
+m = re.search(r"CREATE\s+OR\s+REPLACE\s+TABLE\s+\S+\s+AS\s*(SELECT\b.*)", sql, re.IGNORECASE | re.DOTALL)
+print(m.group(1).strip() if m else sql)
+' "${RENDERED_SQL}")"
+                if ! bq --project_id="${PROJECT_ID}" --location="${REGION}" query \
+                    --use_legacy_sql=false \
+                    --destination_table="${PROJECT_ID}:${src}" \
+                    --replace=true \
+                    "${SELECT_SQL}"; then
+                    echo "[FAIL] Failed to build Checkpoint '${cid}' via query into ${PROJECT_ID}:${src}" >&2
+                    exit 1
+                fi
+            else
+                if ! bq --project_id="${PROJECT_ID}" --location="${REGION}" query \
+                    --use_legacy_sql=false \
+                    --destination_table="${PROJECT_ID}:${src}" \
+                    --replace=true \
+                    "${RENDERED_SQL}"; then
+                    echo "[FAIL] Failed to build Checkpoint '${cid}' via query into ${PROJECT_ID}:${src}" >&2
+                    exit 1
+                fi
             fi
         else
             echo "Building Checkpoint '${cid}' into ${PROJECT_ID}:${src} from ${PROJECT_ID}:${dst}..."

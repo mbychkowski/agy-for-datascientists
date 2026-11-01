@@ -33,7 +33,7 @@ Expected output:
 
 ### Step 2: Load `demo.env` and Run `./preflight`
 
-Verify environment variables, active `gcloud` project pinning, Application Default Credentials (ADC) quota project alignment, Dataproc Serverless runtime `3.0` execution, BigQuery MCP presenter authentication, dataset guardrail hooks, BigQuery ML (`AI.FORECAST` and K-means), subagent dispatch, workspace Data Agent Kit skills visibility, and Java 21 availability:
+Confirm `DATASET_LOCATION` in `demo.env` points to the refined full-scale **Data Generator** hand-off root (`90` hospitals, for example, `DATASET_LOCATION="gs://${STAGING_BUCKET}/dataset"`), then verify environment variables, active `gcloud` project pinning, Application Default Credentials (ADC) quota project alignment, Dataproc Serverless runtime `3.0` execution, BigQuery MCP presenter authentication, dataset guardrail hooks, BigQuery ML (`AI.FORECAST` and K-means), subagent dispatch, workspace Data Agent Kit skills visibility, and Java 21 availability:
 
 ```bash
 source demo.env
@@ -44,7 +44,7 @@ Do not go on stage if any required `[FAIL]` check is reported.
 
 ### Step 3: Reset and Verify the Workstream 1 Start Point
 
-Switch to the **Workstream** 1 **Start Point** branch, reset the working BigQuery datasets (`staging`, `features`, `ml`) to the **Workstream** 1 **Start Point**, and verify table schemas, row counts, and `checkpoint` parity:
+Switch to the **Workstream** 1 **Start Point** branch, reset the working BigQuery datasets (`staging`, `features`, `ml`) to the **Workstream** 1 **Start Point** (which loads `raw` and `ops` from `DATASET_LOCATION` in `demo.env`), and verify table schemas, row counts, and `checkpoint` parity:
 
 ```bash
 git checkout workstream-1-start
@@ -75,9 +75,11 @@ git checkout workstream-1-start
 
 | Job Key / Step | Runner / Command | Recorded Runtime (`docs/recorded_runtimes.json`) | When to Trigger Early | Live Fallback / Checkpoint |
 | :--- | :--- | :--- | :--- | :--- |
-| `ws1_pipeline_clean_dataproc_runtime_3_0` (`pipelines/pipeline_clean.py`) | `./run-pipeline-clean --async` | **`94s`** (`last_observed_seconds: 94` on Dataproc Serverless runtime `3.0`) | **`00:36` (Start of Segment 1C)**: Submit immediately after approving the `git diff` on `pipelines/pipeline_clean.py`, then narrate orchestration patterns while the batch runs in the background. | `./run-pipeline-clean --sql-fallback` or `./checkpoint ws1_staging_clean` |
-| `ws1_pipeline_v1_dataproc_runtime_3_0` (`pipelines/pipeline_v1.py`) | `./bin/run-pipeline-v1` | **`88s`** (`last_observed_seconds: 88` on Dataproc Serverless runtime `3.0`) | **Pre-stage only (`./setup`)**: Materialises defective `staging.hospital_flu` before the session starts; never run live on stage. | `./checkpoint ws1_pipeline_v1` |
-| `ws2_arima_plus_cohort_training` & `ws2_timesfm_ai_forecast` (`sql/ws2_forecasts_and_trials.sql`) | `./run-ws2-forecasts` (or BQML `ARIMA_PLUS` + `AI.FORECAST`) | **`45.6s`** (`ws2_arima_plus_cohort_training`) vs **`14.0s`** (`ws2_timesfm_ai_forecast`), `~60s` total | **`00:55` (Start of Segment 2B)**: Trigger `ARIMA_PLUS` training first, then run zero-shot `TimesFM` (`AI.FORECAST`) and walk through `ml.experiment_trials` while `ARIMA_PLUS` finishes. | `./checkpoint ws2_experiment_trials` and `./checkpoint ws2_forecast_leaderboard` |
+| `ws1_pipeline_clean_dataproc_runtime_3_0` (`pipelines/pipeline_clean.py`) | `./run-pipeline-clean --async` | **`94s`** (`last_observed_seconds: 94` on Dataproc Serverless runtime `3.0`; SQL fallback **`5s`**) | **`00:36` (Start of Segment 1C)**: Submit immediately after approving the `git diff` on `pipelines/pipeline_clean.py`, then narrate orchestration patterns while the batch runs in the background. | `./run-pipeline-clean --sql-fallback` (`5s`) or `./checkpoint ws1_staging_clean` (`6s`) |
+| `ws1_pipeline_v1_dataproc_runtime_3_0` (`pipelines/pipeline_v1.py`) | `./bin/run-pipeline-v1` | **`88s`** (`last_observed_seconds: 88` on Dataproc Serverless runtime `3.0`) | **Pre-stage only (`./setup`)**: Materialises defective `staging.hospital_flu` before the session starts; never run live on stage. | `./checkpoint ws1_pipeline_v1` (`6s`) |
+| `ws2_seasonal_features_and_kmeans` (`sql/ws2_kmeans_cohorts.sql`) | `./run-ws2-cohorts` | **`57s`** (`last_observed_seconds: 57` on the 90-hospital refined dataset) | **`00:47` (Start of Segment 2A)**: Trigger seasonal feature engineering and BQML `KMEANS` (`num_clusters=4`) immediately at the start of Segment 2A, then narrate the 4 seasonal curve features while `KMEANS` trains. | `./checkpoint ws2_seasonal_features` and `./checkpoint ws2_hospital_cohorts` (`6s` each) |
+| `ws2_arima_plus_cohort_training` & `ws2_timesfm_ai_forecast` (`sql/ws2_forecasts_and_trials.sql`) | `./run-ws2-forecasts` (or BQML `ARIMA_PLUS` + `AI.FORECAST`) | **`18s`–`45.6s`** (`ws2_arima_plus_cohort_training`, `last_observed_seconds: 18`) vs **`13s`–`14.0s`** (`ws2_timesfm_ai_forecast`, `last_observed_seconds: 13`) | **`00:55` (Start of Segment 2B)**: Trigger `ARIMA_PLUS` training first, then run zero-shot `TimesFM` (`AI.FORECAST`) and walk through `ml.experiment_trials` while `ARIMA_PLUS` finishes. | `./checkpoint ws2_experiment_trials` and `./checkpoint ws2_forecast_leaderboard` (`6s` each) |
+| **Refined Full-Scale (90-Hospital) Operations** (`101,470` **Hospital Feed** rows, `3,780` **Reveal** rows) | `./load-raw-ops`, `./reset`, `./load-reveal`, `./verify-start-point` | `load-raw-ops`: **`15s`** · `verify-start-point ws1`: **`12s`** · `verify-start-point ws2`: **`9s`** · `load-reveal`: **`11s`** · `verify-start-point main`: **`23s`** · `reset ws1`: **`68s`** · `reset ws2`: **`59s`** · `checkpoint swap`: **`6s`** | **Pre-stage / Intermission / Segment 2C**: Recorded from live BigQuery and GCS runs on the refined full-scale dataset (`90` hospitals, `scale="full"`, `seed=42`). | `./checkpoint <checkpoint_id>` (`6s`) |
 
 ---
 

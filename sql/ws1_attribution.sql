@@ -1,10 +1,12 @@
--- Workstream 1 Attribution Reconciliation Query
--- Reconciles the Northeast Spike (+35.0% in the week ending on the Cutoff, 2026-10-31,
--- over 2026-10-18..2026-10-24) across the four causes:
---   1. pipeline_defect   (duplicate Hospital Feeds correlated with ops.pipeline_run_log)
---   2. sampling_artifact (testing volume expansion with flat Positivity)
---   3. outbreak          (localized sharp jump in Positivity at stable testing volume)
---   4. seasonal_ramp     (normal early-season rise across all regions)
+/*
+ * Workstream 1 Attribution Reconciliation Query
+ * Reconciles the Northeast Spike (+35.0% in the week ending on the Cutoff, 2026-10-31,
+ * over 2026-10-18..2026-10-24) across the four causes:
+ *   1. pipeline_defect   (duplicate Hospital Feeds correlated with ops.pipeline_run_log)
+ *   2. sampling_artifact (testing volume expansion with flat Positivity)
+ *   3. outbreak          (localized sharp jump in Positivity at stable testing volume)
+ *   4. seasonal_ramp     (normal early-season rise across all regions)
+ */
 
 WITH
   ranked_feeds AS (

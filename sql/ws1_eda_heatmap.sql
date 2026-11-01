@@ -1,6 +1,8 @@
--- Workstream 1 Exploratory Data Analysis: Hospital x Week Heatmap & Spike Concentration
--- Computes weekly positive counts, total tests, Positivity, duplicate row counts, and
--- each hospital's share of the Northeast Spike in the week ending on the Cutoff (2026-10-31).
+/*
+ * Workstream 1 Exploratory Data Analysis: Hospital x Week Heatmap & Spike Concentration
+ * Computes weekly positive counts, total tests, Positivity, duplicate row counts, and
+ * each hospital's share of the Northeast Spike in the week ending on the Cutoff (2026-10-31).
+ */
 
 WITH
   hospital_weekly AS (

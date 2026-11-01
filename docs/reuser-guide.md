@@ -21,6 +21,7 @@ Every script, Terraform command, BigQuery MCP wrapper, and agent rule in this re
    STAGING_BUCKET="your-dataproc-staging-bucket"
    STATE_BUCKET="your-terraform-state-bucket"
    SUBNET="" # Leave empty to let Terraform create demo-dataproc-vpc & demo-dataproc-subnet
+   DATASET_LOCATION="gs://${STAGING_BUCKET}/dataset" # Refined full-scale Data Generator hand-off root (90 hospitals; leave empty to default to fixtures/mock_dataset for unit tests)
    ```
 3. Source `demo.env` in your shell before running any CLI tool:
    ```bash
@@ -204,9 +205,11 @@ gcloud auth application-default set-quota-project "${PROJECT_ID}"
 Once Terraform, workspace Data Agent Kit skills, Java 21, and ADC are configured:
 
 1. **Generate or Load Synthetic Data & Run Setup**:
-   * For a full live environment, run the external **Data Generator** to populate your dataset bucket and your separate, manually created withheld bucket (`gs://<your-withheld-bucket>/answer_key.json` and `gs://<your-withheld-bucket>/reveal/`, per [ADR 0001](adr/0001-answer-key-outside-agent-reach.md)).
-   * Seed `raw` and `ops`, execute Pipeline v1 (`pipelines/pipeline_v1.py`) on Dataproc Serverless, and verify the **Workstream** 1 **Start Point**:
+   * For a full live environment, run the external **Data Generator** (`--scale full --seed 42`) to populate your dataset hand-off root (`DATASET_LOCATION` in `demo.env`, e.g., `gs://${STAGING_BUCKET}/dataset`) and your separate, manually created withheld bucket (`gs://<your-withheld-bucket>/answer_key.json` and `gs://<your-withheld-bucket>/reveal/`, per [ADR 0001](adr/0001-answer-key-outside-agent-reach.md)).
+   * When `DATASET_LOCATION` is configured in `demo.env`, `./setup`, `./reset ws1`, `./reset ws2`, `./bin/load-raw-ops`, and `./verify-start-point main` automatically read from the refined full-scale dataset (90 hospitals, while `fixtures/mock_dataset` stays in place for unit tests). Seed `raw` and `ops`, execute Pipeline v1 (`pipelines/pipeline_v1.py`) on Dataproc Serverless, and verify the **Workstream** 1 **Start Point**:
      ```bash
+     ./setup
+     # Or pass an explicit dataset location override:
      ./setup gs://<your-dataset-bucket>
      # Or seed using the deterministic local mock dataset fixture:
      ./setup fixtures/mock_dataset

@@ -1,21 +1,23 @@
--- =============================================================================
--- Workstream 2 Seasonal Feature Engineering: features.hospital_seasonal_features
---
--- Computes four per-hospital seasonal features from staging.hospital_flu_clean
--- up to the Cutoff (2026-10-31):
---   1. peak_arrival_week : Average seasonal week offset (from MMWR Week 40)
---                          when the hospital reaches its seasonal peak positive
---                          flu test count across historical seasons.
---   2. peak_volume       : Average weekly positive flu test count at the
---                          seasonal peak across historical seasons.
---   3. curve_width       : Average number of weeks per season where weekly
---                          positive flu tests are at least 50% of that season's
---                          peak (full width at half maximum, measuring broad
---                          versus sharp seasonal waves).
---   4. seasonal_trend    : Early-season Positivity ratio comparing the Spike
---                          week ending on the Cutoff (2026-10-25..2026-10-31)
---                          against the prior baseline week (2026-10-18..2026-10-24).
--- =============================================================================
+/*
+ * =============================================================================
+ * Workstream 2 Seasonal Feature Engineering: features.hospital_seasonal_features
+ *
+ * Computes four per-hospital seasonal features from staging.hospital_flu_clean
+ * up to the Cutoff (2026-10-31):
+ *   1. peak_arrival_week : Average seasonal week offset (from MMWR Week 40)
+ *                          when the hospital reaches its seasonal peak positive
+ *                          flu test count across historical seasons.
+ *   2. peak_volume       : Average weekly positive flu test count at the
+ *                          seasonal peak across historical seasons.
+ *   3. curve_width       : Average number of weeks per season where weekly
+ *                          positive flu tests are at least 50% of that season's
+ *                          peak (full width at half maximum, measuring broad
+ *                          versus sharp seasonal waves).
+ *   4. seasonal_trend    : Early-season Positivity ratio comparing the Spike
+ *                          week ending on the Cutoff (2026-10-25..2026-10-31)
+ *                          against the prior baseline week (2026-10-18..2026-10-24).
+ * =============================================================================
+ */
 
 WITH
   hospital_metadata AS (

@@ -1,9 +1,11 @@
--- =============================================================================
--- Workstream 2 Forecast Leaderboard Query: ml.forecast_leaderboard
---
--- Ranks (model_family, training_data_version) per Cohort and overall across
--- Cohorts by backtest_wape ASC from ml.experiment_trials.
--- =============================================================================
+/*
+ * =============================================================================
+ * Workstream 2 Forecast Leaderboard Query: ml.forecast_leaderboard
+ *
+ * Ranks (model_family, training_data_version) per Cohort and overall across
+ * Cohorts by backtest_wape ASC from ml.experiment_trials.
+ * =============================================================================
+ */
 
 WITH
   trial_metrics AS (

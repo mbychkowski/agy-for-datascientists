@@ -1,17 +1,19 @@
--- =============================================================================
--- Workstream 2 Finale: staging.reveal_forecast_comparison
---
--- Joins the post-Cutoff Reveal Hospital Feeds (raw.hospital_flu_feeds_reveal)
--- against Northeast weekly positive flu test forecasts built from:
---   1. Deduplicated clean data (staging.hospital_flu_clean), and
---   2. Uncleaned defective data (staging.hospital_flu) containing the +35%
---      Northeast Spike duplicate backfill rows.
---
--- The uncleaned forecast projects the inflated Spike jump across the six
--- withheld Reveal weeks (2026-11-01..2026-12-12) and visibly overshoots the
--- observed Reveal counts, whereas the clean Cohort-aware forecast tracks the
--- Reveal closely.
--- =============================================================================
+/*
+ * =============================================================================
+ * Workstream 2 Finale: staging.reveal_forecast_comparison
+ *
+ * Joins the post-Cutoff Reveal Hospital Feeds (raw.hospital_flu_feeds_reveal)
+ * against Northeast weekly positive flu test forecasts built from:
+ *   1. Deduplicated clean data (staging.hospital_flu_clean), and
+ *   2. Uncleaned defective data (staging.hospital_flu) containing the +35%
+ *      Northeast Spike duplicate backfill rows.
+ *
+ * The uncleaned forecast projects the inflated Spike jump across the six
+ * withheld Reveal weeks (2026-11-01..2026-12-12) and visibly overshoots the
+ * observed Reveal counts, whereas the clean Cohort-aware forecast tracks the
+ * Reveal closely.
+ * =============================================================================
+ */
 
 WITH
   uncleaned_pre_cutoff AS (
