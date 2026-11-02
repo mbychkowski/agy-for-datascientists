@@ -13,6 +13,7 @@ RUNBOOK_PATH = REPO_ROOT / "docs" / "presenter-runbook.md"
 REUSER_GUIDE_PATH = REPO_ROOT / "docs" / "reuser-guide.md"
 RECORDED_RUNTIMES_PATH = REPO_ROOT / "docs" / "recorded_runtimes.json"
 README_PATH = REPO_ROOT / "README.md"
+DEMO_PATH = REPO_ROOT / "DEMO.md"
 STAGE_CLEAN_BIN = REPO_ROOT / "bin" / "stage-clean-env"
 STAGE_CLEAN_SYMLINK = REPO_ROOT / "stage-clean-env"
 
@@ -57,6 +58,7 @@ class TestPresenterRunbookAndReuserDocs(unittest.TestCase):
         cls.runbook = RUNBOOK_PATH.read_text(encoding="utf-8")
         cls.reuser_guide = REUSER_GUIDE_PATH.read_text(encoding="utf-8")
         cls.readme = README_PATH.read_text(encoding="utf-8")
+        cls.demo = DEMO_PATH.read_text(encoding="utf-8")
         cls.recorded_runtimes = json.loads(
             RECORDED_RUNTIMES_PATH.read_text(encoding="utf-8")
         )
@@ -64,10 +66,18 @@ class TestPresenterRunbookAndReuserDocs(unittest.TestCase):
     def test_files_exist_and_readme_links_them(self) -> None:
         self.assertTrue(RUNBOOK_PATH.is_file(), f"Missing {RUNBOOK_PATH}")
         self.assertTrue(REUSER_GUIDE_PATH.is_file(), f"Missing {REUSER_GUIDE_PATH}")
+        self.assertTrue(DEMO_PATH.is_file(), f"Missing {DEMO_PATH}")
+        self.assertIn("DEMO.md", self.readme)
         self.assertIn("docs/presenter-runbook.md", self.readme)
         self.assertIn("docs/reuser-guide.md", self.readme)
         self.assertIn("docs/data-science-primer.md", self.readme)
         self.assertIn("docs/demo-outline.md", self.readme)
+        self.assertIn("```mermaid", self.readme)
+        self.assertIn("flowchart TB", self.readme)
+        self.assertIn("Workstream 1", self.demo)
+        self.assertIn("Workstream 2", self.demo)
+        self.assertIn("./stage-clean-env --stash", self.demo)
+        self.assertIn("./checkpoint", self.demo)
 
     def test_runbook_covers_per_segment_timings_prompts_and_narration(self) -> None:
         content = self.runbook
@@ -326,7 +336,7 @@ class TestPresenterRunbookAndReuserDocs(unittest.TestCase):
             self.assertFalse((gemini_dir / ".demo-stage-stash").exists())
 
     def test_company_neutrality_and_glossary_compliance(self) -> None:
-        for path in (RUNBOOK_PATH, REUSER_GUIDE_PATH, README_PATH):
+        for path in (RUNBOOK_PATH, REUSER_GUIDE_PATH, README_PATH, DEMO_PATH):
             content = path.read_text(encoding="utf-8")
             for pat in FORBIDDEN_COMPANY_PATTERNS:
                 self.assertIsNone(
@@ -348,6 +358,7 @@ class TestPresenterRunbookAndReuserDocs(unittest.TestCase):
                 str(RUNBOOK_PATH),
                 str(REUSER_GUIDE_PATH),
                 str(README_PATH),
+                str(DEMO_PATH),
                 str(STAGE_CLEAN_BIN),
             ],
             cwd=str(REPO_ROOT),
