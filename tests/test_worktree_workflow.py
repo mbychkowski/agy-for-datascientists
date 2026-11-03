@@ -1,19 +1,27 @@
 """Worktree workflow guards: pre-commit refuses main, CI enforces branch names, docs agree."""
 
 import os
-import stat
+import re
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 
-from tests.helpers import WORKTREE_ROOT
+from tests.helpers import WORKTREE_ROOT, write_noop_stubs
 
 PRE_COMMIT = WORKTREE_ROOT / ".husky" / "pre-commit"
 CI_YML = WORKTREE_ROOT / ".github" / "workflows" / "ci.yml"
 AGENTS_MD = WORKTREE_ROOT / "AGENTS.md"
 README_MD = WORKTREE_ROOT / "README.md"
-BRANCH_PATTERN = "^(issue[0-9]{3}|chore)/[a-z0-9-]+$"
+
+
+def ci_branch_pattern() -> str:
+    """The branch-name regex exactly as the CI step declares it."""
+    match = re.search(
+        r"^\s*pattern='([^']+)'$", CI_YML.read_text(encoding="utf-8"), re.MULTILINE
+    )
+    assert match, "ci.yml must declare pattern='<regex>' in the branch-name step"
+    return match.group(1)
 
 
 class TestPreCommitMainGuard(unittest.TestCase):
@@ -25,12 +33,8 @@ class TestPreCommitMainGuard(unittest.TestCase):
         self.repo = Path(tmp.name) / "repo"
         stub_bin = Path(tmp.name) / "bin"
         self.repo.mkdir()
-        stub_bin.mkdir()
         # Stub the verification tools so only the branch guard is exercised.
-        for tool in ("uvx", "make"):
-            stub = stub_bin / tool
-            stub.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-            stub.chmod(stub.stat().st_mode | stat.S_IEXEC)
+        write_noop_stubs(stub_bin, "uvx", "make")
         # Drop GIT_* so a hook-invoked test run never touches the real repo.
         self.env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
         self.env["PATH"] = f"{stub_bin}{os.pathsep}{self.env['PATH']}"
@@ -57,31 +61,41 @@ class TestPreCommitMainGuard(unittest.TestCase):
 
     def test_allows_commit_on_feature_branch(self):
         for branch in ("chore/worktree-rule", "issue019/fix-preflight"):
-            proc = self._run_pre_commit_on(branch)
-            self.assertEqual(proc.returncode, 0, f"{branch}: {proc.stderr}")
+            with self.subTest(branch=branch):
+                proc = self._run_pre_commit_on(branch)
+                self.assertEqual(proc.returncode, 0, proc.stderr)
 
 
 class TestBranchNameCheck(unittest.TestCase):
     def test_ci_checks_branch_name_on_pull_requests_only(self):
         ci_text = CI_YML.read_text(encoding="utf-8")
-        self.assertIn(f"pattern='{BRANCH_PATTERN}'", ci_text)
+        self.assertEqual(ci_branch_pattern(), "^(issue[0-9]{3}|chore)/[a-z0-9-]+$")
         self.assertIn("if: github.event_name == 'pull_request'", ci_text)
         self.assertIn("name: Check & Test", ci_text)
 
     def test_branch_pattern_accepts_conventions_only(self):
-        """Evaluate the pattern with bash `=~`, as the CI step does."""
+        """Evaluate the ci.yml pattern with bash `=~`, as the CI step does."""
+        pattern = ci_branch_pattern()
 
         def matches(branch: str) -> bool:
             script = 'pattern=$1; [[ "$2" =~ $pattern ]]'
             proc = subprocess.run(
-                ["bash", "-c", script, "_", BRANCH_PATTERN, branch], check=False
+                ["bash", "-c", script, "_", pattern, branch], check=False
             )
             return proc.returncode == 0
 
-        for ok in ("issue019/fix-preflight", "chore/worktree-rule"):
-            self.assertTrue(matches(ok), ok)
-        for bad in ("main", "fix/foo", "issue19/foo", "chore/Upper", "chore/"):
-            self.assertFalse(matches(bad), bad)
+        cases = {
+            "issue019/fix-preflight": True,
+            "chore/worktree-rule": True,
+            "main": False,
+            "fix/foo": False,
+            "issue19/foo": False,
+            "chore/Upper": False,
+            "chore/": False,
+        }
+        for branch, expected in cases.items():
+            with self.subTest(branch=branch):
+                self.assertEqual(matches(branch), expected)
 
 
 class TestWorktreeDocs(unittest.TestCase):

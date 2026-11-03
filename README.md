@@ -338,7 +338,7 @@ What `make test` runs:
 ### Branch & Pull Request Workflow
 
 * `main` is branch-protected and requires the `CI / Check & Test` GitHub Actions check to pass before merging.
-* Worktree, branch-naming, and PR conventions live in [AGENTS.md § Worktree execution](AGENTS.md#worktree-execution).
+* Worktree and branch-naming conventions live in [AGENTS.md § Worktree execution](AGENTS.md#worktree-execution).
 
 ---
 
