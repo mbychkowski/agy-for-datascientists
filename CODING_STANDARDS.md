@@ -7,7 +7,7 @@ Documented standards for Command Center scripts, tooling, and tests.
 - **Strict Execution**: Scripts must begin with `#!/usr/bin/env bash` and `set -uo pipefail` (or `set -euo pipefail`).
 - **Symlink Portability**: Resolve real script directory through any symlinks before deriving `REPO_ROOT` (do not rely on `$PWD` or fragile relative paths).
 - **Executable Bit**: All scripts in `bin/` must have executable permissions (`chmod +x`).
-- **Shellcheck**: Every bash script (selected by shebang) in `bin/`, `bin/lib/`, `.agents/plugins/*/bin/` and `.husky/pre-commit` must pass `make lint-sh` (shellcheck `--severity=warning`). Fix findings; use a targeted `# shellcheck disable=SCxxxx` with a reason only when the finding is a false positive.
+- **Shellcheck**: Every bash script in `bin/`, `bin/lib/`, `.agents/plugins/*/bin/` and `.husky/pre-commit` must pass `make lint-sh` (shellcheck `--severity=warning`, plus unresolved `source` SC1090/SC1091). Files are selected by bash shebang; sourced `bin/lib/` files without one must start with `# shellcheck shell=bash`. Annotate dynamic sources with `# shellcheck source=lib/<name>.sh`. Fix findings; use a targeted `# shellcheck disable=SCxxxx` with a reason only for false positives.
 
 ## 2. Preflight Checks (`bin/preflight`)
 

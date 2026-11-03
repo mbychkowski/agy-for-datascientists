@@ -34,4 +34,4 @@ Worktrees follow the path convention `.worktree/issue-<3-digit-id>` (e.g. `.work
 
 ### Verification guardrail
 
-Run `uvx ruff check . && uvx ruff format --check . && make test && make lint-sh && make lint-tf` (the same checks as `.husky/pre-commit` and CI) to execute formatting, linting, glossary, syntax, test, shellcheck, and Terraform validate/fmt suites.
+Run `uvx ruff check . && uvx ruff format --check . && make test && make lint-sh && make lint-tf` (mirrors `.husky/pre-commit` and CI) to execute formatting, linting, glossary, syntax, test, shellcheck, and Terraform validate/fmt suites.
