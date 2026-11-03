@@ -514,6 +514,16 @@ exit 0
     fake_agy.write_text(
         f"""#!/usr/bin/env bash
 echo "agy $*" >> "{log_file}"
+# Mirror the real CLI: --print takes a value, so a flag right after a bare
+# --print is swallowed as the prompt (issue #44).
+prev=""
+for arg in "$@"; do
+    if [[ "${{prev}}" == "--print" && "${{arg}}" == --* ]]; then
+        echo "Error: --print took \\"${{arg}}\\" as its prompt, so the intended prompt was left as an argument and ignored." >&2
+        exit 2
+    fi
+    prev="${{arg}}"
+done
 if [[ "$*" == *"SUBAGENT_OK"* ]]; then
     {subagent_script}
 fi
