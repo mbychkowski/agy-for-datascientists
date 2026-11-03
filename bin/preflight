@@ -680,7 +680,7 @@ check_subagent_dispatch() {
 
     local agy_timeout="${PREFLIGHT_AGY_TIMEOUT:-60s}"
     local subagent_out
-    if ! subagent_out=$(agy --print --print-timeout "${agy_timeout}" "Dispatch a research subagent with the prompt 'Reply with SUBAGENT_OK' and print SUBAGENT_OK when it returns." 2>&1); then
+    if ! subagent_out=$(agy --print-timeout "${agy_timeout}" --print="Dispatch a research subagent with the prompt 'Reply with SUBAGENT_OK' and print SUBAGENT_OK when it returns." 2>&1); then
         echo "Antigravity CLI subagent dispatch failed."
         echo "Error details: ${subagent_out}"
         echo "Manual fallback check: In the Antigravity IDE chat panel, ask the agent to dispatch a research subagent and confirm it returns in the Subagents pane."
@@ -724,7 +724,7 @@ check_workspace_dak_skills_visibility() {
 
     local agy_timeout="${PREFLIGHT_AGY_TIMEOUT:-60s}"
     local skills_out
-    if ! skills_out=$(agy --print --print-timeout "${agy_timeout}" "Confirm whether Data Agent Kit skills (such as bigquery-ai-ml or gcp-spark) are visible in this workspace and reply with DAK_SKILLS_VISIBLE." 2>&1); then
+    if ! skills_out=$(agy --print-timeout "${agy_timeout}" --print="Confirm whether Data Agent Kit skills (such as bigquery-ai-ml or gcp-spark) are visible in this workspace and reply with DAK_SKILLS_VISIBLE." 2>&1); then
         echo "Fresh agent invocation failed while checking workspace Data Agent Kit skills."
         echo "Error details: ${skills_out}"
         return 1
