@@ -8,6 +8,12 @@
 #   3. Blocks invalid `spark.dataproc.ShieldedVm.*` properties on Dataproc Serverless.
 #   4. Blocks all agent access (read or write, SQL or CLI or MCP) to `checkpoint`.
 #   5. Blocks DML/DDL and mutating CLI commands against read-only `raw` and `ops`.
+#
+# The checkpoint and raw/ops checks (4-5 above, step 3 in check_shell_command)
+# run on every shell command except text-only ones: every command is on
+# TEXT_ONLY_COMMANDS (git, gh, echo, cat, ...) and nothing in the line can reach
+# BigQuery. This lets prose in commit messages, gh bodies, and heredocs into
+# files name the `checkpoint` dataset without being read as SQL.
 # ==============================================================================
 
 set -uo pipefail
@@ -334,6 +340,132 @@ def check_bq_segment(segment: str, fallback_ds: str = ""):
                 deny(RAW_OPS_DENY_REASON)
 
 
+# Commands that only handle text (messages, file contents, listings) and never
+# send SQL to BigQuery. No shells, interpreters, make, env, or ssh.
+TEXT_ONLY_COMMANDS = {
+    "git", "gh", "cd", "echo", "printf", "cat", "ls", "grep", "head", "tail", "wc", "diff", "mkdir", "touch",
+}
+BIGQUERY_WORD_RE = re.compile(r"\b(?:bq|gcloud|bigquery)\b", re.IGNORECASE)
+# Substitution and eval-like words, plus git hook paths a same-line write could make git run.
+INDIRECTION_RE = re.compile(r"\$\(|`|<\(|>\(|\b(?:eval|source|exec|xargs)\b|\.husky|\.git/hooks|hooksPath")
+# git and gh arguments that make the allowlisted command run a shell command.
+SHELL_RUNNING_ARGS = {
+    "git": {"-c", "--config-env", "--exec-path", "-x", "--exec", "bisect", "submodule", "filter-branch"},
+    "gh": {"alias", "extension"},
+}
+HEREDOC_RE = re.compile(r"<<(-?)[ \t]*(?:\x27([^\x27\n]+)\x27|\"([^\"\n]+)\"|\\?([A-Za-z0-9_.-]+))")
+
+
+def split_shell_commands(cmd: str):
+    """Split cmd on unquoted ; && || | & and newlines, dropping heredoc bodies.
+
+    Returns None when a quote is unterminated, a heredoc cannot be parsed, or an
+    unquoted # starts a comment (a comment can hide text from this splitter).
+    """
+    parts: list = []
+    buf: list = []
+    pending: list = []
+    quote = ""
+    word_start = True
+    i, n = 0, len(cmd)
+    while i < n:
+        c = cmd[i]
+        if quote:
+            if c == "\\" and quote == "\"":
+                buf.append(cmd[i : i + 2])
+                i += 2
+                continue
+            if c == quote:
+                quote = ""
+            buf.append(c)
+            i += 1
+            continue
+        if c in (" ", "\t"):
+            word_start = True
+            buf.append(c)
+            i += 1
+            continue
+        if c == "#" and word_start:
+            return None
+        word_start = False
+        if c in ("\x27", "\""):
+            quote = c
+        elif c == "\\":
+            buf.append(cmd[i : i + 2])
+            i += 2
+            continue
+        elif cmd.startswith("<<<", i):
+            buf.append("<<<")
+            i += 3
+            continue
+        elif cmd.startswith("<<", i):
+            m = HEREDOC_RE.match(cmd, i)
+            if not m:
+                return None
+            delim = next(g for g in m.groups()[1:] if g is not None)
+            pending.append((m.group(1) == "-", delim))
+            buf.append(m.group(0))
+            i = m.end()
+            continue
+        elif c == "&" and (cmd[i - 1 : i] in (">", "<") or cmd.startswith("&>", i)):
+            buf.append(c)
+            i += 1
+            continue
+        elif c in (";", "&", "|", "\n"):
+            parts.append("".join(buf))
+            buf.clear()
+            word_start = True
+            i += 1
+            if c == "\n" and pending:
+                for strip_tabs, delim in pending:
+                    while True:
+                        if i >= n:
+                            return None
+                        nl = cmd.find("\n", i)
+                        end = n if nl == -1 else nl
+                        line = cmd[i:end]
+                        i = end + 1
+                        if (line.lstrip("\t") if strip_tabs else line).rstrip("\r") == delim:
+                            break
+                pending.clear()
+            continue
+        buf.append(c)
+        i += 1
+    if quote or pending:
+        return None
+    parts.append("".join(buf))
+    return parts
+
+
+def is_text_only_command(cmd: str) -> bool:
+    """True when the checkpoint and raw/ops text checks can be skipped.
+
+    Every command must start with a TEXT_ONLY_COMMANDS word, and nothing in the
+    line (heredoc bodies and quoted strings included) may name bq, gcloud, or
+    bigquery, even split by quotes or backslashes, or use substitution, eval,
+    source, exec, xargs, or a git/gh option that runs a shell command. Anything
+    else, or anything that fails to parse, keeps the strict check.
+    """
+    unquoted = re.sub(r"[\"\x27\\\\]", "", cmd)
+    if BIGQUERY_WORD_RE.search(unquoted) or INDIRECTION_RE.search(cmd):
+        return False
+    parts = split_shell_commands(cmd)
+    if parts is None:
+        return False
+    for part in parts:
+        try:
+            words = shlex.split(part, posix=True)
+        except ValueError:
+            return False
+        if not words:
+            continue
+        if words[0] not in TEXT_ONLY_COMMANDS:
+            return False
+        if words[0] in SHELL_RUNNING_ARGS and SHELL_RUNNING_ARGS[words[0]].intersection(words[1:]):
+            return False
+    return True
+
+
 def check_shell_command(cmd: str):
     if not cmd or not cmd.strip():
         return
@@ -361,7 +493,9 @@ def check_shell_command(cmd: str):
                 "spark.dataproc.ShieldedVm.* properties."
             )
 
-    # 3. Inspect bq CLI commands and embedded SQL
+    # 3. Inspect bq CLI commands and embedded SQL, unless the command is text-only
+    if is_text_only_command(cmd):
+        return
     if re.search(r"\bbq\b", cmd):
         cmd_ds_list = re.findall(
             r"--dataset(?:_id)?(?:\s*=\s*|\s+)[\"\x27]?([A-Za-z0-9_${}.:-]+)",
