@@ -27,9 +27,15 @@ class TestGuardrailsAndHooks(unittest.TestCase):
 
     def test_plugin_guardrail_hook_is_the_only_pre_tool_use_hook(self):
         """The ds-command-center plugin hook is the only PreToolUse hook; no workspace-level duplicate exists."""
+        agents_dir = WORKTREE_ROOT / ".agents"
+        # Workspace-level and plugin-level hook registrations; untracked personal
+        # config elsewhere under .agents/ (ignored by .gitignore) is not scanned.
         hook_configs = sorted(
             p.relative_to(WORKTREE_ROOT).as_posix()
-            for p in (WORKTREE_ROOT / ".agents").rglob("hooks.json")
+            for p in [
+                *agents_dir.glob("hooks.json"),
+                *agents_dir.glob("plugins/*/hooks.json"),
+            ]
         )
         self.assertEqual(
             hook_configs,
