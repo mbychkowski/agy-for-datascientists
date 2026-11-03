@@ -10,6 +10,10 @@ A reusable live demo for data science teams: agents investigate whether a flu sp
 Antigravity as a data scientist's single place to direct day-to-day data work, together with everything connected to it (skills, subagents, MCP servers, hooks, Data Agent Kit).
 _Avoid_: IDE, chatbot, copilot
 
+**Pinning**:
+Explicitly binding every cloud CLI call to the configured project, region, and runtime flags from `demo.env`, rather than relying on ambient workstation defaults.
+_Avoid_: Ambient config, default project
+
 ### Data
 
 **Hospital Feed**:

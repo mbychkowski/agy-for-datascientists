@@ -6,7 +6,8 @@ Documented standards for Command Center scripts, tooling, and tests.
 
 - **Strict Execution**: Scripts must begin with `#!/usr/bin/env bash` and `set -uo pipefail` (or `set -euo pipefail`).
 - **Symlink Portability**: Resolve real script directory through any symlinks before deriving `REPO_ROOT` (do not rely on `$PWD` or fragile relative paths).
-- **Executable Bit**: All scripts in `bin/` must have executable permissions (`chmod +x`).
+- **Executable Bit**: All top-level scripts in `bin/` must have executable permissions (`chmod +x`). Sourced shell libraries in `bin/lib/` are exempt and must not be executable (`chmod -x`).
+- **Pinning Module**: New `bin/*` scripts must source `bin/lib/pinning.sh` (`# shellcheck source=lib/pinning.sh`) and use the **Pinning** module (`pinned_load_env`, `pinned_bq`, `pinned_label`, `pinned_bq_json`, `pinned_storage`, `pinned_dataproc_submit`, `pinned_dataproc_describe`, `pinned_dataproc_delete`) rather than sourcing `demo.env`, repeating `your-` placeholder checks, or calling `bq`/`gcloud` directly.
 - **Shellcheck**: Every shell script in `bin/`, `bin/lib/`, `.agents/plugins/*/bin/` and `.husky/pre-commit` must pass `make lint-sh` (shellcheck `--severity=warning`, plus unresolved `source` SC1090/SC1091). Files are selected by bash or sh shebang (`.husky/pre-commit` is POSIX sh because husky runs it with `sh -e`); sourced `bin/lib/` files without one must start with `# shellcheck shell=bash`. Annotate dynamic sources with `# shellcheck source=lib/<name>.sh`. Fix findings; use a targeted `# shellcheck disable=SCxxxx` with a reason only for false positives.
 
 ## 2. Preflight Checks (`bin/preflight`)
