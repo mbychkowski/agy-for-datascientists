@@ -594,3 +594,12 @@ exit 0
         env["DAK_PLUGIN_DIR"] = str(VENDORED_DAK_DIR)
 
     return env_file, env, log_file
+
+
+def write_noop_stubs(bin_dir: Path, *names: str) -> None:
+    """Write executable stubs that exit 0, to shadow real tools on PATH."""
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    for name in names:
+        stub = bin_dir / name
+        stub.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        stub.chmod(0o755)

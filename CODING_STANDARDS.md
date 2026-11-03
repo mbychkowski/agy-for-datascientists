@@ -7,7 +7,7 @@ Documented standards for Command Center scripts, tooling, and tests.
 - **Strict Execution**: Scripts must begin with `#!/usr/bin/env bash` and `set -uo pipefail` (or `set -euo pipefail`).
 - **Symlink Portability**: Resolve real script directory through any symlinks before deriving `REPO_ROOT` (do not rely on `$PWD` or fragile relative paths).
 - **Executable Bit**: All scripts in `bin/` must have executable permissions (`chmod +x`).
-- **Shellcheck**: Every bash script in `bin/`, `bin/lib/`, `.agents/plugins/*/bin/` and `.husky/pre-commit` must pass `make lint-sh` (shellcheck `--severity=warning`, plus unresolved `source` SC1090/SC1091). Files are selected by bash shebang; sourced `bin/lib/` files without one must start with `# shellcheck shell=bash`. Annotate dynamic sources with `# shellcheck source=lib/<name>.sh`. Fix findings; use a targeted `# shellcheck disable=SCxxxx` with a reason only for false positives.
+- **Shellcheck**: Every shell script in `bin/`, `bin/lib/`, `.agents/plugins/*/bin/` and `.husky/pre-commit` must pass `make lint-sh` (shellcheck `--severity=warning`, plus unresolved `source` SC1090/SC1091). Files are selected by bash or sh shebang (`.husky/pre-commit` is POSIX sh because husky runs it with `sh -e`); sourced `bin/lib/` files without one must start with `# shellcheck shell=bash`. Annotate dynamic sources with `# shellcheck source=lib/<name>.sh`. Fix findings; use a targeted `# shellcheck disable=SCxxxx` with a reason only for false positives.
 
 ## 2. Preflight Checks (`bin/preflight`)
 
@@ -34,4 +34,4 @@ Documented standards for Command Center scripts, tooling, and tests.
 
 ## 6. Verification
 
-- Run `uvx ruff check . && uvx ruff format --check . && make test && make lint-sh && make lint-tf` before pushing; `.husky/pre-commit` and CI (`CI / Check & Test`) run the same checks.
+- Run `uvx ruff check . && uvx ruff format --check . && make test && make lint-sh && make lint-tf` before pushing; `.husky/pre-commit` and CI (`CI / Check & Test`) run the same checks, plus pre-commit refuses commits on `main` and CI enforces branch names (AGENTS.md § Worktree execution).

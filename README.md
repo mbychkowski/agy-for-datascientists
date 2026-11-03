@@ -338,7 +338,7 @@ What `make test` runs:
 ### Branch & Pull Request Workflow
 
 * `main` is branch-protected and requires the `CI / Check & Test` GitHub Actions check to pass before merging.
-* Develop changes in an isolated git worktree (`.worktree/<branch-slug>`), run `uvx ruff check . && uvx ruff format --check . && make test`, open a Pull Request (`gh pr create`), and squash-merge once CI is green.
+* Worktree and branch-naming conventions live in [AGENTS.md § Worktree execution](AGENTS.md#worktree-execution).
 
 ---
 

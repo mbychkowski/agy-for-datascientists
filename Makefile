@@ -1,11 +1,12 @@
 .PHONY: check test check-glossary lint-sh lint-tf
 
-# Candidate paths for lint-sh. A file is checked when line 1 is a bash shebang or,
-# for sourced libraries, `# shellcheck shell=bash`. Every file in bin/lib/ must carry
-# one of the two. $(wildcard) drops patterns that match nothing (e.g. a missing bin/lib/).
+# Candidate paths for lint-sh. A file is checked when line 1 is a bash or sh shebang
+# (sh for .husky/pre-commit, which husky runs with `sh -e`) or, for sourced libraries,
+# `# shellcheck shell=bash`. Every file in bin/lib/ must carry one of these.
+# $(wildcard) drops patterns that match nothing (e.g. a missing bin/lib/).
 SHELLCHECK := uvx --from shellcheck-py==0.11.0.1 shellcheck
 SH_CANDIDATES := $(wildcard bin/* bin/lib/* .agents/plugins/*/bin/* .husky/pre-commit)
-SH_MARKER := ^(\#!.*[/ ]bash([[:space:]]|$$)|\# shellcheck shell=bash)
+SH_MARKER := ^(\#!.*[/ ](ba)?sh([[:space:]]|$$)|\# shellcheck shell=bash)
 
 check: check-glossary
 	@echo "Checking scripts and Python test files..."
