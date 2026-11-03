@@ -20,7 +20,6 @@ from tests.helpers import WORKTREE_ROOT, setup_preflight_test_env
 PLUGIN_DIR = WORKTREE_ROOT / ".agents" / "plugins" / "ds-command-center"
 SKILL_FILE = PLUGIN_DIR / "skills" / "cohort-forecast-refresh" / "SKILL.md"
 GUARDRAIL_HOOK = PLUGIN_DIR / "bin" / "guardrail-hook"
-PRE_COMMAND_HOOK = WORKTREE_ROOT / "bin" / "agent-pre-command-hook"
 REFRESH_BIN = WORKTREE_ROOT / "bin" / "run-cohort-forecast-refresh"
 REFRESH_SYMLINK = WORKTREE_ROOT / "run-cohort-forecast-refresh"
 MOCK_DATASET_DIR = WORKTREE_ROOT / "fixtures" / "mock_dataset"
@@ -58,7 +57,6 @@ class TestCohortForecastRefreshSkill(unittest.TestCase):
         self,
         tool_name: str,
         args: dict[str, Any],
-        hook_bin: Path = GUARDRAIL_HOOK,
     ) -> dict[str, Any]:
         payload = {
             "toolCall": {
@@ -68,7 +66,7 @@ class TestCohortForecastRefreshSkill(unittest.TestCase):
             "stepIdx": 1,
         }
         proc = subprocess.run(
-            [str(hook_bin)],
+            [str(GUARDRAIL_HOOK)],
             cwd=WORKTREE_ROOT,
             input=json.dumps(payload),
             capture_output=True,
@@ -78,7 +76,7 @@ class TestCohortForecastRefreshSkill(unittest.TestCase):
         self.assertEqual(
             proc.returncode,
             0,
-            f"Hook {hook_bin} exited with {proc.returncode}: {proc.stderr}",
+            f"Hook {GUARDRAIL_HOOK} exited with {proc.returncode}: {proc.stderr}",
         )
         return json.loads(proc.stdout)
 
@@ -362,17 +360,12 @@ class TestCohortForecastRefreshSkill(unittest.TestCase):
             for call in logged_calls:
                 self.assertIn("--project_id=pinned-proj-999", call)
                 self.assertIn("--location=us-east4", call)
-                for hook_bin in (GUARDRAIL_HOOK, PRE_COMMAND_HOOK):
-                    resp = self._invoke_hook(
-                        "run_command",
-                        {"CommandLine": call},
-                        hook_bin=hook_bin,
-                    )
-                    self.assertEqual(
-                        resp.get("decision"),
-                        "allow",
-                        f"Hook {hook_bin.name} blocked valid skill command: {call} -> {resp}",
-                    )
+                resp = self._invoke_hook("run_command", {"CommandLine": call})
+                self.assertEqual(
+                    resp.get("decision"),
+                    "allow",
+                    f"Guardrail hook blocked valid skill command: {call} -> {resp}",
+                )
 
         # Also validate every generated SQL statement via BigQuery MCP tool payloads
         refresh_artifacts = execute_refresh_for_period(
@@ -384,21 +377,19 @@ class TestCohortForecastRefreshSkill(unittest.TestCase):
         )
         for step_name, sql_text in refresh_artifacts["sql_statements"].items():
             self.assertIn("pinned-proj-999", sql_text)
-            for hook_bin in (GUARDRAIL_HOOK, PRE_COMMAND_HOOK):
-                resp = self._invoke_hook(
-                    "execute_sql",
-                    {
-                        "projectId": "pinned-proj-999",
-                        "location": "us-east4",
-                        "sql": sql_text,
-                    },
-                    hook_bin=hook_bin,
-                )
-                self.assertEqual(
-                    resp.get("decision"),
-                    "allow",
-                    f"Hook {hook_bin.name} blocked SQL step {step_name}: {resp}",
-                )
+            resp = self._invoke_hook(
+                "execute_sql",
+                {
+                    "projectId": "pinned-proj-999",
+                    "location": "us-east4",
+                    "sql": sql_text,
+                },
+            )
+            self.assertEqual(
+                resp.get("decision"),
+                "allow",
+                f"Guardrail hook blocked SQL step {step_name}: {resp}",
+            )
 
         # Verify placeholder demo.env.example fails fast
         bad_proc = subprocess.run(
