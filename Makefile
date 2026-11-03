@@ -10,7 +10,7 @@ SH_MARKER := ^(\#!.*[/ ](ba)?sh([[:space:]]|$$)|\# shellcheck shell=bash)
 
 check: check-glossary
 	@echo "Checking scripts and Python test files..."
-	@if [ -d bin ]; then for f in bin/*; do \
+	@if [ -d bin ]; then for f in bin/* bin/lib/*; do \
 		[ -f "$$f" ] || continue; \
 		case "$$f" in \
 			*.js) node --check "$$f" ;; \
