@@ -9,10 +9,11 @@
 #   4. Blocks all agent access (read or write, SQL or CLI or MCP) to `checkpoint`.
 #   5. Blocks DML/DDL and mutating CLI commands against read-only `raw` and `ops`.
 #
-# Checks 4-5 run on every shell command except text-only ones: every command
-# is on TEXT_ONLY_COMMANDS (git, gh, echo, cat, ...) and nothing in the line can
-# reach BigQuery. This lets prose in commit messages, gh bodies, and heredocs
-# into files mention the checkpoint without being read as SQL.
+# The checkpoint and raw/ops checks (4-5 above, step 3 in check_shell_command)
+# run on every shell command except text-only ones: every command is on
+# TEXT_ONLY_COMMANDS (git, gh, echo, cat, ...) and nothing in the line can reach
+# BigQuery. This lets prose in commit messages, gh bodies, and heredocs into
+# files name the `checkpoint` dataset without being read as SQL.
 # ==============================================================================
 
 set -uo pipefail
@@ -345,19 +346,27 @@ TEXT_ONLY_COMMANDS = {
     "git", "gh", "cd", "echo", "printf", "cat", "ls", "grep", "head", "tail", "wc", "diff", "mkdir", "touch",
 }
 BIGQUERY_WORD_RE = re.compile(r"\b(?:bq|gcloud|bigquery)\b", re.IGNORECASE)
-INDIRECTION_RE = re.compile(r"\$\(|`|<\(|>\(|\b(?:eval|source|exec|xargs)\b")
+# Substitution and eval-like words, plus git hook paths a same-line write could make git run.
+INDIRECTION_RE = re.compile(r"\$\(|`|<\(|>\(|\b(?:eval|source|exec|xargs)\b|\.husky|\.git/hooks|hooksPath")
+# git and gh arguments that make the allowlisted command run a shell command.
+SHELL_RUNNING_ARGS = {
+    "git": {"-c", "--config-env", "--exec-path", "-x", "--exec", "bisect", "submodule", "filter-branch"},
+    "gh": {"alias", "extension"},
+}
 HEREDOC_RE = re.compile(r"<<(-?)[ \t]*(?:\x27([^\x27\n]+)\x27|\"([^\"\n]+)\"|\\?([A-Za-z0-9_.-]+))")
 
 
-def split_text_only_parts(cmd: str):
+def split_shell_commands(cmd: str):
     """Split cmd on unquoted ; && || | & and newlines, dropping heredoc bodies.
 
-    Returns None when a quote is unterminated or a heredoc cannot be parsed.
+    Returns None when a quote is unterminated, a heredoc cannot be parsed, or an
+    unquoted # starts a comment (a comment can hide text from this splitter).
     """
     parts: list = []
     buf: list = []
     pending: list = []
     quote = ""
+    word_start = True
     i, n = 0, len(cmd)
     while i < n:
         c = cmd[i]
@@ -371,6 +380,14 @@ def split_text_only_parts(cmd: str):
             buf.append(c)
             i += 1
             continue
+        if c in (" ", "\t"):
+            word_start = True
+            buf.append(c)
+            i += 1
+            continue
+        if c == "#" and word_start:
+            return None
+        word_start = False
         if c in ("\x27", "\""):
             quote = c
         elif c == "\\":
@@ -397,6 +414,7 @@ def split_text_only_parts(cmd: str):
         elif c in (";", "&", "|", "\n"):
             parts.append("".join(buf))
             buf.clear()
+            word_start = True
             i += 1
             if c == "\n" and pending:
                 for strip_tabs, delim in pending:
@@ -424,12 +442,14 @@ def is_text_only_command(cmd: str) -> bool:
 
     Every command must start with a TEXT_ONLY_COMMANDS word, and nothing in the
     line (heredoc bodies and quoted strings included) may name bq, gcloud, or
-    bigquery or use substitution, eval, source, exec, or xargs. Anything else,
-    or anything that fails to parse, keeps the strict check.
+    bigquery, even split by quotes or backslashes, or use substitution, eval,
+    source, exec, xargs, or a git/gh option that runs a shell command. Anything
+    else, or anything that fails to parse, keeps the strict check.
     """
-    if BIGQUERY_WORD_RE.search(cmd) or INDIRECTION_RE.search(cmd):
+    unquoted = re.sub(r"[\"\x27\\\\]", "", cmd)
+    if BIGQUERY_WORD_RE.search(unquoted) or INDIRECTION_RE.search(cmd):
         return False
-    parts = split_text_only_parts(cmd)
+    parts = split_shell_commands(cmd)
     if parts is None:
         return False
     for part in parts:
@@ -437,7 +457,11 @@ def is_text_only_command(cmd: str) -> bool:
             words = shlex.split(part, posix=True)
         except ValueError:
             return False
-        if words and words[0] not in TEXT_ONLY_COMMANDS:
+        if not words:
+            continue
+        if words[0] not in TEXT_ONLY_COMMANDS:
+            return False
+        if words[0] in SHELL_RUNNING_ARGS and SHELL_RUNNING_ARGS[words[0]].intersection(words[1:]):
             return False
     return True
 

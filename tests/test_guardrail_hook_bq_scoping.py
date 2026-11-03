@@ -56,6 +56,15 @@ class TestGuardrailHookBigQueryScoping(unittest.TestCase):
                 self.assertEqual(resp.get("decision"), "deny", resp)
                 self.assertIn(reason_substr, resp.get("reason", "").lower())
 
+    def _assert_mcp_denied(
+        self, mcp_cases: list[tuple[str, dict[str, Any]]], reason_substr: str
+    ):
+        for tool_name, args in mcp_cases:
+            with self.subTest(tool=tool_name, args=args):
+                resp = self._invoke(tool_name, args)
+                self.assertEqual(resp.get("decision"), "deny", resp)
+                self.assertIn(reason_substr, resp.get("reason", "").lower())
+
     def test_allows_prose_in_text_only_commands(self):
         """Prose naming the checkpoint or raw/ops DML is allowed in git, gh, cat heredocs, echo and printf."""
         allowed = []
@@ -122,27 +131,28 @@ class TestGuardrailHookBigQueryScoping(unittest.TestCase):
             "checkpoint",
         )
 
-        mcp_cases = [
-            ("execute_sql", {"projectId": "demo-proj", "query": CHECKPOINT_SQL}),
-            (
-                "execute_sql_readonly",
-                {"sql": "SELECT * FROM `demo-proj.checkpoint.clean_feeds`"},
-            ),
-            ("list_table_ids", {"projectId": "demo-proj", "datasetId": "checkpoint"}),
-            (
-                "call_mcp_tool",
-                {
-                    "ServerName": "dak-bigquery",
-                    "ToolName": "execute_sql",
-                    "Arguments": {"query": CHECKPOINT_SQL},
-                },
-            ),
-        ]
-        for tool_name, args in mcp_cases:
-            with self.subTest(tool=tool_name, args=args):
-                resp = self._invoke(tool_name, args)
-                self.assertEqual(resp.get("decision"), "deny", resp)
-                self.assertIn("checkpoint", resp.get("reason", "").lower())
+        self._assert_mcp_denied(
+            [
+                ("execute_sql", {"projectId": "demo-proj", "query": CHECKPOINT_SQL}),
+                (
+                    "execute_sql_readonly",
+                    {"sql": "SELECT * FROM `demo-proj.checkpoint.clean_feeds`"},
+                ),
+                (
+                    "list_table_ids",
+                    {"projectId": "demo-proj", "datasetId": "checkpoint"},
+                ),
+                (
+                    "call_mcp_tool",
+                    {
+                        "ServerName": "dak-bigquery",
+                        "ToolName": "execute_sql",
+                        "Arguments": {"query": CHECKPOINT_SQL},
+                    },
+                ),
+            ],
+            "checkpoint",
+        )
 
     def test_denies_raw_and_ops_mutations_from_bigquery_commands(self):
         """bq cp into raw, DML via bq/heredoc/BigQuery client, and MCP DML against raw/ops stay denied."""
@@ -164,18 +174,19 @@ class TestGuardrailHookBigQueryScoping(unittest.TestCase):
             "read-only",
         )
 
-        mcp_cases = [
-            ("execute_sql", {"query": "INSERT INTO raw.hospital_reference VALUES (1)"}),
-            (
-                "execute_sql",
-                {"sql": "MERGE INTO ops.pipeline_run_log t USING s ON true"},
-            ),
-        ]
-        for tool_name, args in mcp_cases:
-            with self.subTest(tool=tool_name, args=args):
-                resp = self._invoke(tool_name, args)
-                self.assertEqual(resp.get("decision"), "deny", resp)
-                self.assertIn("read-only", resp.get("reason", "").lower())
+        self._assert_mcp_denied(
+            [
+                (
+                    "execute_sql",
+                    {"query": "INSERT INTO raw.hospital_reference VALUES (1)"},
+                ),
+                (
+                    "execute_sql",
+                    {"sql": "MERGE INTO ops.pipeline_run_log t USING s ON true"},
+                ),
+            ],
+            "read-only",
+        )
 
     def test_denies_bigquery_calls_reached_indirectly(self):
         """bq calls behind variables, wrappers, piped scripts, or heredocs followed by || / && stay denied."""
@@ -201,6 +212,13 @@ class TestGuardrailHookBigQueryScoping(unittest.TestCase):
                 f'$(which bq) query "{CHECKPOINT_SQL}"',
                 f'echo x\\ #; bq query "{CHECKPOINT_SQL}"',
                 f"git -c alias.x='!bq query \"{CHECKPOINT_SQL}\"' x",
+                f'echo hi # <<EOF\nb""q query "{CHECKPOINT_SQL}"\nEOF',
+                f'git -c alias.x=\'!b""q query "{CHECKPOINT_SQL}"\' x',
+                f"git -c alias.x='!$BQ query \"{CHECKPOINT_SQL}\"' x",
+                f'git rebase -x \'b""q query "{CHECKPOINT_SQL}"\' HEAD~1',
+                f'gh alias set -s x \'b""q query "{CHECKPOINT_SQL}"\'',
+                f"printf '%s\\n' 'b\"\"q query \"{CHECKPOINT_SQL}\"' >> .husky/pre-commit && git commit -m x",
+                f'echo hi && b\\q query "{CHECKPOINT_SQL}"',
             ],
             "checkpoint",
         )
