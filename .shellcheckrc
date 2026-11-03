@@ -1,0 +1,5 @@
+# Follow `source` into sibling files (e.g. bin/lib/) so callers see the
+# variables and functions a library defines. Annotate dynamic sources with
+# `# shellcheck source=lib/<name>.sh` (resolved relative to the script).
+external-sources=true
+source-path=SCRIPTDIR

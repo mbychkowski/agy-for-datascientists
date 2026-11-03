@@ -4,3 +4,5 @@ set -euo pipefail
 uvx ruff check .
 uvx ruff format --check .
 make test
+make lint-sh
+make lint-tf

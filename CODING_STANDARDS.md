@@ -7,6 +7,7 @@ Documented standards for Command Center scripts, tooling, and tests.
 - **Strict Execution**: Scripts must begin with `#!/usr/bin/env bash` and `set -uo pipefail` (or `set -euo pipefail`).
 - **Symlink Portability**: Resolve real script directory through any symlinks before deriving `REPO_ROOT` (do not rely on `$PWD` or fragile relative paths).
 - **Executable Bit**: All scripts in `bin/` must have executable permissions (`chmod +x`).
+- **Shellcheck**: Every bash script in `bin/`, `bin/lib/`, `.agents/plugins/*/bin/` and `.husky/pre-commit` must pass `make lint-sh` (shellcheck `--severity=warning`, plus unresolved `source` SC1090/SC1091). Files are selected by bash shebang; sourced `bin/lib/` files without one must start with `# shellcheck shell=bash`. Annotate dynamic sources with `# shellcheck source=lib/<name>.sh`. Fix findings; use a targeted `# shellcheck disable=SCxxxx` with a reason only for false positives.
 
 ## 2. Preflight Checks (`bin/preflight`)
 
@@ -26,3 +27,11 @@ Documented standards for Command Center scripts, tooling, and tests.
 
 - **Formatting & Linting**: All Python files must pass `uvx ruff check .` and `uvx ruff format --check .`.
 - **Cross-Process Determinism**: Never use Python's built-in `hash()` inside seeded RNG calculations (because `PYTHONHASHSEED` randomizes hashes across processes). Use deterministic ordinal folds or `hashlib.sha256`.
+
+## 5. Terraform (`infra/*.tf`)
+
+- **Validate & Format**: `infra/` must pass `make lint-tf` (`terraform init -backend=false -lockfile=readonly`, `validate`, `fmt -check -recursive`) against the committed `infra/.terraform.lock.hcl`.
+
+## 6. Verification
+
+- Run `uvx ruff check . && uvx ruff format --check . && make test && make lint-sh && make lint-tf` before pushing; `.husky/pre-commit` and CI (`CI / Check & Test`) run the same checks.
