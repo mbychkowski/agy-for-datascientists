@@ -18,7 +18,11 @@ Single-context layout (`GLOSSARY.md` and `docs/adr/` at the repo root). See `doc
 
 ### Worktree execution
 
-Worktrees follow the path convention `.worktree/issue-<3-digit-id>` (e.g. `.worktree/issue-019`) on branch `issue<3-digit-id>/<slug>`. Always execute commands inside that directory (e.g. `cd .worktree/issue-019 && ...`).
+Make every change in its own worktree and land it through a PR; the main checkout only pulls `main`.
+
+- **Issue work**: `.worktree/issue-<3-digit-id>` on branch `issue<3-digit-id>/<slug>` (e.g. `.worktree/issue-019`, `issue019/fix-preflight`).
+- **Chores** (small config, docs, or dependency changes with no issue): `.worktree/chore-<slug>` on branch `chore/<slug>`; the PR body states the reason in place of `Closes #<n>`.
+- Create it from fresh `main`: `git fetch origin && git worktree add -b <branch> .worktree/<dir> origin/main`, then run every command inside that directory, starting with `npm ci` (installs the husky pre-commit hook for that worktree).
 
 ### PR & protected-`main` workflow
 

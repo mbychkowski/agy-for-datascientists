@@ -15,6 +15,17 @@ jobs:
     name: Check & Test
     runs-on: ubuntu-latest
     steps:
+      - name: Check branch name
+        if: github.event_name == 'pull_request'
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          pattern='^(issue[0-9]{3}|chore)/[a-z0-9-]+$'
+          if [[ ! "$HEAD_REF" =~ $pattern ]]; then
+            echo "::error::Branch '$HEAD_REF' must be issue<3-digit-id>/<slug> or chore/<slug> (AGENTS.md § Worktree execution)."
+            exit 1
+          fi
+
       - name: Checkout repository
         uses: actions/checkout@v4
 

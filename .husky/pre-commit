@@ -1,5 +1,12 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/usr/bin/env sh
+# husky runs this file with `sh -e` (the shebang is ignored), so keep it POSIX sh.
+set -eu
+
+# main only moves through squash-merged PRs (AGENTS.md § Worktree execution).
+if [ "$(git branch --show-current)" = "main" ]; then
+  echo "pre-commit: refusing to commit on main; commit on a worktree branch (AGENTS.md § Worktree execution)." >&2
+  exit 1
+fi
 
 uvx ruff check .
 uvx ruff format --check .
