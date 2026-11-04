@@ -410,8 +410,6 @@ UNMIGRATED_PINNING_ALLOWLIST: frozenset[str] = frozenset(
         "bin/load-reveal",
         "bin/preflight",
         "bin/reset",
-        "bin/run-pipeline-clean",
-        "bin/run-pipeline-v1",
         "bin/setup",
         "bin/verify-main-end-state",
         "bin/verify-start-point",
