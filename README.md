@@ -318,6 +318,8 @@ All primary operator scripts live in `bin/` and have root-level convenience syml
 * `workstream-2-start`: Linear descendant of `workstream-1-start` containing the completed **Workstream** 1 artifacts, ready to begin **Workstream** 2 after an intermission.
 * `main`: Complete end-to-end repository state including all **Workstream** 1 and **Workstream** 2 implementations, tests, and documentation.
 
+> **Two stage windows, two repositories.** On stage, **Window 1** (the agent) is Antigravity opened on a separate single-branch clone of `workstream-1-start`, outside this repo and with its remote removed, so the agent never sees `main`. **Window 2** (the presenter terminal) is this repo on `main`, which runs every presenter script above. See the [Pre-Stage Checklist](DEMO.md#2-pre-stage-checklist-t-15-minutes) for the setup and the T-15 reset.
+
 ---
 
 ## 6. Development, Linting & Testing
