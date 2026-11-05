@@ -14,7 +14,7 @@ The demonstration lands three foundational messages:
 
 1. **It fits how you work today**:
    The Command Center does not force teams into proprietary notebooks or walled gardens. It operates directly with BigQuery, Dataproc Serverless, PySpark, BQML, and versioned SQL in the repository.
-2. **One data scientist directs an army of agents and reviews the evidence**:
+2. **One data scientist directs a team of specialized agents and reviews the evidence**:
    The human data scientist remains the architect and decision-maker. Specialized subagents work in parallel to perform exploratory data analysis, cross-check operational logs, and peer-review findings, but human approval is required before executing changes to pipeline code.
 3. **Skills, subagents, hooks and MCP wiring are files your team owns, versions and shares**:
    Orchestration and governance are not black-box cloud settings. Everything—subagent definitions, analysis workflows, safety hooks, and MCP connections—is versioned as plain text within the repository plugin directory (`ds-command-center`).
@@ -77,42 +77,43 @@ The demonstration lands three foundational messages:
     * Dispatch the custom `stats-reviewer` subagent to audit the Attribution table.
     * The reviewer challenges the team on counts vs rates, small-sample hospitals with erratic swings, and tests for Simpson's Paradox across regional aggregations.
     * *Message 2 landed*: Demonstrates multi-agent peer review before human sign-off.
-  * **36:00 – 47:00 (Human-Reviewed PySpark Fix & Dataproc Serverless Execution - 11 min)**:
-    * Request a remediation fix in the PySpark pipeline code (`pipeline_v1.py` → `pipeline_v2.py`).
-    * The agent proposes window-function deduplication (`ROW_NUMBER() OVER (PARTITION BY hospital_id, feed_date ORDER BY ingested_at DESC)`) and adds Positivity calculation.
-    * Presenter carefully reviews the git diff on screen and explicitly approves the change.
-    * Dispatch the PySpark batch job to Dataproc Serverless using the presenter's credentials (ADR 0002).
-    * The job executes and materializes the clean staging table (`staging.hospital_flu_clean`).
-    * *(Note: In rehearsal or in case of network latency, Checkpoint 1 can be swapped in immediately).*
+  * **36:00 – 47:00 (The Agent Writes `pipeline_clean.py` & Runs Dataproc Serverless - 11 min)**:
+    * In Window 1, the presenter asks the agent to write `pipeline_clean.py`, starting from `pipeline_v1.py`, and to wait for approval.
+    * The agent writes window-function deduplication (`ROW_NUMBER() OVER (PARTITION BY hospital_id, feed_date ORDER BY ingested_at DESC, batch_id DESC)`) and a null-safe Positivity column.
+    * Presenter carefully reviews the diff on screen and explicitly approves the change.
+    * The agent submits its own PySpark batch to Dataproc Serverless using the presenter's credentials (ADR 0002).
+    * The job executes and materializes the clean staging table (`staging.hospital_flu_clean`), and the presenter checks it against the reference SQL from Window 2.
+    * *(Note: If the batch runs more than 60 seconds past its recorded runtime, the presenter swaps in the reference result or the `ws1_staging_clean` **Checkpoint** from Window 2.)*
 
 ---
 
 ### 3.3 Workstream 2 (28 Minutes): "Forecast at Scale" & The Reveal
 
-* **Goal**: Engineer seasonal features, cluster hospitals into Cohorts with BQML K-means, benchmark ARIMA_PLUS against zero-shot TimesFM, log trials, codify a reusable skill, and execute the Reveal.
+* **Goal**: Engineer seasonal features, cluster hospitals into Cohorts with BQML K-means, benchmark ARIMA_PLUS against zero-shot TimesFM, log trials, execute the Reveal, and codify a reusable skill.
+* **Where it runs**: The presenter stays in the Workstream 1 stage clone, so the agent carries its own outputs forward. Every prompt is typed into Window 1; the presenter terminal (Window 2) loads the Reveal and holds the fallback scripts and Checkpoints.
 * **Timing**:
-  * **47:00 – 54:00 (Feature Engineering & BQML K-means Cohorts - 7 min)**:
-    * Generate per-hospital seasonal features in BigQuery SQL: peak arrival week, peak volume, curve width, and baseline trend.
-    * Train a BQML K-means model to cluster the 90 hospitals into four seasonal **Cohorts**.
+  * **47:00 – 55:00 (Feature Engineering & BQML K-means Cohorts - 8 min)**:
+    * The agent writes the BigQuery SQL for per-hospital seasonal features: peak arrival week, peak volume, curve width, and seasonal trend (`seasonal_trend`).
+    * It then writes and runs the BQML K-means SQL that clusters the 90 hospitals into four seasonal **Cohorts**.
     * The Outbreak hospitals cluster into an anomalous Cohort, confirming that segmentation captures genuine clinical differences.
-  * **54:00 – 63:00 (Forecasting Benchmark: ARIMA_PLUS vs TimesFM - 9 min)**:
-    * Train BQML ARIMA_PLUS per Cohort as multiple time series on both clean and uncleaned data.
-    * Run zero-shot foundation model forecasting using TimesFM via `AI.FORECAST`.
+  * **55:00 – 65:00 (Forecasting Benchmark: ARIMA_PLUS vs TimesFM - 10 min)**:
+    * The agent writes and starts the multi-series BQML ARIMA_PLUS SQL first, per Cohort, on both clean and uncleaned data.
+    * While ARIMA_PLUS trains, it writes and runs zero-shot foundation model forecasting using TimesFM via `AI.FORECAST`.
     * Every run writes metadata and metrics to `ml.experiment_trials` (model family, Cohort, training data version, backtest WAPE, runtime).
     * Query the experiment leaderboard:
       * Models trained on clean data consistently achieve lower backtest WAPE.
       * TimesFM delivers competitive zero-shot performance without manual hyperparameter tuning.
-  * **63:00 – 68:00 (Codifying the `cohort-forecast-refresh` Skill - 5 min)**:
-    * Instruct Antigravity to codify the entire multi-step modeling process (feature generation, Cohort assignment, forecasting, and trial logging) into a reusable skill.
-    * Show that the new skill is saved as a markdown specification in `.gemini/skills/cohort-forecast-refresh/SKILL.md`.
-    * A fresh subagent is dispatched to execute the skill for the next period, demonstrating push-button workflow repeatability.
-  * **68:00 – 75:00 (The Finale: The Reveal - 7 min)**:
+  * **65:00 – 71:00 (The Finale: The Reveal - 6 min)**:
     * Explain that six weeks of true data after the Cutoff (through mid-December) were withheld by the Data Generator and stored only in a separate GCS bucket (ADR 0001).
-    * Supply the bucket path at runtime; load the withheld data and overlay it on the forecasts.
+    * Supply the bucket path at runtime in Window 2; load the withheld data and overlay it on the forecasts.
     * **The Punchline**:
       * The forecast trained on uncleaned data visibly overshoots reality, deceived by the Pipeline Defect and Sampling Artifact.
       * The forecast trained on cleaned data tracks actual hospitalization trends tightly.
     * *Core takeaway*: AI modeling without rigorous data validation produces confident hallucinations; the Command Center ensures data trust from raw ingestion to final forecast.
+  * **71:00 – 75:00 (Codifying the `cohort-forecast-refresh` Skill - 4 min)**:
+    * Ask the agent to codify the entire multi-step modeling process (feature generation, Cohort assignment, forecasting, and trial logging) into a reusable skill.
+    * The agent creates the skill as a markdown specification in `.agents/plugins/ds-command-center/skills/cohort-forecast-refresh/SKILL.md`, the Command Center plugin's skills folder (Rule 2).
+    * A fresh subagent is dispatched to execute the skill for the next period, demonstrating push-button workflow repeatability.
 
 ---
 
@@ -197,8 +198,8 @@ Presenters can immediately translate the demo's healthcare narrative to other in
 
 When session time is constrained (e.g., a 45-minute executive briefing or 60-minute meetup), presenters can accelerate live execution without altering core files by utilizing pre-built Checkpoints:
 
-* **To save 8 minutes in Workstream 1**: Instead of waiting for the Dataproc Serverless batch job to finish, show the human review of the PySpark git diff, trigger the submit command, and immediately swap in Checkpoint 1 (`staging.hospital_flu_clean`).
-* **To save 6 minutes in Workstream 2**: Run the zero-shot TimesFM query live, and swap in Checkpoint 2 for the multi-series ARIMA_PLUS training runs.
+* **To save 8 minutes in Workstream 1**: Instead of waiting for the Dataproc Serverless batch job to finish, review the agent's `pipeline_clean.py` diff in Window 1, then immediately swap in the `ws1_staging_clean` Checkpoint (`staging.hospital_flu_clean`) from Window 2.
+* **To save 6 minutes in Workstream 2**: Have the agent write and run the zero-shot TimesFM query live in Window 1, and swap in the `ws2_forecast_leaderboard` Checkpoint for the multi-series ARIMA_PLUS training runs from Window 2.
 
 ---
 

@@ -351,7 +351,7 @@ What `make test` runs:
 | :--- | :--- |
 | **[DEMO.md](DEMO.md)** | **How to demo this project**: Pre-stage setup, 90-minute timeline, copy-paste **Command Center** prompts, speaker narration, **Checkpoint** swaps, and 45/60-minute cuts. |
 | **[GLOSSARY.md](GLOSSARY.md)** | Canonical domain vocabulary (`Command Center`, `Hospital Feed`, `Positivity`, `Spike`, `Cutoff`, `Pipeline Defect`, `Sampling Artifact`, `Outbreak`, `Seasonal Ramp`, `Attribution`, `Answer Key`, `Cohort`, `Reveal`, `Workstream`, `Start Point`, `Checkpoint`) and prohibited terms. |
-| **[Presenter Runbook](docs/presenter-runbook.md)** | Detailed on-stage execution script with minute-by-minute clock windows and early-start job triggers. |
+| **[Presenter Runbook](docs/presenter-runbook.md)** | Detailed on-stage execution script with minute-by-minute clock windows and Window 2 fallback triggers. |
 | **[Reuser Setup & Operations Guide](docs/reuser-guide.md)** | Complete guide for provisioning a new GCP project, configuring IAM ([ADR 0002](docs/adr/0002-dataproc-runs-as-presenter.md)), installing Data Agent Kit skills, setting up Java 21, and resolving stale ADC quota project errors. |
 | **[Data Science Primer](docs/data-science-primer.md)** | Plain-language statistical intuitions and 10-second stage answers for defending **Positivity**, **Sampling Artifacts**, Simpson's Paradox, K-means **Cohorts**, `ARIMA_PLUS`, `TimesFM`, chronological backtesting, and **WAPE**. |
 | **[Demo Outline](docs/demo-outline.md)** | Executive narrative blueprint, audience tailoring guide (Data Scientists, Data Engineers, Analytics Leaders, Executives), and cross-industry translation matrix. |
