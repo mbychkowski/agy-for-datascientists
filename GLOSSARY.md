@@ -85,3 +85,11 @@ _Avoid_: Snapshot, baseline
 **Checkpoint**:
 A pre-built result of one live step, swapped in if that step fails on stage. A Checkpoint covers one step; a Start Point covers a whole Workstream.
 _Avoid_: Backup, cache
+
+**Evidence Board**:
+The audience-facing view beside the Command Center that shows each live step's evidence, from the Opening through both Workstreams.
+_Avoid_: Dashboard, panel, viz, sidecar (sidecar names the Antigravity mechanism that hosts it, not the concept)
+
+**Tile**:
+One piece of evidence on the Evidence Board, tied to a single live step.
+_Avoid_: Card, widget, exhibit
