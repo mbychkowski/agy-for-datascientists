@@ -1,9 +1,11 @@
 """Window 2 fallback trigger times must follow the 60-second rule.
 
 Each trigger is computed from docs/recorded_runtimes.json: the step's start
-time plus its recorded runtime plus 60 seconds, rounded up to the next whole
-minute. The test then checks that DEMO.md and the presenter runbook state the
-computed times, so editing a runtime or a start time without the other fails.
+time plus its recorded (or estimated) runtime plus 60 seconds, rounded up to
+the next whole minute. The test then checks that DEMO.md and the presenter
+runbook state the computed times, so editing a runtime or a start time without
+the other fails. A slower live run recorded by bin/run-ws2-forecasts or
+bin/run-pipeline-clean fails it too, on purpose: move the triggers in the docs.
 """
 
 from __future__ import annotations
@@ -31,12 +33,15 @@ class Step:
     segment: str
     # Clock time the agent's job starts (or, for 2D, the dispatch deadline).
     start: str
-    # Job keys whose slowest recorded runtime bounds the agent's job.
+    # Job keys whose slowest runtime bounds the agent's job.
     jobs: tuple[str, ...]
-    # Recorded runtime of Fallback A, or None when there is no Fallback B.
-    fallback_a: tuple[str, str] | None
+    # Fallback A's runtime as (job key, field); field None means worst case.
+    # None when the step has a single fallback and no Checkpoint after it.
+    fallback_a: tuple[str, str | None] | None
     # First cell of the step's row in each doc's fallback trigger table.
     row_markers: dict[str, str]
+    # Window 2 commands, mapped to "A" (Fallback A) or "B" (Checkpoint).
+    commands: dict[str, str]
 
 
 STEPS = (
@@ -49,25 +54,40 @@ STEPS = (
             "DEMO.md": "| **Workstream 1C ",
             "docs/presenter-runbook.md": "| `ws1_pipeline_clean_dataproc_runtime_3_0` ",
         },
+        {
+            "./run-pipeline-clean --sql-fallback": "A",
+            "./checkpoint ws1_staging_clean": "B",
+        },
     ),
     Step(
         "2A",
         "00:50",
         ("ws2_seasonal_features_and_kmeans",),
-        ("ws2_seasonal_features_and_kmeans", "seconds"),
+        ("ws2_seasonal_features_and_kmeans", None),
         {
             "DEMO.md": "| **Workstream 2A ",
             "docs/presenter-runbook.md": "| `ws2_seasonal_features_and_kmeans` ",
+        },
+        {
+            "./run-ws2-cohorts": "A",
+            "./checkpoint ws2_seasonal_features": "B",
+            "./checkpoint ws2_hospital_cohorts": "B",
         },
     ),
     Step(
         "2B",
         "00:57",
+        # The agent runs TimesFM while ARIMA_PLUS trains, so the slower bounds it.
         ("ws2_arima_plus_cohort_training", "ws2_timesfm_ai_forecast"),
-        ("ws2_forecasts_reference_runner", "seconds"),
+        ("ws2_forecasts_reference_runner", None),
         {
             "DEMO.md": "| **Workstream 2B ",
             "docs/presenter-runbook.md": "| `ws2_arima_plus_cohort_training` ",
+        },
+        {
+            "./run-ws2-forecasts": "A",
+            "./checkpoint ws2_experiment_trials": "B",
+            "./checkpoint ws2_forecast_leaderboard": "B",
         },
     ),
     # 2D's deadline is for dispatching the subagent, so no runtime is added.
@@ -80,17 +100,19 @@ STEPS = (
             "DEMO.md": "| **Workstream 2D ",
             "docs/presenter-runbook.md": "| `cohort-forecast-refresh` ",
         },
+        {"./run-cohort-forecast-refresh --period 2026-W44": "A"},
     ),
 )
 
 
-def _seconds(key: str, field: str = "seconds") -> int:
-    """Worst-case runtime: an estimate, or the slower of baseline and last."""
+def _seconds(key: str, field: str | None = None) -> int:
+    """A named field, else the worst case: the slower of baseline and last
+    observed, or for a multi-job estimate the sum of its components."""
     entry = RUNTIMES[key]
-    if field != "seconds":
+    if field is not None:
         return entry[field]
-    if "estimated_seconds" in entry:
-        return entry["estimated_seconds"]
+    if "estimated_from" in entry:
+        return sum(_seconds(part) for part in entry["estimated_from"])
     return max(entry["baseline_observed_seconds"], entry["last_observed_seconds"])
 
 
@@ -111,21 +133,22 @@ def _trigger_b(step: Step) -> str | None:
     return _plus(_trigger_a(step), _seconds(*step.fallback_a))
 
 
+def _is_subsequence(wanted: list[str], found: list[str]) -> bool:
+    remaining = iter(found)
+    return all(item in remaining for item in wanted)
+
+
 class TestFallbackTriggerTiming(unittest.TestCase):
-    def test_estimated_runtimes_sum_their_components(self) -> None:
+    def test_estimates_name_observed_component_jobs(self) -> None:
         for key, entry in RUNTIMES.items():
-            if "estimated_seconds" not in entry:
+            if "estimated_from" not in entry:
                 continue
             with self.subTest(key=key):
-                parts = entry["estimated_from"]
-                self.assertTrue(parts, f"{key} names no component jobs")
-                self.assertEqual(
-                    entry["estimated_seconds"],
-                    sum(_seconds(part) for part in parts),
-                    f"{key}.estimated_seconds must equal the worst-case sum of {parts}",
-                )
+                self.assertTrue(entry["estimated_from"], f"{key} names no jobs")
+                for part in entry["estimated_from"]:
+                    self.assertIn("last_observed_seconds", RUNTIMES[part])
 
-    def test_whole_runner_fallbacks_have_their_own_runtime(self) -> None:
+    def test_whole_runner_fallbacks_have_their_own_entry(self) -> None:
         # These runners chain several jobs, so the per-job entries understate them.
         for key, runner in (
             ("ws2_forecasts_reference_runner", "bin/run-ws2-forecasts"),
@@ -155,8 +178,8 @@ class TestFallbackTriggerTiming(unittest.TestCase):
                         found,
                         expected,
                         f"{name}: '{label}' trigger times must be start + "
-                        "recorded runtime + 60s, rounded up to the minute "
-                        "(segments in order 1C, 2A, 2B, 2D)",
+                        "recorded or estimated runtime + 60s, rounded up to the "
+                        "minute (segments in order 1C, 2A, 2B, 2D)",
                     )
 
     def test_trigger_table_rows_state_start_and_computed_triggers(self) -> None:
@@ -174,12 +197,27 @@ class TestFallbackTriggerTiming(unittest.TestCase):
                     wanted = [step.start, _trigger_a(step)]
                     if _trigger_b(step):
                         wanted.append(_trigger_b(step))
-                    self.assertEqual(
-                        times,
-                        wanted,
-                        f"{name} {step.segment} row must state start, Fallback "
-                        "A trigger, then Checkpoint trigger in bold",
+                    self.assertTrue(
+                        _is_subsequence(wanted, times),
+                        f"{name} {step.segment} row must state, in bold and in "
+                        f"order, the start, Fallback A and Checkpoint times "
+                        f"{wanted}; found {times}",
                     )
+
+    def test_agenda_times_next_to_commands_match_computed_triggers(self) -> None:
+        # Agenda rows annotate commands as `./cmd` *(`HH:MM`, Ns)*.
+        expected = {}
+        for step in STEPS:
+            for command, which in step.commands.items():
+                expected[command] = (
+                    _trigger_a(step) if which == "A" else _trigger_b(step)
+                )
+        for name, path in DOCS.items():
+            doc = path.read_text(encoding="utf-8")
+            for command, clock in re.findall(r"`(\./[^`]+)` \*\(`(\d\d:\d\d)`", doc):
+                with self.subTest(doc=name, command=command):
+                    self.assertIn(command, expected, "unknown fallback command")
+                    self.assertEqual(clock, expected[command])
 
 
 if __name__ == "__main__":
