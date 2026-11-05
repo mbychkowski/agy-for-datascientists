@@ -22,7 +22,7 @@ A reusable, end-to-end live demonstration and reference workspace for data scien
 
 In the week ending on the **Cutoff** (`2026-10-31`), raw flu-positive test counts (`positive_flu_tests`) across Northeast facilities jump **+35% week-over-week**. Before clinical leadership acts on that headline **Spike** or trains downstream forecasting models, the data science team uses the **Command Center** to execute two **Workstreams**:
 
-* **Workstream 1 — *"Is the Data Good to Use?"***: Profile `staging.hospital_flu`, dispatch three triage subagents (`distribution-triage`, `sampling-triage`, `pipeline-triage`) in parallel to quantify a four-cause **Attribution** (`15.0` pts **Pipeline Defect** + `8.0` pts **Sampling Artifact** + `7.0` pts localized **Outbreak** + `5.0` pts **Seasonal Ramp** = `+35.0%`), challenge the findings with an adversarial statistical peer-review subagent (`stats-reviewer`), review the `git diff` for `pipelines/pipeline_clean.py`, and run the deduplicated, null-safe **Positivity** pipeline on **Dataproc Serverless**.
+* **Workstream 1 — *"Is the Data Good to Use?"***: Profile `staging.hospital_flu`, dispatch three triage subagents (`distribution-triage`, `sampling-triage`, `pipeline-triage`) in parallel to quantify a four-cause **Attribution** (`15.0` pts **Pipeline Defect** + `8.0` pts **Sampling Artifact** + `7.0` pts localized **Outbreak** + `5.0` pts **Seasonal Ramp** = `+35.0%`), challenge the findings with an adversarial statistical peer-review subagent (`stats-reviewer`), have the agent write `pipelines/pipeline_clean.py` live (deduplicated, null-safe **Positivity**), approve its diff, and let it submit the pipeline to **Dataproc Serverless** itself.
 * **Workstream 2 — *"Forecast at Scale" & The Reveal***: Engineer four seasonal curve features per hospital (`features.hospital_seasonal_features`), segment the 90 facilities into four **Cohorts** using BigQuery ML `KMEANS` (`features.hospital_cohorts`), benchmark multi-series `ARIMA_PLUS` against zero-shot `TimesFM` (`AI.FORECAST`) by chronological backtest **WAPE** (`ml.experiment_trials` and `ml.forecast_leaderboard`), load the six withheld post-**Cutoff** **Reveal** weeks to prove that models trained on cleaned data track reality while uncleaned models overshoot, and codify the workflow into a repeatable team skill (`cohort-forecast-refresh`).
 
 ### Three Messages Landed by This Project
@@ -179,7 +179,8 @@ flowchart TB
 ├── sql/                                         # Canonical BigQuery & BigQuery ML SQL scripts
 │   ├── ws1_eda_heatmap.sql                      # Workstream 1A hospital x week Spike concentration
 │   ├── ws1_attribution.sql                      # Workstream 1B 4-cause Attribution reconciliation
-│   ├── ws1_pipeline_clean_equiv.sql             # Reference SQL specification for pipeline_clean.py
+│   ├── staging_hospital_flu_clean.sql           # Reference SQL pipeline (run by run-pipeline-clean --sql-fallback)
+│   ├── verify_clean_equivalence.sql             # Equivalence check: staging.hospital_flu_clean vs the reference SQL
 │   ├── ws2_seasonal_features.sql                # Workstream 2A per-hospital seasonal curve features
 │   ├── ws2_kmeans_cohorts.sql                   # Workstream 2A BQML K-means model & Cohort assignment
 │   ├── ws2_forecasts_and_trials.sql             # Workstream 2B ARIMA_PLUS + AI.FORECAST + trials
@@ -304,7 +305,7 @@ All primary operator scripts live in `bin/` and have root-level convenience syml
 | `./reset ws1` | Resets `staging`, `features`, and `ml` back to the clean **Workstream** 1 **Start Point** (`staging.hospital_flu` populated with defective data; downstream tables cleared). |
 | `./reset ws2` | Resets `staging`, `features`, and `ml` to the **Workstream** 2 **Start Point** (where **Workstream** 1 ends: `staging.ws1_eda_heatmap`, `staging.ws1_attribution`, and `staging.hospital_flu_clean` materialised; `features` and `ml` cleared). |
 | `./verify-start-point ws1\|ws2\|main` | Validates table schemas, row counts, invariants, and `checkpoint` parity for `ws1`, `ws2`, or the full post-**Reveal** `main` end state (`--withheld-dir <path-or-gs-uri>`). |
-| `./run-pipeline-clean` | Submits `pipelines/pipeline_clean.py` to Dataproc Serverless (`--async` for background stage execution, `--sql-fallback` for instant 5s BigQuery materialisation, `--verify-equivalence` to check parity with `sql/ws1_pipeline_clean_equiv.sql`). |
+| `./run-pipeline-clean` | Submits `pipelines/pipeline_clean.py` to Dataproc Serverless (`--async` for background stage execution, `--sql-fallback` for instant 5s BigQuery materialisation, `--verify-equivalence` to check `staging.hospital_flu_clean` against the reference SQL with `sql/verify_clean_equivalence.sql`). On stage the agent writes and submits `pipeline_clean.py` itself; `--sql-fallback` runs the reference pipeline, not the agent's. |
 | `./run-ws2-cohorts` | Computes `features.hospital_seasonal_features` and trains BQML `ml.hospital_cohort_kmeans` to populate `features.hospital_cohorts`. |
 | `./run-ws2-forecasts` | Trains multi-series BQML `ARIMA_PLUS` models (clean vs uncleaned), runs zero-shot `TimesFM` (`AI.FORECAST`), logs trials to `ml.experiment_trials`, and builds `ml.forecast_leaderboard`. |
 | `./load-reveal <withheld_dir_or_gs_uri>` | Loads the six post-**Cutoff** **Reveal** weeks (`2026-11-01`..`2026-12-12`) into `staging.hospital_flu_reveal` and computes `ml.reveal_forecast_evaluation`. |

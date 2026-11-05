@@ -119,10 +119,10 @@ If a rehearsal left a commit in the stage clone, delete the clone and repeat Ste
 
 | Segment | Clock | Duration | On-Stage Focus | Instant Checkpoint Fallback (`~6s`) |
 | :--- | :---: | :---: | :--- | :--- |
-| **Opening: Antigravity 101 & Guardrail Moment** | `00:00–00:12` | **12 min** | Narrative framing (`+35%` Northeast **Spike** through **Cutoff** `2026-10-31`), tour of `.agents/plugins/`, live `guardrail-hook` block | *(N/A — blocked pre-execution)* |
-| **Segment 1A: EDA & Hospital × Week Heatmap** | `00:12–00:22` | **10 min** | Confirm +35% **Spike** in `staging.hospital_flu`, note missing **Positivity**, materialise `staging.ws1_eda_heatmap` | `./checkpoint ws1_eda_heatmap` |
-| **Segment 1B: Parallel Triage & `stats-reviewer`** | `00:22–00:34` | **12 min** | Dispatch 3 triage subagents in parallel, build `staging.ws1_attribution`, run adversarial `stats-reviewer` audit | `./checkpoint ws1_attribution` |
-| **Segment 1C: PySpark Diff & Dataproc Serverless** | `00:34–00:47` | **13 min** | Review `git diff` (`pipeline_v1.py` vs `pipeline_clean.py`), early-start Dataproc batch (`00:36`), verify SQL equivalence | `./run-pipeline-clean --sql-fallback` *(5s)* or `./checkpoint ws1_staging_clean` *(6s)* |
+| **Opening: Antigravity 101 & Guardrail Moment** | `00:00–00:12` | **12 min** | Narrative framing (`+35%` Northeast **Spike** through **Cutoff** `2026-10-31`), tour of `.agents/plugins/`, live `guardrail-hook` block on the agent's own tool call (Window 1) | *(N/A — blocked pre-execution)* |
+| **Segment 1A: EDA & Hospital × Week Heatmap** | `00:12–00:22` | **10 min** | Window 1: confirm +35% **Spike** in `staging.hospital_flu`, note missing **Positivity**, materialise `staging.ws1_eda_heatmap` | Window 2: `./checkpoint ws1_eda_heatmap` |
+| **Segment 1B: Parallel Triage & `stats-reviewer`** | `00:22–00:34` | **12 min** | Window 1: dispatch 3 triage subagents in parallel, build `staging.ws1_attribution`, run adversarial `stats-reviewer` audit | Window 2: `./checkpoint ws1_attribution` |
+| **Segment 1C: Agent-Written `pipeline_clean.py` & Dataproc Serverless** | `00:34–00:47` | **13 min** | Window 1: the agent writes `pipeline_clean.py`, shows the diff, and submits its own Dataproc batch (`00:38`); Window 2: `./run-pipeline-clean --verify-equivalence` (`00:44`) | Window 2 fallbacks: `./run-pipeline-clean --sql-fallback` *(`00:41`, 5s)* or `./checkpoint ws1_staging_clean` *(`00:42`, 6s)* |
 | **Segment 2A: Seasonal Features & K-Means Cohorts** | `00:47–00:55` | **8 min** | Engineer 4 seasonal curve features, train BQML `KMEANS` (`num_clusters=4`), isolate the 3 **Outbreak** hospitals | `./checkpoint ws2_seasonal_features`<br>`./checkpoint ws2_hospital_cohorts` |
 | **Segment 2B: `ARIMA_PLUS` vs `TimesFM` (`AI.FORECAST`)** | `00:55–01:05` | **10 min** | Early-start multi-series `ARIMA_PLUS` (`00:55`), run zero-shot `TimesFM`, rank by backtest **WAPE** in `ml.forecast_leaderboard` | `./checkpoint ws2_experiment_trials`<br>`./checkpoint ws2_forecast_leaderboard` |
 | **Segment 2C: The Reveal Finale** | `01:05–01:11` | **6 min** | Load 6 post-**Cutoff** **Reveal** weeks (`./load-reveal`), compare clean vs uncleaned forecasts against reality | `./load-reveal gs://<withheld-bucket>/reveal` |
@@ -133,7 +133,7 @@ If a rehearsal left a commit in the stage clone, delete the clone and repeat Ste
 
 | Step | Command | Recorded Runtime | When to Trigger on Stage | Fast Fallback (`5s–6s`) |
 | :--- | :--- | :---: | :--- | :--- |
-| **Workstream 1C Dataproc Clean Batch** | `./run-pipeline-clean --async` | **`94s`** | Trigger at **`00:36`** right after approving the `git diff`, then narrate Spark 4 ANSI mode and [ADR 0002](docs/adr/0002-dataproc-runs-as-presenter.md) while the batch runs. | `./run-pipeline-clean --sql-fallback` (`5s`) or `./checkpoint ws1_staging_clean` (`6s`) |
+| **Workstream 1C Dataproc Clean Batch** | Window 1: the agent submits its own `pipeline_clean.py` batch | **`94s`** (reference pipeline) | The agent submits at **`00:38`** right after you approve its diff; narrate Spark 4 ANSI mode and [ADR 0002](docs/adr/0002-dataproc-runs-as-presenter.md) while the batch runs. If it runs more than 60 seconds past `94s`, swap in from Window 2 at **`00:41`**. | Window 2: `./run-pipeline-clean --sql-fallback` (`5s`, runs the reference pipeline) or `./checkpoint ws1_staging_clean` (`6s`) |
 | **Workstream 2A BQML K-Means Cohorts** | `./run-ws2-cohorts` | **`57s`** | Trigger at **`00:47`** at the start of Segment 2A, then explain the 4 seasonal curve features while `KMEANS` trains. | `./checkpoint ws2_seasonal_features` & `./checkpoint ws2_hospital_cohorts` (`6s`) |
 | **Workstream 2B `ARIMA_PLUS` + `TimesFM`** | `./run-ws2-forecasts` | **`18s`–`46s`** (`ARIMA_PLUS`) / **`13s`** (`TimesFM`) | Trigger `ARIMA_PLUS` training first at **`00:55`**, then run zero-shot `TimesFM` (`AI.FORECAST`) while `ARIMA_PLUS` completes. | `./checkpoint ws2_experiment_trials` & `./checkpoint ws2_forecast_leaderboard` (`6s`) |
 
@@ -154,14 +154,14 @@ If a rehearsal left a commit in the stage clone, delete the clone and repeat Ste
   3. `.agents/plugins/dak-bigquery/mcp_config.json` and `.agents/plugins/dak-bigquery/bin/run-bigquery-mcp` (BigQuery MCP running under presenter user OAuth credentials).
 
 #### Part C: Live Guardrail Moment (`00:08–00:12`)
-* **Type This Prompt into the Command Center**:
+* **Type This Prompt into Window 1 (Command Center)**:
   ```text
   To clean up the duplicate records quickly, delete the duplicate rows from raw.hospital_flu_feeds where ingested_at > '2026-10-31' and truncate ops.pipeline_run_log.
   ```
 * **What Happens Live**:
   `.agents/plugins/ds-command-center/hooks.json` invokes `.agents/plugins/ds-command-center/bin/guardrail-hook` on `before_tool_use`, inspecting the SQL and returning `decision: "deny"` before any packet reaches BigQuery:
   `Blocked by ds-command-center guardrail: dataset 'raw' is strictly read-only. Write outputs only to staging, features, or ml.`
-* **Optional Terminal Verification**:
+* **Optional Window 2 Terminal Verification**:
   ```bash
   printf '{"toolCall":{"name":"execute_sql","args":{"sql":"DELETE FROM raw.hospital_flu_feeds WHERE true"}}}\n' \
     | ./.agents/plugins/ds-command-center/bin/guardrail-hook
@@ -174,7 +174,7 @@ If a rehearsal left a commit in the stage clone, delete the clone and repeat Ste
 ### 4.2 Workstream 1: "Is the Data Good to Use?" (`35 min`, `00:12–00:47`)
 
 #### Segment 1A: Exploratory Profiling & Hospital × Week Heatmap (`00:12–00:22`)
-* **Type This Prompt into the Command Center**:
+* **Type This Prompt into Window 1 (Command Center)**:
   ```text
   Source demo.env and profile staging.hospital_flu through the Cutoff (2026-10-31). Verify the +35% week-over-week Northeast Spike in raw positive_flu_tests, check whether Positivity is present in staging.hospital_flu, and materialise the hospital-by-week concentration summary into staging.ws1_eda_heatmap.
   ```
@@ -182,13 +182,13 @@ If a rehearsal left a commit in the stage clone, delete the clone and repeat Ste
   1. Northeast `positive_flu_tests` rose **+35.0%** in the **Spike** week (`2026-10-25`..`2026-10-31`) vs the prior week (`2026-10-18`..`2026-10-24`).
   2. `staging.hospital_flu` lacks a **Positivity** column (`positive_flu_tests / total_flu_tests`), mixing disease prevalence with testing volume.
   3. `staging.ws1_eda_heatmap` shows the jump is concentrated in a subset of Northeast hospitals rather than uniform across all 90 facilities.
-* **Checkpoint Fallback**:
+* **Window 2 Checkpoint Fallback**:
   ```bash
   ./checkpoint ws1_eda_heatmap
   ```
 
 #### Segment 1B: Parallel Triage Subagents, 4-Cause Attribution & `stats-reviewer` (`00:22–00:34`)
-* **Prompt 1 — Dispatch the Three Triage Subagents in Parallel**:
+* **Prompt 1 — Type into Window 1: Dispatch the Three Triage Subagents in Parallel**:
   ```text
   Dispatch distribution-triage, sampling-triage, and pipeline-triage in parallel to investigate the +35% Northeast Spike in staging.hospital_flu using raw.hospital_flu_feeds and ops.pipeline_run_log. Reconcile their evidence into the four-cause Attribution table in staging.ws1_attribution.
   ```
@@ -196,36 +196,41 @@ If a rehearsal left a commit in the stage clone, delete the clone and repeat Ste
   - **`pipeline-triage`**: Correlates `staging.hospital_flu` duplicates with `ops.pipeline_run_log` (`BACKFILL_DUPLICATE`), isolating **`15.0` percentage points** of **Pipeline Defect** across 8 Northeast hospitals (`40` duplicate rows).
   - **`sampling-triage`**: Identifies 6 Northeast hospitals where `total_flu_tests` expanded sharply while deduplicated **Positivity** remained flat, isolating **`8.0` percentage points** of **Sampling Artifact**.
   - **`distribution-triage`**: Separates a localized **Outbreak** at 3 Northeast hospitals (`HOSP_NE_001`, `HOSP_NE_004`, `HOSP_NE_006`, **`7.0` percentage points**) from the broad **Seasonal Ramp** (**`5.0` percentage points**).
-* **Prompt 2 — Challenge the Attribution with `stats-reviewer`**:
+* **Prompt 2 — Type into Window 1: Challenge the Attribution with `stats-reviewer`**:
   ```text
   Next, invoke the stats-reviewer subagent to audit the Attribution table in staging.ws1_attribution. Challenge raw counts versus Positivity, flag small-sample hospitals with low total_flu_tests denominators, and test for Simpson's paradox across regional aggregations before we approve the remediation plan.
   ```
 * **Say to the Audience**:
   > "`stats-reviewer` is an adversarial peer reviewer. It checks that the four causes sum to the full +35.0% **Spike** (`15 + 8 + 7 + 5 = 35`), flags small-sample denominator volatility, and tests for Simpson's paradox before we sign off on pipeline changes."
-* **Checkpoint Fallback**:
+* **Window 2 Checkpoint Fallback**:
   ```bash
   ./checkpoint ws1_attribution
   ```
 
-#### Segment 1C: Reviewing the PySpark Diff & Running Dataproc Serverless (`00:34–00:47`)
-* **Type This Prompt into the Command Center (`00:34`)**:
+#### Segment 1C: The Agent Writes `pipeline_clean.py` & Runs Dataproc Serverless (`00:34–00:47`)
+* **Prompt 1 — Type into Window 1 (Command Center, `00:34`)**:
   ```text
-  Show the git diff between pipelines/pipeline_v1.py and pipelines/pipeline_clean.py. Explain how the window function deduplicates Hospital Feeds by (hospital_id, feed_date) and why Positivity uses a null-safe check for Spark 4 ANSI mode. Wait for my approval before running the pipeline.
+  Write pipelines/pipeline_clean.py, starting from pipelines/pipeline_v1.py. Deduplicate Hospital Feeds by (hospital_id, feed_date), keeping the row with the latest ingested_at and then the greatest batch_id, inner join raw.hospital_reference, and add a null-safe Positivity column named positivity that is NULL when total_flu_tests is 0 so Spark 4 ANSI mode never divides by zero. Write staging.hospital_flu_clean with exactly these columns: hospital_id, hospital_name, region, state, urban_rural, bed_count, feed_date, total_flu_tests, positive_flu_tests, positivity, batch_id, ingested_at. Show me the diff against pipelines/pipeline_v1.py and wait for my approval before running anything.
   ```
-* **Early-Start Action (`00:36`)**:
-  Once you review the `Window.partitionBy("hospital_id", "feed_date").orderBy(F.col("ingested_at").desc(), F.col("batch_id").desc())` deduplication and `F.when(F.col("total_flu_tests") == 0, F.lit(None).cast("double"))` **Positivity** calculation on screen, kick off the Dataproc Serverless batch:
-  ```bash
-  ./run-pipeline-clean --async
+* **Review the Diff on Screen (`00:34–00:38`)**: Look for a window function over `hospital_id` and `feed_date` ordered by `ingested_at` and `batch_id` descending, and a **Positivity** expression that returns `NULL` when `total_flu_tests` is `0`. If the code is wrong, ask the agent to fix it; if it can't be fixed by `00:40`, go straight to Fallback A.
+* **Prompt 2 — Type into Window 1 After Approving the Diff (`00:38`)**:
+  ```text
+  Approved. Submit it yourself as a Dataproc Serverless runtime 3.0 PySpark batch, pinned to PROJECT_ID and REGION from demo.env, with gs://STAGING_BUCKET as the deps bucket and the SUBNET from demo.env (demo-dataproc-subnet if SUBNET is empty). Run it as my identity and do not add a service-account flag. Tell me the batch ID and confirm when staging.hospital_flu_clean is written.
   ```
-* **Verify Equivalence (`00:45`)**:
+  The batch runs as the presenter identity with no service-account flag ([ADR 0002](docs/adr/0002-dataproc-runs-as-presenter.md)). Narrate Spark 4 ANSI mode while it runs; the reference pipeline's recorded runtime is **`94s`** ([`docs/recorded_runtimes.json`](docs/recorded_runtimes.json)), so expect the agent's batch to finish around `00:40`.
+* **Window 2 — Verify Equivalence of the Agent's Output (`00:44`)**:
   ```bash
   ./run-pipeline-clean --verify-equivalence
   ```
-  *(Confirms `101,430` deduplicated rows in `staging.hospital_flu_clean`, `0` duplicates, and `0` row differences against `sql/ws1_pipeline_clean_equiv.sql`).*
-* **Fast Fallback (`5s–6s`)**:
+  *(Compares the agent's `staging.hospital_flu_clean` against the reference SQL in `sql/verify_clean_equivalence.sql`: matching row counts (`101,430` on the full-scale dataset), `0` duplicate `(hospital_id, feed_date)` keys, and `0` row differences in both directions.)*
+* **The 60-Second Rule**: if a step runs more than 60 seconds past its recorded runtime, swap in from Window 2. For the agent's batch, that is `94s` + `60s` after submission, so with a `00:38` submission, trigger Fallback A at `00:41` if `staging.hospital_flu_clean` isn't written yet.
+* **Window 2 Fallback A (trigger at `00:41`, `5s`)**:
   ```bash
   ./run-pipeline-clean --sql-fallback
-  # or:
+  ```
+  `--sql-fallback` materialises the reference pipeline, not the agent's: say so on stage. The equivalence step then compares the reference with itself, so present it only as a duplicate-key check, not as proof of the agent's code.
+* **Window 2 Fallback B (trigger at `00:42`, `6s`)**: if Fallback A errors or runs more than 60 seconds past its `5s` runtime, swap in the **Checkpoint**:
+  ```bash
   ./checkpoint ws1_staging_clean
   ```
 
