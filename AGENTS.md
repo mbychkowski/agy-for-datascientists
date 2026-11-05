@@ -27,7 +27,7 @@ Make every change in its own worktree and land it through a PR; the main checkou
 ### PR & protected-`main` workflow
 
 - `main` is branch-protected (`GH006`) and requires the `CI / Check & Test` GitHub Actions status check on pull requests.
-- Never run `git push origin main`. Always push the worktree branch, create a PR (`gh pr create`), wait for checks (`gh pr checks <N> --watch`), squash-merge (`gh pr merge <N> --squash --delete-branch`), pull `main`, and remove the worktree.
+- Never run `git push origin main`. Always push the worktree branch, create a PR (`gh pr create`), wait for checks (`gh pr checks <N> --watch`), squash-merge (`gh pr merge <N> --squash --delete-branch`), then pull `main` from the main checkout. `--delete-branch` usually removes the worktree too, so check `git worktree list` and run `git worktree remove` only if it is still listed; don't chain it before the pull.
 - Run a two-axis `/code-review` (Standards + Spec) against each issue PR diff before moving to the next issue.
 
 ### Architecture & security invariants (ADR 0001 & ADR 0002)

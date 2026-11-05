@@ -108,6 +108,12 @@ class TestWorktreeDocs(unittest.TestCase):
         self.assertIn("`.worktree/chore-<slug>` on branch `chore/<slug>`", agents_text)
         self.assertIn("npm ci", agents_text)
 
+    def test_agents_md_removes_worktree_only_if_still_listed(self):
+        # gh pr merge --delete-branch usually removes the worktree already.
+        agents_text = AGENTS_MD.read_text(encoding="utf-8")
+        self.assertIn("git worktree list", agents_text)
+        self.assertNotIn("pull `main`, and remove the worktree", agents_text)
+
     def test_readme_points_to_agents_md(self):
         readme_text = README_MD.read_text(encoding="utf-8")
         self.assertIn("AGENTS.md#worktree-execution", readme_text)
