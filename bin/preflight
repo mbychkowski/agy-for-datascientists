@@ -18,6 +18,9 @@ done
 SCRIPT_DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
+# shellcheck source=lib/pinning.sh
+source "${SCRIPT_DIR}/lib/pinning.sh"
+
 # Color formatting if connected to a terminal
 if [[ -t 1 ]]; then
     COLOR_GREEN="\033[0;32m"
@@ -32,6 +35,7 @@ else
 fi
 
 ENV_FILE="${REPO_ROOT}/demo.env"
+ENV_LOAD_MESSAGES=""
 CHECKS_PASSED=0
 CHECKS_FAILED=0
 CHECKS_WARNED=0
@@ -83,8 +87,10 @@ _execute_check() {
     fi
 
     if [[ -n "${output}" ]]; then
+        # Pinning module messages carry their own "[FAIL] " prefix; the check title
+        # already reports the status, so indent them without repeating it.
         while IFS= read -r line; do
-            printf "       %s\n" "${line}"
+            printf "       %s\n" "${line#\[FAIL\] }"
         done <<< "${output}"
     fi
 }
@@ -100,11 +106,42 @@ run_warn_check() {
 }
 
 # ------------------------------------------------------------------------------
+# Environment Loading (main shell, once)
+# ------------------------------------------------------------------------------
+# Loads ENV_FILE through the Pinning module into the main shell so every check
+# subshell inherits it. The loader's [FAIL] messages are kept in
+# ENV_LOAD_MESSAGES for check 1 to report, rather than printed out of order.
+load_environment() {
+    local messages_file
+    if ! messages_file="$(mktemp "${TMPDIR:-/tmp}/preflight-env.XXXXXX")"; then
+        pinned_load_env "${ENV_FILE}"
+        return
+    fi
+    pinned_load_env "${ENV_FILE}" 2>"${messages_file}"
+    local status=$?
+    ENV_LOAD_MESSAGES="$(cat "${messages_file}")"
+    rm -f "${messages_file}"
+    return "${status}"
+}
+
+# Re-validates the already-loaded PROJECT_ID and REGION through the Pinning
+# guard (no reload). On failure prints a remediation hint, optionally followed
+# by "and run: <command>".
+# Usage: guard_project_region [<remediation command>]
+guard_project_region() {
+    if pinned_require_project_region; then
+        return 0
+    fi
+    echo "Configure PROJECT_ID and REGION in ${ENV_FILE}${1:+ and run: $1}"
+    return 1
+}
+
+# ------------------------------------------------------------------------------
 # Check 1: Environment File Existence & Loading
 # ------------------------------------------------------------------------------
 check_env_file_exists() {
     if [[ ! -f "${ENV_FILE}" ]]; then
-        echo "Environment file not found: ${ENV_FILE}"
+        echo "${ENV_LOAD_MESSAGES}"
         echo "Copy demo.env.example to demo.env and configure your environment:"
         echo "  cp demo.env.example demo.env"
         return 1
@@ -121,24 +158,13 @@ check_env_variables() {
         return 1
     fi
 
-    # Source the environment file
-    # shellcheck disable=SC1090
-    source "${ENV_FILE}"
-
-    # Verify required core variables are set and not empty
-    local required_core=("PROJECT_ID" "REGION" "STAGING_BUCKET" "STATE_BUCKET")
-    for var in "${required_core[@]}"; do
-        if [[ -z "${!var:-}" ]]; then
-            echo "Required variable '${var}' is unset or empty in ${ENV_FILE}"
-            return 1
-        fi
-        # Check for unconfigured placeholders
-        if [[ "${!var}" == *"your-"* ]] || [[ "${!var}" == "your-project-id" ]]; then
-            echo "Variable '${var}' contains placeholder value '${!var}'."
-            echo "Please set real Google Cloud project and bucket names in ${ENV_FILE}."
-            return 1
-        fi
-    done
+    # Verify required core variables are set and not placeholders
+    if ! pinned_require_project_region ||
+        ! pinned_require_staging_bucket ||
+        ! pinned_require_state_bucket; then
+        echo "Please set real Google Cloud project and bucket names in ${ENV_FILE}."
+        return 1
+    fi
 
     # Verify required overrides are exported and match core variables
     local overrides=(
@@ -172,15 +198,8 @@ check_env_variables() {
 # Check 3: Active gcloud Project Pinning
 # ------------------------------------------------------------------------------
 check_active_gcloud_project() {
-    if ! command -v gcloud >/dev/null 2>&1; then
-        echo "gcloud CLI is not installed or not in PATH."
-        return 1
-    fi
-
-    if [[ -z "${PROJECT_ID:-}" ]] || [[ "${PROJECT_ID}" == *"your-"* ]]; then
-        echo "PROJECT_ID is unset or contains placeholder value in ${ENV_FILE}."
-        return 1
-    fi
+    pinned_require_cli gcloud || return 1
+    guard_project_region || return 1
 
     # Read the active configuration's project property, ignoring any environment overrides
     local active_project
@@ -214,15 +233,8 @@ check_active_gcloud_project() {
 # Check 4: ADC Quota Project Pinning & Validity
 # ------------------------------------------------------------------------------
 check_adc_quota_project() {
-    if ! command -v gcloud >/dev/null 2>&1; then
-        echo "gcloud CLI is not installed or not in PATH."
-        return 1
-    fi
-
-    if [[ -z "${PROJECT_ID:-}" ]] || [[ "${PROJECT_ID}" == *"your-"* ]]; then
-        echo "PROJECT_ID is unset or contains placeholder value in ${ENV_FILE}."
-        return 1
-    fi
+    pinned_require_cli gcloud || return 1
+    guard_project_region || return 1
 
     local adc_file="${GOOGLE_APPLICATION_CREDENTIALS:-${CLOUDSDK_CONFIG:-$HOME/.config/gcloud}/application_default_credentials.json}"
     if [[ ! -f "${adc_file}" ]]; then
@@ -280,30 +292,10 @@ except Exception as e:
 # Check 5: Dataproc Serverless Runtime 3.0 Hello-World Batch Writes to BigQuery
 # ------------------------------------------------------------------------------
 check_dataproc_hello_world_batch() {
-    if ! command -v gcloud >/dev/null 2>&1; then
-        echo "gcloud CLI is not installed or not in PATH."
-        return 1
-    fi
+    pinned_require_cli gcloud bq || return 1
+    guard_project_region "terraform -chdir=infra apply" || return 1
 
-    if ! command -v bq >/dev/null 2>&1; then
-        echo "bq CLI is not installed or not in PATH."
-        return 1
-    fi
-
-    if [[ -z "${PROJECT_ID:-}" ]] || [[ "${PROJECT_ID}" == *"your-"* ]]; then
-        echo "PROJECT_ID is unset or contains placeholder value in ${ENV_FILE}."
-        echo "Configure PROJECT_ID in ${ENV_FILE} and run: terraform -chdir=infra apply"
-        return 1
-    fi
-
-    if [[ -z "${REGION:-}" ]] || [[ "${REGION}" == *"your-"* ]]; then
-        echo "REGION is unset or contains placeholder value in ${ENV_FILE}."
-        echo "Configure REGION in ${ENV_FILE} and run: terraform -chdir=infra apply"
-        return 1
-    fi
-
-    if [[ -z "${STAGING_BUCKET:-}" ]] || [[ "${STAGING_BUCKET}" == *"your-"* ]]; then
-        echo "STAGING_BUCKET is unset or contains placeholder value in ${ENV_FILE}."
+    if ! pinned_require_staging_bucket; then
         echo "Configure STAGING_BUCKET in ${ENV_FILE} and run: terraform -chdir=infra apply"
         return 1
     fi
@@ -319,19 +311,12 @@ check_dataproc_hello_world_batch() {
     local temp_table="${PREFLIGHT_HELLO_TABLE:-_preflight_hello_$$}"
 
     cleanup_hello_world() {
-        bq rm -f -t --project_id="${PROJECT_ID}" --location="${REGION}" "${PROJECT_ID}:ops.${temp_table}" >/dev/null 2>&1 || true
-        gcloud dataproc batches delete "${batch_id}" --project="${PROJECT_ID}" --region="${REGION}" --quiet >/dev/null 2>&1 || true
+        pinned_bq rm -f -t "${PROJECT_ID}:ops.${temp_table}" >/dev/null 2>&1 || true
+        pinned_dataproc_delete "${batch_id}" >/dev/null 2>&1 || true
     }
 
     local submit_out
-    if ! submit_out=$(gcloud dataproc batches submit pyspark "${hello_script}" \
-        --project="${PROJECT_ID}" \
-        --region="${REGION}" \
-        --batch="${batch_id}" \
-        --version="3.0" \
-        --deps-bucket="gs://${STAGING_BUCKET}" \
-        --subnet="${subnet_target}" \
-        -- \
+    if ! submit_out=$(pinned_dataproc_submit "${hello_script}" "${batch_id}" -- \
         --project-id "${PROJECT_ID}" \
         --dataset "ops" \
         --table "${temp_table}" \
@@ -344,7 +329,7 @@ check_dataproc_hello_world_batch() {
     fi
 
     local bq_out
-    if ! bq_out=$(bq show --project_id="${PROJECT_ID}" --location="${REGION}" "${PROJECT_ID}:ops.${temp_table}" 2>&1); then
+    if ! bq_out=$(pinned_bq show "${PROJECT_ID}:ops.${temp_table}" 2>&1); then
         echo "Dataproc hello-world batch completed, but verification table '${PROJECT_ID}:ops.${temp_table}' was not found in BigQuery."
         echo "Error details: ${bq_out}"
         cleanup_hello_world
@@ -377,10 +362,7 @@ check_bigquery_mcp_presenter_auth() {
         return 1
     fi
 
-    if [[ -z "${PROJECT_ID:-}" ]] || [[ "${PROJECT_ID}" == *"your-"* ]]; then
-        echo "PROJECT_ID is unset or contains placeholder value in ${ENV_FILE}."
-        return 1
-    fi
+    guard_project_region || return 1
 
     local wrapper_env
     if ! wrapper_env=$(DEMO_ENV_FILE="${ENV_FILE}" "${wrapper_bin}" --print-env 2>&1); then
@@ -394,10 +376,7 @@ check_bigquery_mcp_presenter_auth() {
     fi
 
     # Verify active gcloud identity is a presenter user account, not a compute service account
-    if ! command -v gcloud >/dev/null 2>&1; then
-        echo "gcloud CLI is not installed or not in PATH."
-        return 1
-    fi
+    pinned_require_cli gcloud || return 1
 
     local active_account
     active_account=$(env -u CLOUDSDK_CORE_ACCOUNT -u CLOUDSDK_CORE_PROJECT gcloud config configurations list --filter="is_active=true" --format="value(properties.core.account)" 2>/dev/null || true)
@@ -483,7 +462,7 @@ hook_bin = '${guardrail_bin}'
 probes = [
     (
         'bq DML/DDL targeting raw',
-        {'toolCall': {'name': 'run_command', 'args': {'CommandLine': 'bq query --use_legacy_sql=false \"DROP TABLE raw.hospital_flu_feeds\"'}}},
+        {'toolCall': {'name': 'run_command', 'args': {'CommandLine': 'bq query --use_legacy_sql=false \"DROP TABLE raw.hospital_flu_feeds\"'}}},  # pinning-guard: allow (hook probe payload, not a bq call)
         'deny',
         'read-only',
     ),
@@ -501,7 +480,7 @@ probes = [
     ),
     (
         'Shell bq read targeting checkpoint',
-        {'toolCall': {'name': 'run_command', 'args': {'CommandLine': 'bq query --use_legacy_sql=false \"SELECT * FROM checkpoint.clean_feeds\"'}}},
+        {'toolCall': {'name': 'run_command', 'args': {'CommandLine': 'bq query --use_legacy_sql=false \"SELECT * FROM checkpoint.clean_feeds\"'}}},  # pinning-guard: allow (hook probe payload, not a bq call)
         'deny',
         'read-only',
     ),
@@ -513,7 +492,7 @@ probes = [
     ),
     (
         'Shell bq read targeting ops',
-        {'toolCall': {'name': 'run_command', 'args': {'CommandLine': 'bq query --use_legacy_sql=false \"SELECT * FROM ops.pipeline_run_log LIMIT 5\"'}}},
+        {'toolCall': {'name': 'run_command', 'args': {'CommandLine': 'bq query --use_legacy_sql=false \"SELECT * FROM ops.pipeline_run_log LIMIT 5\"'}}},  # pinning-guard: allow (hook probe payload, not a bq call)
         'allow',
         None,
     ),
@@ -556,29 +535,13 @@ for label, payload, expected_decision, expected_substr in probes:
 # Check 8: BigQuery AI.FORECAST (TimesFM) Executes on a Tiny Series
 # ------------------------------------------------------------------------------
 check_bqml_timesfm_forecast() {
-    if ! command -v bq >/dev/null 2>&1; then
-        echo "bq CLI is not installed or not in PATH."
-        return 1
-    fi
-
-    if [[ -z "${PROJECT_ID:-}" ]] || [[ "${PROJECT_ID}" == *"your-"* ]]; then
-        echo "PROJECT_ID is unset or contains placeholder value in ${ENV_FILE}."
-        echo "Configure PROJECT_ID in ${ENV_FILE} and run: terraform -chdir=infra apply"
-        return 1
-    fi
-
-    if [[ -z "${REGION:-}" ]] || [[ "${REGION}" == *"your-"* ]]; then
-        echo "REGION is unset or contains placeholder value in ${ENV_FILE}."
-        echo "Configure REGION in ${ENV_FILE} and run: terraform -chdir=infra apply"
-        return 1
-    fi
+    pinned_require_cli bq || return 1
+    guard_project_region "terraform -chdir=infra apply" || return 1
 
     local forecast_out
-    if ! forecast_out=$(bq query \
+    if ! forecast_out=$(pinned_bq query \
         --quiet \
         --use_legacy_sql=false \
-        --project_id="${PROJECT_ID}" \
-        --location="${REGION}" \
         --format=json \
         "SELECT forecast_timestamp, forecast_value FROM AI.FORECAST((SELECT dt AS ts, CAST(10 + idx AS FLOAT64) AS val FROM UNNEST(GENERATE_DATE_ARRAY(DATE '2026-10-01', DATE '2026-10-14')) AS dt WITH OFFSET AS idx), data_col => 'val', timestamp_col => 'ts', horizon => 3)" 2>&1); then
         echo "BigQuery AI.FORECAST (TimesFM) query failed in project '${PROJECT_ID}' (${REGION})."
@@ -587,21 +550,17 @@ check_bqml_timesfm_forecast() {
         return 1
     fi
 
+    local forecast_json
+    if ! forecast_json=$(pinned_bq_json "${forecast_out}" 2>&1); then
+        echo "AI.FORECAST output contains no JSON result."
+        echo "Actual output: ${forecast_out}"
+        return 1
+    fi
+
     local validate_out
     if ! validate_out=$(python3 -c '
 import json, sys
-raw = sys.argv[1]
-decoder = json.JSONDecoder()
-rows = None
-for idx, ch in enumerate(raw):
-    if ch == "[":
-        try:
-            candidate, _ = decoder.raw_decode(raw[idx:])
-            if isinstance(candidate, list):
-                rows = candidate
-                break
-        except Exception:
-            continue
+rows = json.loads(sys.argv[1])
 if not isinstance(rows, list) or len(rows) == 0:
     print("AI.FORECAST returned an empty or non-list result.")
     sys.exit(1)
@@ -609,7 +568,7 @@ first = rows[0]
 if not isinstance(first, dict) or "forecast_value" not in first:
     print("AI.FORECAST output is missing expected forecast_value field.")
     sys.exit(1)
-' "${forecast_out}" 2>&1); then
+' "${forecast_json}" 2>&1); then
         echo "${validate_out}"
         echo "Actual output: ${forecast_out}"
         return 1
@@ -622,35 +581,19 @@ if not isinstance(first, dict) or "forecast_value" not in first:
 # Check 9: BigQuery ML K-Means Model Trains and Cleans Up in ml Dataset
 # ------------------------------------------------------------------------------
 check_bqml_kmeans_model() {
-    if ! command -v bq >/dev/null 2>&1; then
-        echo "bq CLI is not installed or not in PATH."
-        return 1
-    fi
-
-    if [[ -z "${PROJECT_ID:-}" ]] || [[ "${PROJECT_ID}" == *"your-"* ]]; then
-        echo "PROJECT_ID is unset or contains placeholder value in ${ENV_FILE}."
-        echo "Configure PROJECT_ID in ${ENV_FILE} and run: terraform -chdir=infra apply"
-        return 1
-    fi
-
-    if [[ -z "${REGION:-}" ]] || [[ "${REGION}" == *"your-"* ]]; then
-        echo "REGION is unset or contains placeholder value in ${ENV_FILE}."
-        echo "Configure REGION in ${ENV_FILE} and run: terraform -chdir=infra apply"
-        return 1
-    fi
+    pinned_require_cli bq || return 1
+    guard_project_region "terraform -chdir=infra apply" || return 1
 
     local temp_model="${PREFLIGHT_KMEANS_MODEL:-_preflight_kmeans_$$}"
 
     cleanup_kmeans_model() {
-        bq rm -f -m --project_id="${PROJECT_ID}" --location="${REGION}" "${PROJECT_ID}:ml.${temp_model}" >/dev/null 2>&1 || true
+        pinned_bq rm -f -m "${PROJECT_ID}:ml.${temp_model}" >/dev/null 2>&1 || true
     }
 
     local kmeans_out
-    if ! kmeans_out=$(bq query \
+    if ! kmeans_out=$(pinned_bq query \
         --quiet \
         --use_legacy_sql=false \
-        --project_id="${PROJECT_ID}" \
-        --location="${REGION}" \
         "CREATE OR REPLACE MODEL \`${PROJECT_ID}.ml.${temp_model}\` OPTIONS(model_type='KMEANS', num_clusters=2, max_iterations=2) AS SELECT CAST(x AS FLOAT64) AS f1, CAST(y AS FLOAT64) AS f2 FROM UNNEST([STRUCT(1.0 AS x, 1.0 AS y), STRUCT(1.2 AS x, 0.9 AS y), STRUCT(10.0 AS x, 10.0 AS y), STRUCT(10.5 AS x, 9.8 AS y)])" 2>&1); then
         echo "BigQuery ML K-means model training failed in '${PROJECT_ID}:ml.${temp_model}' (${REGION})."
         echo "Verify that dataset 'ml' exists ('terraform -chdir=infra apply') and you have BigQuery ML permissions."
@@ -660,8 +603,8 @@ check_bqml_kmeans_model() {
     fi
 
     local rm_out
-    if ! rm_out=$(bq rm -f -m --project_id="${PROJECT_ID}" --location="${REGION}" "${PROJECT_ID}:ml.${temp_model}" 2>&1); then
-        echo "BigQuery ML K-means model trained, but cleanup ('bq rm -f -m ${PROJECT_ID}:ml.${temp_model}') failed."
+    if ! rm_out=$(pinned_bq rm -f -m "${PROJECT_ID}:ml.${temp_model}" 2>&1); then
+        echo "BigQuery ML K-means model trained, but removing temporary model '${PROJECT_ID}:ml.${temp_model}' failed."
         echo "Error details: ${rm_out}"
         return 1
     fi
@@ -673,10 +616,7 @@ check_bqml_kmeans_model() {
 # Check 10: Subagent Dispatches and Returns via Antigravity Harness
 # ------------------------------------------------------------------------------
 check_subagent_dispatch() {
-    if ! command -v agy >/dev/null 2>&1; then
-        echo "agy CLI is not installed or not in PATH."
-        return 1
-    fi
+    pinned_require_cli agy || return 1
 
     local agy_timeout="${PREFLIGHT_AGY_TIMEOUT:-60s}"
     local subagent_out
@@ -717,10 +657,7 @@ check_workspace_dak_skills_visibility() {
         return 1
     fi
 
-    if ! command -v agy >/dev/null 2>&1; then
-        echo "agy CLI is not installed or not in PATH."
-        return 1
-    fi
+    pinned_require_cli agy || return 1
 
     local agy_timeout="${PREFLIGHT_AGY_TIMEOUT:-60s}"
     local skills_out
@@ -812,14 +749,12 @@ main() {
     echo "Environment file: ${ENV_FILE}"
     echo ""
 
+    # Load demo.env once into this shell; each check subshell re-validates it
+    # through the Pinning guard instead of reloading the file.
+    load_environment
+
     # Check 1: File exists
     run_check "Environment file exists" check_env_file_exists
-
-    # Sourcing environment file if present
-    if [[ -f "${ENV_FILE}" ]]; then
-        # shellcheck disable=SC1090
-        source "${ENV_FILE}"
-    fi
 
     # Check 2: Environment variables and exported overrides
     run_check "Environment variables and overrides configured" check_env_variables

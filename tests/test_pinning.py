@@ -693,12 +693,6 @@ class TestLoadersSetupAndBootstrapFailFast(unittest.TestCase):
             self.assertNotIn("terraform", calls)
 
 
-UNMIGRATED_PINNING_ALLOWLIST: frozenset[str] = frozenset(
-    {
-        "bin/preflight",
-    }
-)
-
 _FORBIDDEN_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "direct bq CLI invocation",
@@ -727,13 +721,18 @@ _FORBIDDEN_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
 )
 
 
+# Explicit per-line escape hatch for text that matches a pattern but is data, not
+# an invocation (e.g. preflight's guardrail-hook probe payloads). State the reason.
+_ALLOW_MARKER = re.compile(r"# pinning-guard: allow \(.+\)")
+
+
 def _scan_script_violations(script_path: Path) -> list[str]:
     violations: list[str] = []
     for lineno, raw_line in enumerate(
         script_path.read_text(encoding="utf-8").splitlines(), start=1
     ):
         stripped = raw_line.strip()
-        if not stripped or stripped.startswith("#"):
+        if not stripped or stripped.startswith("#") or _ALLOW_MARKER.search(stripped):
             continue
         for label, pattern in _FORBIDDEN_PATTERNS:
             if pattern.search(stripped):
@@ -742,34 +741,41 @@ def _scan_script_violations(script_path: Path) -> list[str]:
 
 
 class TestPinningSourceScanGuard(unittest.TestCase):
-    def test_bin_scripts_use_pinning_module_unless_allowlisted(self) -> None:
-        """Every non-allowlisted bin/* script must use bin/lib/pinning.sh instead of direct bq/gcloud or inline env checks."""
+    def test_scanner_flags_direct_calls_unless_line_carries_allow_marker(
+        self,
+    ) -> None:
+        """The guard must flag a direct bq call but skip a line marked as non-invocation data with a stated reason."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            script = Path(tmpdir) / "script"
+            script.write_text(
+                'bq query --use_legacy_sql=false "SELECT 1"\n'
+                "payload='bq query \"SELECT 1\"'  # pinning-guard: allow (hook probe payload)\n"
+                "payload='bq query \"SELECT 1\"'  # pinning-guard: allow\n",
+                encoding="utf-8",
+            )
+            violations = _scan_script_violations(script)
+        self.assertEqual(len(violations), 2, violations)
+        self.assertTrue(violations[0].startswith("L1 "), violations)
+        self.assertTrue(violations[1].startswith("L3 "), violations)
+
+    def test_bin_scripts_use_pinning_module(self) -> None:
+        """Every bin/* script must use bin/lib/pinning.sh instead of direct bq/gcloud or inline env checks."""
         bin_dir = WORKTREE_ROOT / "bin"
         unexpected: dict[str, list[str]] = {}
-        stale_allowlist: list[str] = []
 
         for path in sorted(bin_dir.iterdir()):
             if not path.is_file():
                 continue
             if path.suffix in {".js", ".py"}:
                 continue
-            rel = f"bin/{path.name}"
             violations = _scan_script_violations(path)
-            if rel in UNMIGRATED_PINNING_ALLOWLIST:
-                if not violations:
-                    stale_allowlist.append(rel)
-            elif violations:
-                unexpected[rel] = violations
+            if violations:
+                unexpected[f"bin/{path.name}"] = violations
 
         self.assertEqual(
             unexpected,
             {},
-            f"Scripts not on UNMIGRATED_PINNING_ALLOWLIST have unmigrated bq/gcloud/env calls: {unexpected}",
-        )
-        self.assertEqual(
-            stale_allowlist,
-            [],
-            f"Remove already-migrated scripts from UNMIGRATED_PINNING_ALLOWLIST: {stale_allowlist}",
+            f"Scripts have unmigrated bq/gcloud/env calls: {unexpected}",
         )
 
 
