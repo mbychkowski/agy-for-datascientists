@@ -28,7 +28,7 @@ Make every change in its own worktree and land it through a PR; the main checkou
 
 - `main` is branch-protected (`GH006`) and requires the `CI / Check & Test` GitHub Actions status check on pull requests.
 - Never run `git push origin main`. Always push the worktree branch, create a PR (`gh pr create`), wait for checks (`gh pr checks <N> --watch`), squash-merge (`gh pr merge <N> --squash --delete-branch`), then pull `main` from the main checkout. `--delete-branch` usually removes the worktree too, so check `git worktree list` and run `git worktree remove` only if it is still listed; don't chain it before the pull.
-- Run a two-axis `/code-review` (Standards + Spec) against each issue PR diff before moving to the next issue. Tell reviewers the guardrail result (which checks passed) so they skip re-running or re-flagging what it enforces.
+- Run a two-axis `/code-review` (Standards + Spec) against each PR diff before moving to the next issue. Brief reviewers with the guardrail result so they don't re-run it or re-flag what it enforces.
 
 ### Architecture & security invariants (ADR 0001 & ADR 0002)
 
@@ -40,4 +40,4 @@ Make every change in its own worktree and land it through a PR; the main checkou
 
 Every commit runs the full guardrail (`.husky/pre-commit`, mirrored by CI): ruff, glossary, tests, shellcheck and Terraform checks, about 3 minutes. Run single test files while iterating; for docs-only changes run `make check-docs` instead. Commit once per finished step and wait for the commit to finish before staging more changes.
 
-Scripted bulk edits (sed, Python or Node replaces across files) must assert each pattern's expected match count and fail on a mismatch; a replace that silently matches zero or extra lines is not caught by the guardrail.
+Scripted bulk edits (sed, Python or Node replaces) assert each pattern's expected match count and fail on a mismatch; the guardrail can't catch a silent zero- or over-match.
