@@ -9,7 +9,7 @@
 
 set -uo pipefail
 
-# Resolve real script directory through any symlinks
+# Resolve real script directory through any symlinks (CODING_STANDARDS.md §1)
 SOURCE="${BASH_SOURCE[0]}"
 while [[ -h "${SOURCE}" ]]; do
     DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
@@ -17,7 +17,8 @@ while [[ -h "${SOURCE}" ]]; do
     [[ "${SOURCE}" != /* ]] && SOURCE="${DIR}/${SOURCE}"
 done
 SCRIPT_DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+# shellcheck source=lib/pinning.sh
+source "${SCRIPT_DIR}/lib/pinning.sh"
 
 ENV_FILE="${REPO_ROOT}/demo.env"
 
@@ -47,36 +48,12 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-if [[ ! -f "${ENV_FILE}" ]]; then
-    echo "[FAIL] Environment file not found: ${ENV_FILE}" >&2
+if ! pinned_load_env "${ENV_FILE}"; then
     exit 1
 fi
 
-# shellcheck disable=SC1090
-source "${ENV_FILE}"
-
-if [[ -z "${PROJECT_ID:-}" ]] || [[ "${PROJECT_ID}" == *"your-"* ]]; then
-    echo "[FAIL] PROJECT_ID is unset or contains a placeholder value in ${ENV_FILE}" >&2
-    exit 1
-fi
-
-if [[ -z "${REGION:-}" ]] || [[ "${REGION}" == *"your-"* ]]; then
-    echo "[FAIL] REGION is unset or contains a placeholder value in ${ENV_FILE}" >&2
-    exit 1
-fi
-
-if [[ -z "${STAGING_BUCKET:-}" ]] || [[ "${STAGING_BUCKET}" == *"your-"* ]]; then
-    echo "[FAIL] STAGING_BUCKET is unset or contains a placeholder value in ${ENV_FILE}" >&2
-    exit 1
-fi
-
-if ! command -v gcloud >/dev/null 2>&1; then
-    echo "[FAIL] gcloud CLI is not installed or not in PATH." >&2
-    exit 1
-fi
-
-if ! command -v bq >/dev/null 2>&1; then
-    echo "[FAIL] bq CLI is not installed or not in PATH." >&2
+# Fail fast: the sync path labels via bq only after a multi-minute Dataproc batch.
+if ! pinned_require_cli gcloud bq; then
     exit 1
 fi
 
@@ -86,17 +63,10 @@ if [[ ! -f "${PIPELINE_SCRIPT}" ]]; then
     exit 1
 fi
 
-SUBNET_TARGET="${SUBNET:-demo-dataproc-subnet}"
 BATCH_ID="${PIPELINE_V1_BATCH_ID:-ws1-pipeline-v1-$(date +%s)-$$}"
 
 echo "Submitting Workstream 1 Pipeline v1 to Dataproc Serverless (batch: ${BATCH_ID})..."
-if ! gcloud dataproc batches submit pyspark "${PIPELINE_SCRIPT}" \
-    --project="${PROJECT_ID}" \
-    --region="${REGION}" \
-    --batch="${BATCH_ID}" \
-    --version="3.0" \
-    --deps-bucket="gs://${STAGING_BUCKET}" \
-    --subnet="${SUBNET_TARGET}" \
+if ! pinned_dataproc_submit "${PIPELINE_SCRIPT}" "${BATCH_ID}" \
     -- \
     --project-id "${PROJECT_ID}" \
     --raw-dataset "raw" \
@@ -108,10 +78,7 @@ if ! gcloud dataproc batches submit pyspark "${PIPELINE_SCRIPT}" \
 fi
 
 echo "Applying label demo:true to ${PROJECT_ID}:staging.hospital_flu..."
-if ! bq --project_id="${PROJECT_ID}" --location="${REGION}" update \
-    --set_label demo:true \
-    "${PROJECT_ID}:staging.hospital_flu"; then
-    echo "[FAIL] Failed to apply demo:true label to ${PROJECT_ID}:staging.hospital_flu" >&2
+if ! pinned_label "staging.hospital_flu"; then
     exit 1
 fi
 

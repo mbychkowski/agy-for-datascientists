@@ -15,7 +15,7 @@
 
 set -uo pipefail
 
-# Resolve real script directory through any symlinks
+# Resolve real script directory through any symlinks (CODING_STANDARDS.md §1)
 SOURCE="${BASH_SOURCE[0]}"
 while [[ -h "${SOURCE}" ]]; do
     DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
@@ -23,7 +23,8 @@ while [[ -h "${SOURCE}" ]]; do
     [[ "${SOURCE}" != /* ]] && SOURCE="${DIR}/${SOURCE}"
 done
 SCRIPT_DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+# shellcheck source=lib/pinning.sh
+source "${SCRIPT_DIR}/lib/pinning.sh"
 
 ENV_FILE="${REPO_ROOT}/demo.env"
 ASYNC_MODE=false
@@ -71,31 +72,12 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-if [[ ! -f "${ENV_FILE}" ]]; then
-    echo "[FAIL] Environment file not found: ${ENV_FILE}" >&2
+if ! pinned_load_env "${ENV_FILE}"; then
     exit 1
 fi
 
-# shellcheck disable=SC1090
-source "${ENV_FILE}"
-
-if [[ -z "${PROJECT_ID:-}" ]] || [[ "${PROJECT_ID}" == *"your-"* ]]; then
-    echo "[FAIL] PROJECT_ID is unset or contains a placeholder value in ${ENV_FILE}" >&2
-    exit 1
-fi
-
-if [[ -z "${REGION:-}" ]] || [[ "${REGION}" == *"your-"* ]]; then
-    echo "[FAIL] REGION is unset or contains a placeholder value in ${ENV_FILE}" >&2
-    exit 1
-fi
-
-if [[ -z "${STAGING_BUCKET:-}" ]] || [[ "${STAGING_BUCKET}" == *"your-"* ]]; then
-    echo "[FAIL] STAGING_BUCKET is unset or contains a placeholder value in ${ENV_FILE}" >&2
-    exit 1
-fi
-
-if ! command -v bq >/dev/null 2>&1; then
-    echo "[FAIL] bq CLI is not installed or not in PATH." >&2
+# Fail fast: the sync path labels via bq only after a multi-minute Dataproc batch.
+if ! pinned_require_cli gcloud bq; then
     exit 1
 fi
 
@@ -109,13 +91,13 @@ run_equivalence_verification() {
     local equiv_sql
     equiv_sql="$(cat "${equiv_sql_file}")"
 
-    local query_out
-    if ! query_out=$(bq --project_id="${PROJECT_ID}" --location="${REGION}" query \
+    local query_json
+    if ! query_json=$(pinned_bq_json query \
         --quiet \
         --use_legacy_sql=false \
         --format=json \
         "${equiv_sql}" 2>&1); then
-        echo "[FAIL] Equivalence query failed on ${PROJECT_ID}: ${query_out}" >&2
+        echo "[FAIL] Equivalence query failed on ${PROJECT_ID}: ${query_json}" >&2
         return 1
     fi
 
@@ -123,19 +105,7 @@ run_equivalence_verification() {
     if ! check_msg=$(python3 -c '
 import json, sys
 
-raw = sys.argv[1]
-decoder = json.JSONDecoder()
-rows = None
-for idx, ch in enumerate(raw):
-    if ch == "[":
-        try:
-            candidate, _ = decoder.raw_decode(raw[idx:])
-            if isinstance(candidate, list):
-                rows = candidate
-                break
-        except Exception:
-            continue
-
+rows = json.loads(sys.argv[1])
 if not isinstance(rows, list) or len(rows) == 0 or not isinstance(rows[0], dict):
     print("[FAIL] Equivalence query returned no rows or invalid JSON.")
     sys.exit(1)
@@ -161,7 +131,7 @@ if dup_keys != 0:
     sys.exit(1)
 
 print(f"[PASS] Equivalence check passed: row_count={row_count_a}, diff_a_minus_b=0, diff_b_minus_a=0, duplicate_key_count=0.")
-' "${query_out}" 2>&1); then
+' "${query_json}" 2>&1); then
         echo "${check_msg}" >&2
         return 1
     fi
@@ -178,7 +148,7 @@ if [[ "${SQL_FALLBACK}" == "true" ]]; then
     fi
 
     echo "Materialising ${PROJECT_ID}:staging.hospital_flu_clean via BigQuery SQL fallback..."
-    if ! bq --project_id="${PROJECT_ID}" --location="${REGION}" query \
+    if ! pinned_bq query \
         --quiet \
         --use_legacy_sql=false \
         --destination_table="${PROJECT_ID}:staging.hospital_flu_clean" \
@@ -189,10 +159,7 @@ if [[ "${SQL_FALLBACK}" == "true" ]]; then
     fi
 
     echo "Applying label demo:true to ${PROJECT_ID}:staging.hospital_flu_clean..."
-    if ! bq --project_id="${PROJECT_ID}" --location="${REGION}" update \
-        --set_label demo:true \
-        "${PROJECT_ID}:staging.hospital_flu_clean"; then
-        echo "[FAIL] Failed to apply demo:true label to ${PROJECT_ID}:staging.hospital_flu_clean" >&2
+    if ! pinned_label "staging.hospital_flu_clean"; then
         exit 1
     fi
 
@@ -209,31 +176,18 @@ if [[ "${VERIFY_EQUIVALENCE}" == "true" ]]; then
     exit 0
 fi
 
-if ! command -v gcloud >/dev/null 2>&1; then
-    echo "[FAIL] gcloud CLI is not installed or not in PATH." >&2
-    exit 1
-fi
-
 PIPELINE_SCRIPT="${REPO_ROOT}/pipelines/pipeline_clean.py"
 if [[ ! -f "${PIPELINE_SCRIPT}" ]]; then
     echo "[FAIL] Clean pipeline script not found: ${PIPELINE_SCRIPT}" >&2
     exit 1
 fi
 
-SUBNET_TARGET="${SUBNET:-demo-dataproc-subnet}"
 BATCH_ID="${PIPELINE_CLEAN_BATCH_ID:-ws1-pipeline-clean-$(date +%s)-$$}"
 RUNTIMES_FILE="${RECORDED_RUNTIMES_FILE:-${REPO_ROOT}/docs/recorded_runtimes.json}"
 
 if [[ "${ASYNC_MODE}" == "true" ]]; then
     echo "Submitting Workstream 1 Clean Pipeline asynchronously to Dataproc Serverless (batch: ${BATCH_ID})..."
-    if ! gcloud dataproc batches submit pyspark "${PIPELINE_SCRIPT}" \
-        --async \
-        --project="${PROJECT_ID}" \
-        --region="${REGION}" \
-        --batch="${BATCH_ID}" \
-        --version="3.0" \
-        --deps-bucket="gs://${STAGING_BUCKET}" \
-        --subnet="${SUBNET_TARGET}" \
+    if ! pinned_dataproc_submit --async "${PIPELINE_SCRIPT}" "${BATCH_ID}" \
         -- \
         --project-id "${PROJECT_ID}" \
         --raw-dataset "raw" \
@@ -249,13 +203,7 @@ fi
 
 START_EPOCH=$(date +%s)
 echo "Submitting Workstream 1 Clean Pipeline to Dataproc Serverless (batch: ${BATCH_ID})..."
-if ! gcloud dataproc batches submit pyspark "${PIPELINE_SCRIPT}" \
-    --project="${PROJECT_ID}" \
-    --region="${REGION}" \
-    --batch="${BATCH_ID}" \
-    --version="3.0" \
-    --deps-bucket="gs://${STAGING_BUCKET}" \
-    --subnet="${SUBNET_TARGET}" \
+if ! pinned_dataproc_submit "${PIPELINE_SCRIPT}" "${BATCH_ID}" \
     -- \
     --project-id "${PROJECT_ID}" \
     --raw-dataset "raw" \
@@ -269,10 +217,7 @@ END_EPOCH=$(date +%s)
 ELAPSED_SECONDS=$((END_EPOCH - START_EPOCH))
 
 echo "Applying label demo:true to ${PROJECT_ID}:staging.hospital_flu_clean..."
-if ! bq --project_id="${PROJECT_ID}" --location="${REGION}" update \
-    --set_label demo:true \
-    "${PROJECT_ID}:staging.hospital_flu_clean"; then
-    echo "[FAIL] Failed to apply demo:true label to ${PROJECT_ID}:staging.hospital_flu_clean" >&2
+if ! pinned_label "staging.hospital_flu_clean"; then
     exit 1
 fi
 
