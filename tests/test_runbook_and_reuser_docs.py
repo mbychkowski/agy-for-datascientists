@@ -96,6 +96,53 @@ def _stage_clone_dir(doc: str) -> str:
     return match.group(1)
 
 
+def _segment(doc: str, title: str) -> str:
+    """Return the `###`/`####` section whose heading contains `title`.
+
+    The section runs until the next heading at the same or a higher level.
+    """
+    match = re.search(
+        rf"^(#{{3,4}}) [^\n]*{re.escape(title)}[^\n]*\n", doc, re.MULTILINE
+    )
+    if match is None:
+        raise AssertionError(f"No section heading containing {title!r}")
+    level = len(match.group(1))
+    rest = doc[match.end() :]
+    end = re.search(rf"^#{{1,{level}}} ", rest, re.MULTILINE)
+    return match.group(0) + (rest[: end.start()] if end else rest)
+
+
+def _labelled_blocks(section: str, lang: str) -> list[tuple[str, str]]:
+    """Return (label, body) for each fenced `lang` block in `section`.
+
+    The label is the nearest preceding bold bullet (`* **...**`), which names
+    the window and role of the block on stage.
+    """
+    blocks = []
+    for fence in re.finditer(rf"```{lang}\n(.*?)```", section, re.DOTALL):
+        labels = re.findall(
+            r"^\s*[*-] \*\*[^\n]*", section[: fence.start()], re.MULTILINE
+        )
+        blocks.append((labels[-1] if labels else "", fence.group(1)))
+    return blocks
+
+
+def _table_rows(section: str, first_cell: str) -> list[str]:
+    """Return the Markdown table rows whose first cell contains `first_cell`."""
+    return [
+        row
+        for row in section.splitlines()
+        if row.startswith("|") and first_cell in row.split("|")[1]
+    ]
+
+
+# Opening guardrail and Workstream 1 segment titles in DEMO.md and the runbook.
+WS1_SEGMENTS = {
+    "DEMO.md": ("Live Guardrail Moment", "Segment 1A", "Segment 1B", "Segment 1C"),
+    "runbook": ("The Guardrail Moment", "Segment 1A", "Segment 1B", "Segment 1C"),
+}
+
+
 class TestPresenterRunbookAndReuserDocs(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -218,8 +265,10 @@ class TestPresenterRunbookAndReuserDocs(unittest.TestCase):
                                 f"stage clone: {line.strip()}",
                             )
 
-                # A paragraph, bullet, or section labelled Window 1 must not
-                # tell the presenter to run a script that only Window 2 owns.
+                # Text labelled Window 1 must not tell the presenter to run a
+                # script that only Window 2 owns. A label covers the text after
+                # it up to the next Window 2 label, table cell, or line break
+                # in a cell, so a table row may name both windows.
                 for section in re.split(r"^(?=#{2,4} )", doc, flags=re.MULTILINE):
                     heading = section.splitlines()[0] if section else ""
                     chunks = (
@@ -228,11 +277,14 @@ class TestPresenterRunbookAndReuserDocs(unittest.TestCase):
                         else re.split(r"\n\s*\n|\n(?=\s*(?:[*-]|\d+\.) )", section)
                     )
                     for chunk in chunks:
-                        if "Window 1" in chunk:
+                        for label in re.finditer(r"Window 1", chunk):
+                            scope = re.split(
+                                r"Window 2|\||<br>", chunk[label.end() :], maxsplit=1
+                            )[0]
                             self.assertIsNone(
-                                main_only.search(chunk),
+                                main_only.search(scope),
                                 f"{name}: Window 1 text names a main-only "
-                                f"script: {chunk.strip()[:120]}",
+                                f"script: {scope.strip()[:120]}",
                             )
 
     def test_window_1_opens_on_the_stage_clone(self) -> None:
@@ -263,6 +315,139 @@ class TestPresenterRunbookAndReuserDocs(unittest.TestCase):
         self.assertIn("Window 2", guide)
         self.assertRegex(guide, r"(?i)worktree")
         self.assertIn("git show main:", guide)
+
+    def _docs(self) -> tuple[tuple[str, str], ...]:
+        return (("DEMO.md", self.demo), ("runbook", self.runbook))
+
+    def test_opening_and_ws1_prompts_are_typed_into_window_1(self) -> None:
+        for name, doc in self._docs():
+            for title in WS1_SEGMENTS[name]:
+                prompts = _labelled_blocks(_segment(doc, title), "text")
+                with self.subTest(doc=name, segment=title):
+                    self.assertTrue(prompts, "segment has no prompt to type")
+                    for label, _ in prompts:
+                        self.assertIn("Window 1", label)
+
+    def test_ws1_presenter_commands_run_from_window_2(self) -> None:
+        for name, doc in self._docs():
+            for title in WS1_SEGMENTS[name][1:]:
+                for label, body in _labelled_blocks(_segment(doc, title), "bash"):
+                    if "./" not in body:
+                        continue
+                    with self.subTest(doc=name, segment=title, block=body.strip()):
+                        self.assertIn("Window 2", label)
+
+    def test_1c_prompt_has_agent_write_pipeline_clean_and_wait(self) -> None:
+        for name, doc in self._docs():
+            with self.subTest(doc=name):
+                prompt = "\n".join(
+                    body
+                    for _, body in _labelled_blocks(_segment(doc, "Segment 1C"), "text")
+                )
+                self.assertRegex(
+                    prompt, r"(?i)\bwrite\b[^.]*pipelines/pipeline_clean\.py"
+                )
+                self.assertIn("(hospital_id, feed_date)", prompt)
+                self.assertRegex(prompt, r"(?i)null-safe Positivity")
+                self.assertRegex(prompt, r"(?i)\bdiff\b")
+                self.assertRegex(prompt, r"(?i)wait for my approval")
+                # pipeline_clean.py doesn't exist on workstream-1-start, so the
+                # agent cannot diff against it; it has to write it.
+                self.assertNotRegex(
+                    prompt, r"diff between \S*pipeline_v1\.py and \S*pipeline_clean\.py"
+                )
+
+    def test_1c_agent_submits_its_own_pinned_batch_as_presenter(self) -> None:
+        for name, doc in self._docs():
+            with self.subTest(doc=name):
+                section = _segment(doc, "Segment 1C")
+                prompt = "\n".join(
+                    body for _, body in _labelled_blocks(section, "text")
+                )
+                self.assertRegex(prompt, r"(?i)submit[^.]*Dataproc Serverless")
+                for pin in ("PROJECT_ID", "REGION", "demo.env"):
+                    self.assertIn(pin, prompt)
+                self.assertIn("staging.hospital_flu_clean", prompt)
+                # ADR 0002: the batch runs as the presenter identity.
+                self.assertNotIn("--service-account", section)
+                # The agent's batch replaces the presenter's early-start job.
+                self.assertNotIn("--async", section)
+                self.assertNotRegex(section, r"(?i)early-start")
+
+    def test_1c_verifies_agent_output_equivalence_from_window_2(self) -> None:
+        for name, doc in self._docs():
+            with self.subTest(doc=name):
+                section = _segment(doc, "Segment 1C")
+                verify = [
+                    label
+                    for label, body in _labelled_blocks(section, "bash")
+                    if "./run-pipeline-clean --verify-equivalence" in body
+                ]
+                self.assertEqual(len(verify), 1, "one Window 2 equivalence step")
+                self.assertIn("Window 2", verify[0])
+                self.assertNotRegex(verify[0], r"(?i)fallback")
+                self.assertIn("sql/verify_clean_equivalence.sql", section)
+
+    def test_1c_fallbacks_are_window_2_with_trigger_times(self) -> None:
+        clean_runtime = self.recorded_runtimes[
+            "ws1_pipeline_clean_dataproc_runtime_3_0"
+        ]["last_observed_seconds"]
+        for name, doc in self._docs():
+            section = _segment(doc, "Segment 1C")
+            blocks = _labelled_blocks(section, "bash")
+            for command in (
+                "./run-pipeline-clean --sql-fallback",
+                "./checkpoint ws1_staging_clean",
+            ):
+                with self.subTest(doc=name, command=command):
+                    labels = [label for label, body in blocks if command in body]
+                    self.assertEqual(len(labels), 1)
+                    self.assertIn("Window 2", labels[0])
+                    self.assertRegex(labels[0], r"(?i)fallback")
+                    self.assertRegex(labels[0], r"`\d{2}:\d{2}`", "trigger time")
+            with self.subTest(doc=name, rule="60-second rule"):
+                self.assertRegex(section, r"(?i)more than 60 seconds past")
+                self.assertIn(f"{clean_runtime}s", section)
+                self.assertRegex(
+                    section,
+                    r"(?i)--sql-fallback[^\n]*reference pipeline, not the agent",
+                )
+
+    def test_docs_cite_the_real_equivalence_sql_file(self) -> None:
+        self.assertTrue((REPO_ROOT / "sql" / "verify_clean_equivalence.sql").is_file())
+        for name, doc in (*self._docs(), ("README.md", self.readme)):
+            with self.subTest(doc=name):
+                self.assertNotIn("ws1_pipeline_clean_equiv", doc)
+        for name, doc in (("DEMO.md", self.demo), ("README.md", self.readme)):
+            with self.subTest(doc=name):
+                self.assertIn("verify_clean_equivalence.sql", doc)
+
+    def test_ws1_schedule_and_fallback_matrix_show_a_window_per_action(self) -> None:
+        schedule = _segment(self.demo, "3.1 Segment Schedule")
+        for first_cell in ("Opening", "Segment 1A", "Segment 1B", "Segment 1C"):
+            with self.subTest(doc="DEMO.md 3.1", row=first_cell):
+                (row,) = _table_rows(schedule, first_cell)
+                self.assertIn("Window 1", row)
+                if first_cell != "Opening":
+                    self.assertIn("Window 2", row)
+
+        runbook_table = _segment(self.runbook, "2.1 Segment Timing Summary")
+        (ws1_row,) = _table_rows(runbook_table, "Workstream 1")
+        with self.subTest(doc="runbook 2.1"):
+            for segment in ("1A", "1B", "1C"):
+                self.assertRegex(ws1_row, rf"Segment {segment}[^<|]*Window 1")
+            self.assertGreaterEqual(ws1_row.count("Window 2"), 3)
+
+        for name, matrix, first_cell in (
+            ("DEMO.md 3.2", _segment(self.demo, "3.2 "), "Workstream 1C"),
+            ("runbook 2.2", _segment(self.runbook, "2.2 "), "ws1_pipeline_clean"),
+        ):
+            with self.subTest(doc=name):
+                (row,) = _table_rows(matrix, first_cell)
+                self.assertIn("Window 1", row)
+                self.assertIn("Window 2", row)
+                self.assertNotIn("--async", row)
+                self.assertRegex(row, r"(?i)60 seconds")
 
     def test_runbook_covers_per_segment_timings_prompts_and_narration(self) -> None:
         content = self.runbook
@@ -308,7 +493,8 @@ class TestPresenterRunbookAndReuserDocs(unittest.TestCase):
         self.assertIn("recorded_runtimes.json", content)
         self.assertIn(f"{clean_entry['last_observed_seconds']}s", content)
         self.assertIn(f"{v1_entry['last_observed_seconds']}s", content)
-        self.assertIn("./run-pipeline-clean --async", content)
+        # The agent submits its own Workstream 1C batch, so `--async` is no
+        # longer a presenter step; the SQL fallback stays as a Window 2 swap.
         self.assertIn("./run-pipeline-clean --sql-fallback", content)
         self.assertRegex(
             content,
