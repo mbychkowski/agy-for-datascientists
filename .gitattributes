@@ -1,0 +1,2 @@
+# Normalize text to LF in the index and working tree. tests/test_line_endings.py enforces it.
+* text=auto eol=lf

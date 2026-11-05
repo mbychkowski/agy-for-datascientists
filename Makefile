@@ -34,11 +34,13 @@ check: check-glossary
 check-glossary:
 	@node bin/check-glossary.js
 
-# Fast loop for docs-only changes: glossary, ruff and the doc-focused test modules.
+# Fast loop for docs-only changes: glossary, ruff, the doc-focused test modules and
+# the LF line-ending check (docs edits are where CRLF slips in).
 # Doc assertions inside workstream tests still run only in the full guardrail.
 DOC_TESTS := tests/test_demo_and_reuser_docs.py tests/test_primer_and_outline.py \
     tests/test_fallback_trigger_timing.py tests/test_check_glossary.py \
-    tests/test_worktree_workflow.py tests/test_check_docs_target.py
+    tests/test_worktree_workflow.py tests/test_check_docs_target.py \
+    tests/test_line_endings.py
 
 check-docs: check-glossary
 	@$(RUFF_CHECK)
