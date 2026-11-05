@@ -20,7 +20,8 @@ while [[ -h "${SOURCE}" ]]; do
     [[ "${SOURCE}" != /* ]] && SOURCE="${DIR}/${SOURCE}"
 done
 SCRIPT_DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+# shellcheck source=lib/pinning.sh
+source "${SCRIPT_DIR}/lib/pinning.sh"
 
 ENV_FILE="${REPO_ROOT}/demo.env"
 
@@ -55,26 +56,7 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-if [[ ! -f "${ENV_FILE}" ]]; then
-    echo "[FAIL] Environment file not found: ${ENV_FILE}" >&2
-    exit 1
-fi
-
-# shellcheck disable=SC1090
-source "${ENV_FILE}"
-
-if [[ -z "${PROJECT_ID:-}" ]] || [[ "${PROJECT_ID}" == *"your-"* ]]; then
-    echo "[FAIL] PROJECT_ID is unset or contains a placeholder value in ${ENV_FILE}" >&2
-    exit 1
-fi
-
-if [[ -z "${REGION:-}" ]] || [[ "${REGION}" == *"your-"* ]]; then
-    echo "[FAIL] REGION is unset or contains a placeholder value in ${ENV_FILE}" >&2
-    exit 1
-fi
-
-if ! command -v bq >/dev/null 2>&1; then
-    echo "[FAIL] bq CLI is not installed or not in PATH." >&2
+if ! pinned_load_env "${ENV_FILE}"; then
     exit 1
 fi
 
@@ -91,7 +73,7 @@ done
 
 START_EPOCH=$(date +%s)
 echo "Running Workstream 2 backtest trials (ARIMA_PLUS vs TimesFM) into ${PROJECT_ID}:ml.experiment_trials..."
-if ! bq --project_id="${PROJECT_ID}" --location="${REGION}" query \
+if ! pinned_bq query \
     --quiet \
     --use_legacy_sql=false \
     --destination_table="${PROJECT_ID}:ml.experiment_trials" \
@@ -104,15 +86,12 @@ MID_EPOCH=$(date +%s)
 TRIALS_ELAPSED=$((MID_EPOCH - START_EPOCH))
 
 echo "Applying label demo:true to ${PROJECT_ID}:ml.experiment_trials..."
-if ! bq --project_id="${PROJECT_ID}" --location="${REGION}" update \
-    --set_label demo:true \
-    "${PROJECT_ID}:ml.experiment_trials"; then
-    echo "[FAIL] Failed to apply demo:true label to ${PROJECT_ID}:ml.experiment_trials" >&2
+if ! pinned_label "ml.experiment_trials"; then
     exit 1
 fi
 
 echo "Building Workstream 2 forecast leaderboard into ${PROJECT_ID}:ml.forecast_leaderboard..."
-if ! bq --project_id="${PROJECT_ID}" --location="${REGION}" query \
+if ! pinned_bq query \
     --quiet \
     --use_legacy_sql=false \
     --destination_table="${PROJECT_ID}:ml.forecast_leaderboard" \
@@ -125,10 +104,7 @@ END_EPOCH=$(date +%s)
 TOTAL_ELAPSED=$((END_EPOCH - START_EPOCH))
 
 echo "Applying label demo:true to ${PROJECT_ID}:ml.forecast_leaderboard..."
-if ! bq --project_id="${PROJECT_ID}" --location="${REGION}" update \
-    --set_label demo:true \
-    "${PROJECT_ID}:ml.forecast_leaderboard"; then
-    echo "[FAIL] Failed to apply demo:true label to ${PROJECT_ID}:ml.forecast_leaderboard" >&2
+if ! pinned_label "ml.forecast_leaderboard"; then
     exit 1
 fi
 

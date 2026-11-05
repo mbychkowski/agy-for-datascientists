@@ -313,6 +313,30 @@ class TestCohortForecastRefreshSkill(unittest.TestCase):
                 {"demo": "true"},
             )
 
+    def test_refresh_ignores_dataset_location_and_defaults_to_mock_dataset(
+        self,
+    ) -> None:
+        """A gs:// DATASET_LOCATION in demo.env must not replace the runner's local dataset default."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env_file, env, _ = setup_preflight_test_env(
+                Path(tmpdir),
+                dataset_location="gs://demo-bucket/dataset",
+            )
+            proc = subprocess.run(
+                [str(REFRESH_BIN), "--env", str(env_file)],
+                cwd=WORKTREE_ROOT,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(
+                proc.returncode,
+                0,
+                f"Output:\n{proc.stdout}\n{proc.stderr}",
+            )
+            self.assertNotIn("Dataset directory not found", proc.stderr)
+
     def test_skill_pins_project_and_region_and_passes_guardrail_hook(self) -> None:
         """Every CLI command and SQL statement executed by the skill must pin project/region and be allowed by guardrail-hook."""
         with tempfile.TemporaryDirectory() as tmpdir:

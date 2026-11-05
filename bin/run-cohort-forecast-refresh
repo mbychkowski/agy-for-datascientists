@@ -23,12 +23,17 @@ while [[ -h "${SOURCE}" ]]; do
     [[ "${SOURCE}" != /* ]] && SOURCE="${DIR}/${SOURCE}"
 done
 SCRIPT_DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+# shellcheck source=lib/pinning.sh
+source "${SCRIPT_DIR}/lib/pinning.sh"
 
 ENV_FILE="${REPO_ROOT}/demo.env"
 PERIOD_LABEL="2026-W44"
 CUTOFF_DATE="2026-11-07"
 DATASET_DIR="${REPO_ROOT}/fixtures/mock_dataset"
+# This runner reads a local dataset directory only, so opt out of the
+# Pinning module's DATASET_LOCATION override (which may be a gs:// URI).
+# shellcheck disable=SC2034  # read by pinned_load_env
+CLI_DATASET_SET=true
 OUTPUT_JSON=""
 
 usage() {
@@ -77,31 +82,12 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-if [[ ! -f "${ENV_FILE}" ]]; then
-    echo "[FAIL] Environment file not found: ${ENV_FILE}" >&2
-    exit 1
-fi
-
-# shellcheck disable=SC1090
-source "${ENV_FILE}"
-
-if [[ -z "${PROJECT_ID:-}" ]] || [[ "${PROJECT_ID}" == *"your-"* ]]; then
-    echo "[FAIL] PROJECT_ID is unset or contains a placeholder value in ${ENV_FILE}" >&2
-    exit 1
-fi
-
-if [[ -z "${REGION:-}" ]] || [[ "${REGION}" == *"your-"* ]]; then
-    echo "[FAIL] REGION is unset or contains a placeholder value in ${ENV_FILE}" >&2
+if ! pinned_load_env "${ENV_FILE}"; then
     exit 1
 fi
 
 if [[ ! -d "${DATASET_DIR}" ]]; then
     echo "[FAIL] Dataset directory not found: ${DATASET_DIR}" >&2
-    exit 1
-fi
-
-if ! command -v bq >/dev/null 2>&1; then
-    echo "[FAIL] bq CLI is not installed or not in PATH." >&2
     exit 1
 fi
 
@@ -166,7 +152,7 @@ STEP3_INSERT_SQL="$(extract_sql "step3_insert_experiment_trials")"
 STEP4_LEADERBOARD_SQL="$(extract_sql "step4_forecast_leaderboard")"
 
 echo "Step 1/4: Refreshing ${PROJECT_ID}:features.hospital_seasonal_features up to ${CUTOFF_DATE}..."
-if ! bq --project_id="${PROJECT_ID}" --location="${REGION}" query \
+if ! pinned_bq query \
     --quiet \
     --use_legacy_sql=false \
     --destination_table="${PROJECT_ID}:features.hospital_seasonal_features" \
@@ -176,15 +162,12 @@ if ! bq --project_id="${PROJECT_ID}" --location="${REGION}" query \
     exit 1
 fi
 
-if ! bq --project_id="${PROJECT_ID}" --location="${REGION}" update \
-    --set_label demo:true \
-    "${PROJECT_ID}:features.hospital_seasonal_features"; then
-    echo "[FAIL] Failed to apply demo:true label to ${PROJECT_ID}:features.hospital_seasonal_features" >&2
+if ! pinned_label "features.hospital_seasonal_features"; then
     exit 1
 fi
 
 echo "Step 2/4: Refreshing BQML K-means model and ${PROJECT_ID}:features.hospital_cohorts..."
-if ! bq --project_id="${PROJECT_ID}" --location="${REGION}" query \
+if ! pinned_bq query \
     --quiet \
     --use_legacy_sql=false \
     "${STEP2_MODEL_SQL}"; then
@@ -192,7 +175,7 @@ if ! bq --project_id="${PROJECT_ID}" --location="${REGION}" query \
     exit 1
 fi
 
-if ! bq --project_id="${PROJECT_ID}" --location="${REGION}" query \
+if ! pinned_bq query \
     --quiet \
     --use_legacy_sql=false \
     --destination_table="${PROJECT_ID}:features.hospital_cohorts" \
@@ -202,15 +185,12 @@ if ! bq --project_id="${PROJECT_ID}" --location="${REGION}" query \
     exit 1
 fi
 
-if ! bq --project_id="${PROJECT_ID}" --location="${REGION}" update \
-    --set_label demo:true \
-    "${PROJECT_ID}:features.hospital_cohorts"; then
-    echo "[FAIL] Failed to apply demo:true label to ${PROJECT_ID}:features.hospital_cohorts" >&2
+if ! pinned_label "features.hospital_cohorts"; then
     exit 1
 fi
 
 echo "Step 3/4: Evaluating ARIMA_PLUS and TimesFM (AI.FORECAST) for ${PERIOD_LABEL} and appending to ${PROJECT_ID}:ml.experiment_trials..."
-if ! bq --project_id="${PROJECT_ID}" --location="${REGION}" query \
+if ! pinned_bq query \
     --quiet \
     --use_legacy_sql=false \
     "${STEP3_INSERT_SQL}"; then
@@ -218,15 +198,12 @@ if ! bq --project_id="${PROJECT_ID}" --location="${REGION}" query \
     exit 1
 fi
 
-if ! bq --project_id="${PROJECT_ID}" --location="${REGION}" update \
-    --set_label demo:true \
-    "${PROJECT_ID}:ml.experiment_trials"; then
-    echo "[FAIL] Failed to apply demo:true label to ${PROJECT_ID}:ml.experiment_trials" >&2
+if ! pinned_label "ml.experiment_trials"; then
     exit 1
 fi
 
 echo "Step 4/4: Rebuilding ranked WAPE leaderboard ${PROJECT_ID}:ml.forecast_leaderboard..."
-if ! bq --project_id="${PROJECT_ID}" --location="${REGION}" query \
+if ! pinned_bq query \
     --quiet \
     --use_legacy_sql=false \
     --destination_table="${PROJECT_ID}:ml.forecast_leaderboard" \
@@ -236,10 +213,7 @@ if ! bq --project_id="${PROJECT_ID}" --location="${REGION}" query \
     exit 1
 fi
 
-if ! bq --project_id="${PROJECT_ID}" --location="${REGION}" update \
-    --set_label demo:true \
-    "${PROJECT_ID}:ml.forecast_leaderboard"; then
-    echo "[FAIL] Failed to apply demo:true label to ${PROJECT_ID}:ml.forecast_leaderboard" >&2
+if ! pinned_label "ml.forecast_leaderboard"; then
     exit 1
 fi
 
