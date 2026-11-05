@@ -6,6 +6,7 @@ import json
 import subprocess
 import tempfile
 import unittest
+from pathlib import Path
 from typing import Any
 
 from lib.ws1_triage import (
@@ -29,7 +30,9 @@ from tests.helpers import (
 PLUGIN_DIR = WORKTREE_ROOT / ".agents" / "plugins" / "ds-command-center"
 AGENTS_DIR = PLUGIN_DIR / "agents"
 MOCK_DATASET_DIR = WORKTREE_ROOT / "fixtures" / "mock_dataset"
-MOCK_ANSWER_KEY_PATH = WORKTREE_ROOT / "fixtures" / "mock_withheld" / "answer_key.json"
+MOCK_WITHHELD_DIR = WORKTREE_ROOT / "fixtures" / "mock_withheld"
+MOCK_ANSWER_KEY_PATH = MOCK_WITHHELD_DIR / "answer_key.json"
+WITHHELD_FILE_PATTERNS: tuple[str, ...] = ("*answer_key.json", "*reveal.csv")
 MAX_SUBAGENT_LINES = 60
 
 EXPECTED_SUBAGENTS: tuple[str, ...] = (
@@ -38,6 +41,30 @@ EXPECTED_SUBAGENTS: tuple[str, ...] = (
     "pipeline-triage",
     "stats-reviewer",
 )
+
+
+def _git_visible_files(*patterns: str) -> list[Path]:
+    """List tracked, staged, and untracked-but-not-ignored files matching `patterns`.
+
+    Asking git instead of walking the filesystem skips gitignored paths such as
+    nested `.worktree/` checkouts and `node_modules/`.
+    """
+    proc = subprocess.run(
+        [
+            "git",
+            "ls-files",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+            "--",
+            *patterns,
+        ],
+        cwd=WORKTREE_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return sorted({WORKTREE_ROOT / line for line in proc.stdout.splitlines()})
 
 
 def _parse_frontmatter(markdown_text: str) -> tuple[dict[str, str], str]:
@@ -316,9 +343,16 @@ class TestWorkstream1SubagentsAndTriage(unittest.TestCase):
             f"check-glossary.js failed:\n{glossary_proc.stdout}\n{glossary_proc.stderr}",
         )
 
-        # Ensure no answer_key.json exists outside fixtures/mock_withheld/
-        answer_keys = list(WORKTREE_ROOT.rglob("answer_key.json"))
-        self.assertEqual(answer_keys, [MOCK_ANSWER_KEY_PATH])
+        # ADR 0001: Answer Key and Reveal copies live only under fixtures/mock_withheld/
+        withheld_files = _git_visible_files(*WITHHELD_FILE_PATTERNS)
+        self.assertIn(MOCK_ANSWER_KEY_PATH, withheld_files)
+        leaked = [p for p in withheld_files if not p.is_relative_to(MOCK_WITHHELD_DIR)]
+        self.assertEqual(
+            leaked,
+            [],
+            "Answer Key or Reveal file outside fixtures/mock_withheld/ (ADR 0001):\n"
+            + "\n".join(str(p.relative_to(WORKTREE_ROOT)) for p in leaked),
+        )
 
         # Verify verify-start-point ws1 passes cleanly
         with tempfile.TemporaryDirectory() as tmpdir:
