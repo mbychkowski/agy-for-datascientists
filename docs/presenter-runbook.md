@@ -13,7 +13,7 @@ The demo runs from **two separate repositories**, one per stage window:
 * **Window 1 (agent)**: Antigravity opened on the **stage clone**, a fresh single-branch clone of `workstream-1-start` that lives outside the presenter repo, has its remote removed, and has `demo.env` copied in. Every prompt in this runbook is typed here.
 * **Window 2 (presenter terminal)**: your existing presenter repo on `main`, with `source demo.env` active. It owns every presenter script (`./stage-clean-env`, `./preflight`, `./reset`, `./verify-start-point`, `./checkpoint`, `./run-pipeline-clean`, `./run-ws2-cohorts`, `./run-ws2-forecasts`, `./load-reveal`, `./run-cohort-forecast-refresh`). Never run these from the stage clone: most of them don't exist on `workstream-1-start`, and the rest are stale there.
 
-> **Why a separate clone, not a worktree or an in-repo folder?** The presenter tooling reads the answer files, so `main` must stay out of the agent's reach to keep the "agents never saw the answers" guarantee ([ADR 0001](adr/0001-answer-key-outside-agent-reach.md)). Every worktree shares `.git` with the presenter repo, so an agent in a worktree could still run `git show main:…`. An in-repo folder sits inside the agent's workspace. Only a separate single-branch clone with no remote keeps `main` out of reach.
+> **Why a separate clone, not a worktree or an in-repo folder?** The presenter-only tooling on `main` reads the **Workstream** 2 SQL, the **Workstream** 2 **Checkpoint** manifests, and the **Reveal** comparison SQL, so `main` must stay out of the agent's reach to keep the "agents never saw the answers" guarantee ([ADR 0001](adr/0001-answer-key-outside-agent-reach.md)). Every worktree shares `.git` with the presenter repo, so an agent in a worktree could still run `git show main:…`. An in-repo folder sits inside the agent's workspace. Only a separate single-branch clone with no remote keeps `main` out of reach.
 
 ### Step 0: Create the Stage Clone (Window 2, Once per Machine)
 
@@ -23,7 +23,11 @@ From the presenter repo on `main`, clone the stage branch by its remote URL (a l
 git clone --single-branch --branch workstream-1-start "$(git remote get-url origin)" ~/demo-stage/agy-ws1
 git -C ~/demo-stage/agy-ws1 remote remove origin
 cp demo.env ~/demo-stage/agy-ws1/
+mkdir -p ~/demo-stage/agy-ws1/.gemini
+cp -R .gemini/skills ~/demo-stage/agy-ws1/.gemini/
 ```
+
+`.gemini/skills/` is git-ignored, so the clone starts without the licensed Data Agent Kit skills; the last two lines copy your workspace install across. `./preflight` checks the presenter repo, not the clone, so confirm the copy with `ls ~/demo-stage/agy-ws1/.gemini/skills/bigquery-ai-ml/SKILL.md`.
 
 Complete the steps below before connecting to the stage display so only the repository's **Command Center** configuration loads and every Google Cloud dependency is verified.
 
@@ -61,7 +65,7 @@ Do not go on stage if any required `[FAIL]` check is reported.
 
 ### Step 3: Reset the Stage Clone's Code and the Workstream 1 Start Point (Window 2)
 
-Run this before every rehearsal and on Demo Day. First throw away anything the agent wrote in the stage clone during the last run (`git clean -fd` keeps the git-ignored `demo.env`). Then, from the presenter repo on `main`, reset the working BigQuery datasets (`staging`, `features`, `ml`) to the **Workstream** 1 **Start Point** (which loads `raw` and `ops` from `DATASET_LOCATION` in `demo.env`), and verify table schemas, row counts, and `checkpoint` parity:
+Run this before every rehearsal and on Demo Day. First discard the agent's tracked edits and untracked files from the last run in the stage clone. `git clean -fd` leaves git-ignored files alone, so `demo.env` and `.gemini/skills/` survive. Then, from the presenter repo on `main`, reset the working BigQuery datasets (`staging`, `features`, `ml`) to the **Workstream** 1 **Start Point** (which loads `raw` and `ops` from `DATASET_LOCATION` in `demo.env`), and verify table schemas, row counts, and `checkpoint` parity:
 
 ```bash
 git -C ~/demo-stage/agy-ws1 reset --hard
@@ -74,7 +78,7 @@ If a rehearsal left a commit in the stage clone, delete the clone and repeat Ste
 
 ### Step 4: Stage Window Layout
 
-1. **Window 1 — Command Center (Antigravity, agent)**: Launch Antigravity on the stage clone at `~/demo-stage/agy-ws1` after `./stage-clean-env --stash` has completed so the fresh session loads only `.agents/plugins/ds-command-center`, `.agents/plugins/dak-bigquery`, and `.gemini/skills/` from the clone.
+1. **Window 1 — Command Center (Antigravity, agent)**: Launch Antigravity on the stage clone at `~/demo-stage/agy-ws1` once Steps 1–3 have completed so the fresh session loads only `.agents/plugins/ds-command-center`, `.agents/plugins/dak-bigquery`, and `.gemini/skills/` from the clone.
 2. **Window 2 — Presenter Terminal (`main` repo, Fallback Runner)**: Keep a terminal tab open at the presenter repo root on `main` with `source demo.env` active. Verify available **Checkpoints** with `./checkpoint --list`.
 
 ---

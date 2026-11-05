@@ -139,6 +139,9 @@ class TestPresenterRunbookAndReuserDocs(unittest.TestCase):
                 )
                 self.assertIn(f"git -C {clone_dir} remote remove origin", checklist)
                 self.assertIn(f"cp demo.env {clone_dir}/", checklist)
+                # .gemini/skills/ is git-ignored, so the clone starts without
+                # the licensed DAK skills the agent and subagents need.
+                self.assertIn(f"cp -R .gemini/skills {clone_dir}/.gemini/", checklist)
 
     def test_docs_explain_why_worktree_or_in_repo_folder_breaks_guarantee(
         self,
@@ -189,27 +192,47 @@ class TestPresenterRunbookAndReuserDocs(unittest.TestCase):
             self.assertGreaterEqual(labelled, 3, f"{name}: stash, preflight, restore")
 
     def test_no_main_only_script_runs_from_the_stage_clone(self) -> None:
-        main_only = re.compile(
-            r"(?:^|[;&|]\s*)\./(" + "|".join(MAIN_ONLY_SCRIPTS) + r")\b"
-        )
+        main_only = re.compile(r"\./(" + "|".join(MAIN_ONLY_SCRIPTS) + r")\b")
         for name, doc in (("DEMO.md", self.demo), ("runbook", self.runbook)):
             with self.subTest(doc=name):
                 # Checking out the stage branch in the presenter repo is the
                 # one-checkout model this setup replaces.
                 self.assertNotIn("git checkout workstream-1-start", doc)
                 clone_dir = _stage_clone_dir(doc)
+
+                # A shell step that changes into the stage clone, in any form
+                # (`cd`, `(cd ... && ...)`, `pushd`), must not run a script
+                # that only Window 2 owns.
                 for block in _bash_blocks(doc):
                     in_clone = False
                     for line in block.splitlines():
-                        line = line.strip()
-                        cd = re.match(r"cd\s+(\S+)", line)
+                        cd = re.search(
+                            r"\b(?:cd|pushd)\s+[\"']?(\S+?)[\"']?(?:\s|$)", line
+                        )
                         if cd:
                             in_clone = cd.group(1).startswith(clone_dir)
                         if in_clone:
                             self.assertIsNone(
                                 main_only.search(line),
                                 f"{name} runs a main-only script from the "
-                                f"stage clone: {line}",
+                                f"stage clone: {line.strip()}",
+                            )
+
+                # A paragraph, bullet, or section labelled Window 1 must not
+                # tell the presenter to run a script that only Window 2 owns.
+                for section in re.split(r"^(?=#{2,4} )", doc, flags=re.MULTILINE):
+                    heading = section.splitlines()[0] if section else ""
+                    chunks = (
+                        [section]
+                        if "Window 1" in heading
+                        else re.split(r"\n\s*\n|\n(?=\s*(?:[*-]|\d+\.) )", section)
+                    )
+                    for chunk in chunks:
+                        if "Window 1" in chunk:
+                            self.assertIsNone(
+                                main_only.search(chunk),
+                                f"{name}: Window 1 text names a main-only "
+                                f"script: {chunk.strip()[:120]}",
                             )
 
     def test_window_1_opens_on_the_stage_clone(self) -> None:
