@@ -18,36 +18,31 @@ _pinning_resolve_repo_root() {
 
 REPO_ROOT="${REPO_ROOT:-$(_pinning_resolve_repo_root)}"
 
-pinned_require_project_region() {
-  if [[ -z "${PROJECT_ID:-}" || "${PROJECT_ID}" == *your-* ]]; then
-    echo "[FAIL] PROJECT_ID is missing or contains a 'your-' placeholder ('${PROJECT_ID:-}'). Edit demo.env with your real project ID." >&2
-    return 1
-  fi
-
-  if [[ -z "${REGION:-}" || "${REGION}" == *your-* ]]; then
-    echo "[FAIL] REGION is missing or contains a 'your-' placeholder ('${REGION:-}'). Edit demo.env with your real GCP region." >&2
+# Usage: _pinning_require_value <VAR_NAME> <description>
+# Returns 1 with a [FAIL] message when VAR_NAME is unset, empty, or a 'your-' placeholder.
+_pinning_require_value() {
+  local name="$1"
+  local description="$2"
+  local value="${!name:-}"
+  if [[ -z "${value}" || "${value}" == *your-* ]]; then
+    echo "[FAIL] ${name} is missing or contains a 'your-' placeholder ('${value}'). Edit demo.env with your real ${description}." >&2
     return 1
   fi
 
   return 0
+}
+
+pinned_require_project_region() {
+  _pinning_require_value PROJECT_ID "project ID" &&
+    _pinning_require_value REGION "GCP region"
 }
 
 pinned_require_staging_bucket() {
-  if [[ -z "${STAGING_BUCKET:-}" || "${STAGING_BUCKET}" == *your-* ]]; then
-    echo "[FAIL] STAGING_BUCKET is missing or contains a 'your-' placeholder ('${STAGING_BUCKET:-}'). Edit demo.env with your real staging bucket." >&2
-    return 1
-  fi
-
-  return 0
+  _pinning_require_value STAGING_BUCKET "staging bucket"
 }
 
 pinned_require_state_bucket() {
-  if [[ -z "${STATE_BUCKET:-}" || "${STATE_BUCKET}" == *your-* ]]; then
-    echo "[FAIL] STATE_BUCKET is missing or contains a 'your-' placeholder ('${STATE_BUCKET:-}'). Edit demo.env with your real Terraform state bucket." >&2
-    return 1
-  fi
-
-  return 0
+  _pinning_require_value STATE_BUCKET "Terraform state bucket"
 }
 
 pinned_load_env() {

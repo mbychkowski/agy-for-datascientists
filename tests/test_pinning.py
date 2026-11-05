@@ -602,6 +602,28 @@ def _read_calls(log_file: Path) -> str:
     return log_file.read_text(encoding="utf-8") if log_file.exists() else ""
 
 
+def _run_bootstrap(
+    tmpdir: str,
+    *,
+    gcloud_body: str | None = "",
+    state_bucket: str = "demo-state-bucket",
+) -> tuple[subprocess.CompletedProcess[str], Path]:
+    """Run bin/bootstrap-tf-state with logging gcloud/terraform stubs; gcloud_body=None removes gcloud from PATH."""
+    bin_dir = Path(tmpdir) / "bin"
+    bin_dir.mkdir()
+    log_file = Path(tmpdir) / "calls.log"
+    _write_logging_stub(bin_dir, "terraform", log_file)
+    env = os.environ.copy()
+    if gcloud_body is None:
+        env["PATH"] = _path_without({"gcloud"}, bin_dir)
+    else:
+        _write_logging_stub(bin_dir, "gcloud", log_file, gcloud_body)
+        env["PATH"] = f"{bin_dir}:{env['PATH']}"
+    env_file = create_demo_env_file(tmpdir, state_bucket=state_bucket)
+    proc = _run_start_point_script(["bootstrap-tf-state", "--env", str(env_file)], env)
+    return proc, log_file
+
+
 class TestLoadersSetupAndBootstrapFailFast(unittest.TestCase):
     def test_loaders_fail_before_any_bq_call_when_bq_missing(self) -> None:
         """bin/load-raw-ops and bin/load-reveal must reject a missing bq CLI before issuing any bq call."""
@@ -640,17 +662,7 @@ class TestLoadersSetupAndBootstrapFailFast(unittest.TestCase):
     ) -> None:
         """bin/bootstrap-tf-state must reject a placeholder STATE_BUCKET before touching any bucket."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            bin_dir = Path(tmpdir) / "bin"
-            bin_dir.mkdir()
-            log_file = Path(tmpdir) / "calls.log"
-            _write_logging_stub(bin_dir, "gcloud", log_file)
-            _write_logging_stub(bin_dir, "terraform", log_file)
-            env_file = create_demo_env_file(tmpdir, state_bucket="your-state-bucket")
-            env = os.environ.copy()
-            env["PATH"] = f"{bin_dir}:{env['PATH']}"
-            proc = _run_start_point_script(
-                ["bootstrap-tf-state", "--env", str(env_file)], env
-            )
+            proc, log_file = _run_bootstrap(tmpdir, state_bucket="your-state-bucket")
             self.assertNotEqual(proc.returncode, 0)
             self.assertIn("[FAIL] STATE_BUCKET", proc.stderr)
             self.assertEqual(_read_calls(log_file), "")
@@ -658,16 +670,7 @@ class TestLoadersSetupAndBootstrapFailFast(unittest.TestCase):
     def test_bootstrap_fails_fast_when_gcloud_missing(self) -> None:
         """bin/bootstrap-tf-state must report a missing gcloud CLI instead of treating it as a missing bucket."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            bin_dir = Path(tmpdir) / "bin"
-            bin_dir.mkdir()
-            log_file = Path(tmpdir) / "calls.log"
-            _write_logging_stub(bin_dir, "terraform", log_file)
-            env_file = create_demo_env_file(tmpdir)
-            env = os.environ.copy()
-            env["PATH"] = _path_without({"gcloud"}, bin_dir)
-            proc = _run_start_point_script(
-                ["bootstrap-tf-state", "--env", str(env_file)], env
-            )
+            proc, log_file = _run_bootstrap(tmpdir, gcloud_body=None)
             self.assertNotEqual(proc.returncode, 0)
             self.assertIn("[FAIL] gcloud CLI is not installed", proc.stderr)
             self.assertEqual(_read_calls(log_file), "")
@@ -675,21 +678,9 @@ class TestLoadersSetupAndBootstrapFailFast(unittest.TestCase):
     def test_bootstrap_reports_failed_bucket_update_under_strict_mode(self) -> None:
         """Under set -euo pipefail, a failed state-bucket update must print [FAIL] and stop before terraform init."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            bin_dir = Path(tmpdir) / "bin"
-            bin_dir.mkdir()
-            log_file = Path(tmpdir) / "calls.log"
-            _write_logging_stub(
-                bin_dir,
-                "gcloud",
-                log_file,
-                'if [[ "$*" == *"buckets update"* ]]; then exit 1; fi',
-            )
-            _write_logging_stub(bin_dir, "terraform", log_file)
-            env_file = create_demo_env_file(tmpdir)
-            env = os.environ.copy()
-            env["PATH"] = f"{bin_dir}:{env['PATH']}"
-            proc = _run_start_point_script(
-                ["bootstrap-tf-state", "--env", str(env_file)], env
+            proc, log_file = _run_bootstrap(
+                tmpdir,
+                gcloud_body='if [[ "$*" == *"buckets update"* ]]; then exit 1; fi',
             )
             self.assertNotEqual(proc.returncode, 0)
             self.assertIn("[FAIL]", proc.stderr)

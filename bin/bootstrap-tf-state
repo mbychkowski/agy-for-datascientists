@@ -45,7 +45,7 @@ if ! pinned_load_env "${ENV_FILE}" || ! pinned_require_state_bucket; then
     exit 1
 fi
 
-if ! pinned_require_cli gcloud terraform; then
+if ! pinned_require_cli gcloud; then
     exit 1
 fi
 
