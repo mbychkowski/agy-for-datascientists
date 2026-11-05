@@ -100,12 +100,12 @@ def _stage_clone_dir(doc: str) -> str:
 
 
 def _segment(doc: str, title: str) -> str:
-    """Return the `###`/`####` section whose heading contains `title`.
+    """Return the `##`/`###`/`####` section whose heading contains `title`.
 
     The section runs until the next heading at the same or a higher level.
     """
     match = re.search(
-        rf"^(#{{3,4}}) [^\n]*{re.escape(title)}[^\n]*\n", doc, re.MULTILINE
+        rf"^(#{{2,4}}) [^\n]*{re.escape(title)}[^\n]*\n", doc, re.MULTILINE
     )
     if match is None:
         raise AssertionError(f"No section heading containing {title!r}")
@@ -144,6 +144,31 @@ WS1_SEGMENTS = {
     "DEMO.md": ("Live Guardrail Moment", "Segment 1A", "Segment 1B", "Segment 1C"),
     "runbook": ("The Guardrail Moment", "Segment 1A", "Segment 1B", "Segment 1C"),
 }
+
+# Workstream 2 section and segment titles, shared by DEMO.md and the runbook.
+WS2_SECTION = 'Workstream 2: "Forecast at Scale"'
+WS2_SEGMENTS = ("Segment 2A", "Segment 2B", "Segment 2C", "Segment 2D")
+
+# Presenter scripts that once started Workstream 2 jobs early. Each is now a
+# Window 2 fallback for the agent's own run, swapped in by the 60-second rule,
+# backed by its Checkpoints and timed from these recorded runtimes.
+WS2_FALLBACKS = {
+    "Segment 2A": (
+        "./run-ws2-cohorts",
+        ("./checkpoint ws2_seasonal_features", "./checkpoint ws2_hospital_cohorts"),
+        ("ws2_seasonal_features_and_kmeans",),
+    ),
+    "Segment 2B": (
+        "./run-ws2-forecasts",
+        ("./checkpoint ws2_experiment_trials", "./checkpoint ws2_forecast_leaderboard"),
+        ("ws2_arima_plus_cohort_training", "ws2_timesfm_ai_forecast"),
+    ),
+    "Segment 2D": ("./run-cohort-forecast-refresh --period 2026-W44", (), ()),
+}
+
+# Rule 2: live-captured skills belong in the Command Center plugin.
+SKILL_PATH = ".agents/plugins/ds-command-center/skills/cohort-forecast-refresh/SKILL.md"
+EARLY_START = r"(?i)early[- ]start|start(?:ed)? early|trigger(?:ed)? early"
 
 
 class TestPresenterRunbookAndReuserDocs(unittest.TestCase):
@@ -322,18 +347,18 @@ class TestPresenterRunbookAndReuserDocs(unittest.TestCase):
     def _docs(self) -> tuple[tuple[str, str], ...]:
         return (("DEMO.md", self.demo), ("runbook", self.runbook))
 
-    def test_opening_and_ws1_prompts_are_typed_into_window_1(self) -> None:
+    def test_stage_prompts_are_typed_into_window_1(self) -> None:
         for name, doc in self._docs():
-            for title in WS1_SEGMENTS[name]:
+            for title in (*WS1_SEGMENTS[name], *WS2_SEGMENTS):
                 prompts = _labelled_blocks(_segment(doc, title), "text")
                 with self.subTest(doc=name, segment=title):
                     self.assertTrue(prompts, "segment has no prompt to type")
                     for label, _ in prompts:
                         self.assertIn("Window 1", label)
 
-    def test_ws1_presenter_commands_run_from_window_2(self) -> None:
+    def test_stage_presenter_commands_run_from_window_2(self) -> None:
         for name, doc in self._docs():
-            for title in WS1_SEGMENTS[name][1:]:
+            for title in (*WS1_SEGMENTS[name][1:], *WS2_SEGMENTS):
                 for label, body in _labelled_blocks(_segment(doc, title), "bash"):
                     if "./" not in body:
                         continue
@@ -440,9 +465,15 @@ class TestPresenterRunbookAndReuserDocs(unittest.TestCase):
             with self.subTest(doc=name):
                 self.assertIn("verify_clean_equivalence.sql", doc)
 
-    def test_ws1_schedule_and_fallback_matrix_show_a_window_per_action(self) -> None:
+    def test_schedule_and_fallback_matrix_show_a_window_per_action(self) -> None:
         schedule = _segment(self.demo, "3.1 Segment Schedule")
-        for first_cell in ("Opening", "Segment 1A", "Segment 1B", "Segment 1C"):
+        for first_cell in (
+            "Opening",
+            "Segment 1A",
+            "Segment 1B",
+            "Segment 1C",
+            *WS2_SEGMENTS,
+        ):
             with self.subTest(doc="DEMO.md 3.1", row=first_cell):
                 (row,) = _table_rows(schedule, first_cell)
                 self.assertIn("Window 1", row)
@@ -456,16 +487,163 @@ class TestPresenterRunbookAndReuserDocs(unittest.TestCase):
                 self.assertRegex(ws1_row, rf"Segment {segment}[^<|]*Window 1")
             self.assertGreaterEqual(ws1_row.count("Window 2"), 3)
 
+        (ws2_row,) = _table_rows(runbook_table, "Workstream 2")
+        with self.subTest(doc="runbook 2.1 Workstream 2"):
+            for segment in ("2A", "2B", "2C", "2D"):
+                self.assertRegex(ws2_row, rf"Segment {segment}[^<|]*Window 1")
+            self.assertGreaterEqual(ws2_row.count("Window 2"), 4)
+
+        demo_matrix = _segment(self.demo, "3.2 ")
+        runbook_matrix = _segment(self.runbook, "2.2 ")
         for name, matrix, first_cell in (
-            ("DEMO.md 3.2", _segment(self.demo, "3.2 "), "Workstream 1C"),
-            ("runbook 2.2", _segment(self.runbook, "2.2 "), "ws1_pipeline_clean"),
+            ("DEMO.md 3.2", demo_matrix, "Workstream 1C"),
+            ("DEMO.md 3.2", demo_matrix, "Workstream 2A"),
+            ("DEMO.md 3.2", demo_matrix, "Workstream 2B"),
+            ("DEMO.md 3.2", demo_matrix, "Workstream 2D"),
+            ("runbook 2.2", runbook_matrix, "ws1_pipeline_clean"),
+            ("runbook 2.2", runbook_matrix, "ws2_seasonal_features_and_kmeans"),
+            ("runbook 2.2", runbook_matrix, "ws2_arima_plus_cohort_training"),
+            ("runbook 2.2", runbook_matrix, "cohort-forecast-refresh"),
         ):
-            with self.subTest(doc=name):
+            with self.subTest(doc=name, row=first_cell):
                 (row,) = _table_rows(matrix, first_cell)
                 self.assertIn("Window 1", row)
                 self.assertIn("Window 2", row)
+                self.assertRegex(row, r"(?i)fallback")
                 self.assertNotIn("--async", row)
                 self.assertRegex(row, r"(?i)60 seconds")
+
+    def test_ws2_stays_in_the_ws1_clone(self) -> None:
+        for name, doc in self._docs():
+            with self.subTest(doc=name):
+                ws2 = _segment(doc, WS2_SECTION)
+                self.assertNotIn("git checkout workstream-2-start", doc)
+                # The agent carries its own Workstream 1 outputs forward.
+                self.assertRegex(ws2, r"(?i)\bstay\b[^.]*clone")
+                self.assertIn(_stage_clone_dir(doc), ws2)
+
+    def test_ws2_start_is_recovery_only_and_cloned_in_isolation(self) -> None:
+        for name, doc in self._docs():
+            with self.subTest(doc=name):
+                ws2 = _segment(doc, WS2_SECTION)
+                self.assertRegex(ws2, r"(?i)recovery")
+                match = re.search(
+                    r"git clone --single-branch --branch workstream-2-start "
+                    r'"\$\(git remote get-url origin\)" (\S+)',
+                    ws2,
+                )
+                self.assertIsNotNone(match, "isolated workstream-2-start clone")
+                clone_dir = match.group(1)
+                self.assertRegex(clone_dir, r"^(~/|\$HOME/|\.\./)")
+                self.assertNotEqual(clone_dir, _stage_clone_dir(doc))
+                for step in (
+                    f"git -C {clone_dir} remote remove origin",
+                    f"cp demo.env {clone_dir}/",
+                    f"cp -R .gemini/skills {clone_dir}/.gemini/",
+                    "./reset ws2 --yes",
+                    "./verify-start-point ws2",
+                ):
+                    self.assertIn(step, ws2)
+
+    def test_ws2_prompts_have_the_agent_write_the_sql_and_the_skill(self) -> None:
+        for name, doc in self._docs():
+            prompts = {
+                title: "\n".join(
+                    body for _, body in _labelled_blocks(_segment(doc, title), "text")
+                )
+                for title in WS2_SEGMENTS
+            }
+            with self.subTest(doc=name, segment="2A"):
+                prompt = prompts["Segment 2A"]
+                self.assertRegex(prompt, r"(?i)\bwrite\b[^.]*\bSQL\b")
+                self.assertRegex(prompt, r"(?i)K-means")
+                self.assertIn("features.hospital_seasonal_features", prompt)
+                self.assertIn("features.hospital_cohorts", prompt)
+            with self.subTest(doc=name, segment="2B"):
+                prompt = prompts["Segment 2B"]
+                self.assertRegex(prompt, r"(?i)\bwrite\b[^.]*\bSQL\b")
+                self.assertLess(prompt.index("ARIMA_PLUS"), prompt.index("TimesFM"))
+                self.assertRegex(prompt, r"(?i)ARIMA_PLUS[^.]*\bfirst\b")
+            with self.subTest(doc=name, segment="2D"):
+                self.assertRegex(
+                    prompts["Segment 2D"],
+                    rf"(?i)\b(?:create|write)\b[^\n]*{re.escape(SKILL_PATH)}",
+                )
+                self.assertNotIn(".gemini/skills/cohort-forecast-refresh", doc)
+
+    def test_reveal_loads_from_window_2(self) -> None:
+        for name, doc in self._docs():
+            with self.subTest(doc=name):
+                blocks = _labelled_blocks(_segment(doc, "Segment 2C"), "bash")
+                labels = [label for label, body in blocks if "./load-reveal" in body]
+                self.assertEqual(len(labels), 1)
+                self.assertIn("Window 2", labels[0])
+
+    def test_ws2_fallbacks_are_window_2_with_trigger_times(self) -> None:
+        for name, doc in self._docs():
+            for title, (script, checkpoints, runtimes) in WS2_FALLBACKS.items():
+                section = _segment(doc, title)
+                start, end = re.search(
+                    r"`(\d{2}:\d{2})–(\d{2}:\d{2})`", section.splitlines()[0]
+                ).groups()
+                blocks = _labelled_blocks(section, "bash")
+                triggers = []
+                for command in (script, *checkpoints):
+                    with self.subTest(doc=name, command=command):
+                        labels = [label for label, body in blocks if command in body]
+                        self.assertEqual(len(labels), 1)
+                        self.assertIn("Window 2", labels[0])
+                        self.assertRegex(labels[0], r"(?i)fallback")
+                        trigger = re.search(r"`(\d{2}:\d{2})`", labels[0])
+                        self.assertIsNotNone(trigger, "trigger time")
+                        self.assertTrue(
+                            start < trigger.group(1) < end,
+                            f"trigger {trigger.group(1)} outside {start}–{end}",
+                        )
+                        triggers.append(trigger.group(1))
+                with self.subTest(doc=name, segment=title, rule="60-second rule"):
+                    self.assertRegex(section, r"(?i)60 seconds")
+                    for key in runtimes:
+                        seconds = self.recorded_runtimes[key]["last_observed_seconds"]
+                        self.assertIn(f"{seconds}s", section)
+                    # The script swaps in before its Checkpoints do.
+                    self.assertEqual(triggers, sorted(triggers))
+
+    def test_no_early_start_wording_remains(self) -> None:
+        for name, doc in (*self._docs(), ("README.md", self.readme)):
+            with self.subTest(doc=name):
+                self.assertNotRegex(doc, EARLY_START)
+
+    def test_rehearsal_repeats_the_live_written_prompts(self) -> None:
+        for name, doc in self._docs():
+            with self.subTest(doc=name):
+                section = _segment(doc, "Rehears")
+                for segment in ("1C", "2A", "2B", "2D"):
+                    self.assertRegex(section, rf"\b{segment}\b")
+                self.assertRegex(section, r"(?i)several times")
+                self.assertRegex(section, r"(?i)consistent")
+
+    def test_shortened_cuts_use_the_two_window_model(self) -> None:
+        cuts = _segment(self.demo, "Shortened Demo Cuts")
+        for first_cell in ("45-Minute", "60-Minute"):
+            with self.subTest(row=first_cell):
+                (row,) = _table_rows(cuts, first_cell)
+                self.assertIn("Window 1", row)
+                self.assertIn("Window 2", row)
+                self.assertRegex(row, r"(?i)fallback")
+                self.assertIn("T-15", row)
+
+    def test_team_of_specialized_agents_is_used_consistently(self) -> None:
+        for name, doc in (
+            *self._docs(),
+            ("README.md", self.readme),
+            ("reuser guide", self.reuser_guide),
+        ):
+            with self.subTest(doc=name):
+                self.assertNotRegex(doc, r"(?i)\barmy\b")
+        for name, doc in (*self._docs(), ("README.md", self.readme)):
+            with self.subTest(doc=name):
+                self.assertIn("team of specialized agents", doc)
 
     def test_runbook_covers_per_segment_timings_prompts_and_narration(self) -> None:
         content = self.runbook
@@ -503,7 +681,7 @@ class TestPresenterRunbookAndReuserDocs(unittest.TestCase):
             "Runbook must include speaker narration cues for every segment",
         )
 
-    def test_runbook_covers_early_start_jobs_and_recorded_runtimes(self) -> None:
+    def test_runbook_covers_fallback_jobs_and_recorded_runtimes(self) -> None:
         content = self.runbook
         clean_entry = self.recorded_runtimes["ws1_pipeline_clean_dataproc_runtime_3_0"]
         v1_entry = self.recorded_runtimes["ws1_pipeline_v1_dataproc_runtime_3_0"]

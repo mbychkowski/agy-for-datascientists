@@ -1,6 +1,6 @@
 # How to Demo: Antigravity for Data Scientists (`DEMO.md`)
 
-Complete live demonstration guide for presenting **Antigravity for Data Scientists** in the **Command Center**. This guide gives you the scenario setup, the 15-minute pre-stage checklist, the master schedule with early-start triggers, exact copy-paste prompts to type on stage, speaker narration points, instant **Checkpoint** fallback commands, and shortened 45/60-minute cuts.
+Complete live demonstration guide for presenting **Antigravity for Data Scientists** in the **Command Center**. This guide gives you the scenario setup, the 15-minute pre-stage checklist, the master schedule with Window 2 fallback triggers, exact copy-paste prompts to type on stage, speaker narration points, instant **Checkpoint** fallback commands, and shortened 45/60-minute cuts.
 
 For initial Google Cloud project provisioning, see [README.md](README.md) and the [Reuser Setup & Operations Guide](docs/reuser-guide.md). For deep statistical Q&A preparation, see the [Data Science Primer](docs/data-science-primer.md). All terminology follows [GLOSSARY.md](GLOSSARY.md).
 
@@ -10,7 +10,7 @@ For initial Google Cloud project provisioning, see [README.md](README.md) and th
 
 1. [The Story & What the Audience Sees](#1-the-story--what-the-audience-sees)
 2. [Pre-Stage Checklist (T-15 Minutes)](#2-pre-stage-checklist-t-15-minutes)
-3. [Master 90-Minute Timeline & Early-Start Matrix](#3-master-90-minute-timeline--early-start-matrix)
+3. [Master 90-Minute Timeline & Fallback Triggers](#3-master-90-minute-timeline--fallback-triggers)
 4. [Act-by-Act Live Demo Script](#4-act-by-act-live-demo-script)
    - [Opening: Antigravity 101 & The Guardrail Moment (00:00–00:12)](#41-opening-antigravity-101--the-guardrail-moment-12-min-00000012)
    - [Workstream 1: "Is the Data Good to Use?" (00:12–00:47)](#42-workstream-1-is-the-data-good-to-use-35-min-00120047)
@@ -111,9 +111,20 @@ If a rehearsal left a commit in the stage clone, delete the clone and repeat Ste
 1. **Window 1 — Command Center (Antigravity, agent)**: Open Antigravity on the stage clone at `~/demo-stage/agy-ws1` once Steps 1–3 have completed. Every prompt in this guide is typed here.
 2. **Window 2 — Presenter Terminal (`main` repo)**: Open at the presenter repo root on `main` with `source demo.env` active. Run `./checkpoint --list` so you can run a fallback or swap a **Checkpoint** in ~6 seconds if needed.
 
+### Before Demo Day: Rehearse the Live-Written Prompts
+
+The agent writes `pipeline_clean.py` (Segment 1C), the seasonal-features and K-means SQL (Segment 2A), the `ARIMA_PLUS` and `TimesFM` SQL (Segment 2B), and the `cohort-forecast-refresh` `SKILL.md` (Segment 2D) live, so its output can vary between runs. Rehearse the full sequence several times, starting each run from the Step 3 reset, and type the 1C, 2A, 2B and 2D prompts exactly as written. Check that the output is consistent across runs:
+
+* **1C**: `./run-pipeline-clean --verify-equivalence` passes from Window 2.
+* **2A**: the 3 **Outbreak** hospitals land in their own **Cohort**.
+* **2B**: `ARIMA_PLUS` starts before `TimesFM`, and clean models beat uncleaned ones in `ml.forecast_leaderboard`.
+* **2D**: `SKILL.md` lands in `.agents/plugins/ds-command-center/skills/cohort-forecast-refresh/`, and the subagent's `2026-W44` run appends rows to `ml.experiment_trials`.
+
+Note each step's runtime as well. If the agent's output or timing differs between runs, tighten the prompt wording before Demo Day rather than relying on the Window 2 fallbacks.
+
 ---
 
-## 3. Master 90-Minute Timeline & Early-Start Matrix
+## 3. Master 90-Minute Timeline & Fallback Triggers
 
 ### 3.1 Segment Schedule (`90 min` Total)
 
@@ -123,19 +134,22 @@ If a rehearsal left a commit in the stage clone, delete the clone and repeat Ste
 | **Segment 1A: EDA & Hospital × Week Heatmap** | `00:12–00:22` | **10 min** | Window 1: confirm +35% **Spike** in `staging.hospital_flu`, note missing **Positivity**, materialise `staging.ws1_eda_heatmap` | Window 2: `./checkpoint ws1_eda_heatmap` |
 | **Segment 1B: Parallel Triage & `stats-reviewer`** | `00:22–00:34` | **12 min** | Window 1: dispatch 3 triage subagents in parallel, build `staging.ws1_attribution`, run adversarial `stats-reviewer` audit | Window 2: `./checkpoint ws1_attribution` |
 | **Segment 1C: Agent-Written `pipeline_clean.py` & Dataproc Serverless** | `00:34–00:47` | **13 min** | Window 1: the agent writes `pipeline_clean.py`, shows the diff, and submits its own Dataproc batch (`00:38`); Window 2: `./run-pipeline-clean --verify-equivalence` (`00:44`) | Window 2 fallbacks: `./run-pipeline-clean --sql-fallback` *(`00:41`, 5s)* or `./checkpoint ws1_staging_clean` *(`00:42`, 6s)* |
-| **Segment 2A: Seasonal Features & K-Means Cohorts** | `00:47–00:55` | **8 min** | Engineer 4 seasonal curve features, train BQML `KMEANS` (`num_clusters=4`), isolate the 3 **Outbreak** hospitals | `./checkpoint ws2_seasonal_features`<br>`./checkpoint ws2_hospital_cohorts` |
-| **Segment 2B: `ARIMA_PLUS` vs `TimesFM` (`AI.FORECAST`)** | `00:55–01:05` | **10 min** | Early-start multi-series `ARIMA_PLUS` (`00:55`), run zero-shot `TimesFM`, rank by backtest **WAPE** in `ml.forecast_leaderboard` | `./checkpoint ws2_experiment_trials`<br>`./checkpoint ws2_forecast_leaderboard` |
-| **Segment 2C: The Reveal Finale** | `01:05–01:11` | **6 min** | Load 6 post-**Cutoff** **Reveal** weeks (`./load-reveal`), compare clean vs uncleaned forecasts against reality | `./load-reveal gs://<withheld-bucket>/reveal` |
-| **Segment 2D: Codify `cohort-forecast-refresh` Skill** | `01:11–01:15` | **4 min** | Package workflow into `.agents/plugins/ds-command-center/skills/cohort-forecast-refresh/SKILL.md` and run `2026-W44` | `./run-cohort-forecast-refresh --period 2026-W44` |
+| **Segment 2A: Seasonal Features & K-Means Cohorts** | `00:47–00:55` | **8 min** | Window 1: the agent writes and runs the 4 seasonal curve features and BQML `KMEANS` (`num_clusters=4`) SQL (`00:50`), isolating the 3 **Outbreak** hospitals | Window 2 fallbacks: `./run-ws2-cohorts` *(`00:52`, 57s)* or `./checkpoint ws2_seasonal_features` & `./checkpoint ws2_hospital_cohorts` *(`00:54`, 6s)* |
+| **Segment 2B: `ARIMA_PLUS` vs `TimesFM` (`AI.FORECAST`)** | `00:55–01:05` | **10 min** | Window 1: the agent writes and starts the multi-series `ARIMA_PLUS` SQL first (`00:57`), then writes and runs zero-shot `TimesFM`, ranking by backtest **WAPE** in `ml.forecast_leaderboard` | Window 2 fallbacks: `./run-ws2-forecasts` *(`00:59`, ~60s)* or `./checkpoint ws2_experiment_trials` & `./checkpoint ws2_forecast_leaderboard` *(`01:01`, 6s)* |
+| **Segment 2C: The Reveal Finale** | `01:05–01:11` | **6 min** | Window 2: load 6 post-**Cutoff** **Reveal** weeks (`./load-reveal`, `01:05`); Window 1: the agent compares clean vs uncleaned forecasts against reality | Window 2: rerun `./load-reveal gs://<withheld-bucket>/reveal` |
+| **Segment 2D: Codify `cohort-forecast-refresh` Skill** | `01:11–01:15` | **4 min** | Window 1: the agent creates `.agents/plugins/ds-command-center/skills/cohort-forecast-refresh/SKILL.md` and a fresh subagent runs `2026-W44` | Window 2 fallback: `./run-cohort-forecast-refresh --period 2026-W44` *(`01:13`, ~2 min)* |
 | **Q&A & Wrap-Up** | `01:15–01:30` | **15 min** | Audience Q&A defense & `./stage-clean-env --restore` | `./stage-clean-env --restore` |
 
-### 3.2 Early-Start Triggers for Longer Jobs ([`docs/recorded_runtimes.json`](docs/recorded_runtimes.json))
+### 3.2 Window 2 Fallback Triggers ([`docs/recorded_runtimes.json`](docs/recorded_runtimes.json))
 
-| Step | Command | Recorded Runtime | When to Trigger on Stage | Fast Fallback (`5s–6s`) |
+The agent runs every long job itself from Window 1. **The 60-second rule**: if a step runs more than 60 seconds past its recorded runtime, swap in its fallback from Window 2. Each fallback runs the reference code, not the agent's, so say so on stage.
+
+| Step | Who Runs It | Recorded Runtime | When to Swap In | Window 2 Fallback |
 | :--- | :--- | :---: | :--- | :--- |
 | **Workstream 1C Dataproc Clean Batch** | Window 1: the agent submits its own `pipeline_clean.py` batch | **`94s`** (reference pipeline) | The agent submits at **`00:38`** right after you approve its diff; narrate Spark 4 ANSI mode and [ADR 0002](docs/adr/0002-dataproc-runs-as-presenter.md) while the batch runs. If it runs more than 60 seconds past `94s`, swap in from Window 2 at **`00:41`**. | Window 2: `./run-pipeline-clean --sql-fallback` (`5s`, runs the reference pipeline) or `./checkpoint ws1_staging_clean` (`6s`) |
-| **Workstream 2A BQML K-Means Cohorts** | `./run-ws2-cohorts` | **`57s`** | Trigger at **`00:47`** at the start of Segment 2A, then explain the 4 seasonal curve features while `KMEANS` trains. | `./checkpoint ws2_seasonal_features` & `./checkpoint ws2_hospital_cohorts` (`6s`) |
-| **Workstream 2B `ARIMA_PLUS` + `TimesFM`** | `./run-ws2-forecasts` | **`18s`–`46s`** (`ARIMA_PLUS`) / **`13s`** (`TimesFM`) | Trigger `ARIMA_PLUS` training first at **`00:55`**, then run zero-shot `TimesFM` (`AI.FORECAST`) while `ARIMA_PLUS` completes. | `./checkpoint ws2_experiment_trials` & `./checkpoint ws2_forecast_leaderboard` (`6s`) |
+| **Workstream 2A BQML K-Means Cohorts** | Window 1: the agent runs its own seasonal-features and `KMEANS` SQL | **`57s`** (reference SQL) | The agent runs its SQL at **`00:50`** after you review it; explain the 4 seasonal curve features while `KMEANS` trains. If it runs more than 60 seconds past `57s`, swap in the Window 2 fallback at **`00:52`**. | Window 2: `./run-ws2-cohorts` (`57s`, runs the reference SQL) or, at **`00:54`**, `./checkpoint ws2_seasonal_features` & `./checkpoint ws2_hospital_cohorts` (`6s`) |
+| **Workstream 2B `ARIMA_PLUS` + `TimesFM`** | Window 1: the agent starts its own `ARIMA_PLUS` SQL first, then runs its `TimesFM` (`AI.FORECAST`) SQL | **`18s`–`46s`** (`ARIMA_PLUS`) / **`13s`** (`TimesFM`) | The agent starts `ARIMA_PLUS` training first at **`00:57`**, then runs zero-shot `TimesFM` while `ARIMA_PLUS` completes. If `ARIMA_PLUS` runs more than 60 seconds past `46s`, swap in the Window 2 fallback at **`00:59`**. | Window 2: `./run-ws2-forecasts` (~`60s`, runs the reference SQL) or, at **`01:01`**, `./checkpoint ws2_experiment_trials` & `./checkpoint ws2_forecast_leaderboard` (`6s`) |
+| **Workstream 2D `cohort-forecast-refresh` Skill** | Window 1: the agent writes `SKILL.md`, then a fresh subagent runs `2026-W44` | No entry of its own; the run repeats the 2A and 2B jobs, ~`2 min` (`57s` + `46s` + `13s`) | Give the agent until **`01:12`** to write `SKILL.md` and dispatch the subagent. If it runs more than 60 seconds past that, swap in the Window 2 fallback at **`01:13`**. | Window 2: `./run-cohort-forecast-refresh --period 2026-W44` (~`2 min`, runs the presenter repo's copy of the skill) |
 
 ---
 
@@ -238,63 +252,85 @@ If a rehearsal left a commit in the stage clone, delete the clone and repeat Ste
 
 ### 4.3 Workstream 2: "Forecast at Scale" & The Reveal (`28 min`, `00:47–01:15`)
 
-> **Starting After an Intermission?** You can jump directly to the **Workstream** 2 **Start Point** at any time with:
+**Stay in the Workstream 1 stage clone.** At `00:47`, keep Window 1 on `~/demo-stage/agy-ws1`: the agent carries its own **Workstream** 1 outputs (`staging.hospital_flu_clean` and the Attribution) forward and writes the **Workstream** 2 SQL and skill live, just as it wrote `pipeline_clean.py`. Window 2 stays on the presenter repo with the fallbacks below.
+
+> **Recovery Only: Restart from the Workstream 2 Start Point.** Use this only after an intermission or if **Workstream** 1 can't be recovered on stage. Delete any leftover `~/demo-stage/agy-ws2` first, then run from Window 2 (presenter repo on `main`):
 > ```bash
-> git checkout workstream-2-start
+> git clone --single-branch --branch workstream-2-start "$(git remote get-url origin)" ~/demo-stage/agy-ws2
+> git -C ~/demo-stage/agy-ws2 remote remove origin
+> cp demo.env ~/demo-stage/agy-ws2/
+> mkdir -p ~/demo-stage/agy-ws2/.gemini
+> cp -R .gemini/skills ~/demo-stage/agy-ws2/.gemini/
 > ./reset ws2 --yes
 > ./verify-start-point ws2
 > ```
+> Then reopen Window 1 on `~/demo-stage/agy-ws2`, a separate clone outside the presenter repo, so the agent still sees only the **Start Point** branch.
 
-#### Segment 2A: Seasonal Features & BQML K-Means Hospital Cohorts (`00:47–00:55`)
-* **Type This Prompt into the Command Center**:
+* **The 60-Second Rule**: if a step runs more than 60 seconds past its recorded runtime in [`docs/recorded_runtimes.json`](docs/recorded_runtimes.json), swap in from Window 2. The Window 2 fallbacks run the reference SQL, not the agent's: say so on stage.
+
+#### Segment 2A: The Agent Writes Seasonal Features & BQML K-Means Cohorts (`00:47–00:55`)
+* **Type This Prompt into Window 1 (Command Center, `00:47`)**:
   ```text
-  Using staging.hospital_flu_clean up to the Cutoff (2026-10-31), compute per-hospital seasonal features (peak_arrival_week, peak_volume, curve_width, seasonal_trend) in features.hospital_seasonal_features and assign the 90 hospitals into 4 seasonal Cohorts using BQML K-means in features.hospital_cohorts. Show how the Outbreak hospitals are assigned.
+  Write the BigQuery SQL, saved under sql/, that computes per-hospital seasonal features (peak_arrival_week, peak_volume, curve_width, seasonal_trend) from staging.hospital_flu_clean up to the Cutoff (2026-10-31) into features.hospital_seasonal_features, and the BQML K-means SQL (num_clusters=4) that assigns the 90 hospitals to 4 seasonal Cohorts in features.hospital_cohorts. Show me the SQL and run it once I approve, then show how the Outbreak hospitals are assigned.
   ```
+* **Review the SQL on Screen (`00:47–00:50`)**: Look for the four features computed only from weeks up to the **Cutoff**, and `model_type='KMEANS'` with `num_clusters=4`. Approve by `00:50`; the K-means job's recorded runtime is **`57s`**, so 60 seconds past it means swapping in at `00:52`.
 * **Key Evidence Shown**:
   - Rather than training 90 noisy hospital models or 1 overly broad aggregate model, BQML `KMEANS` (`ml.hospital_cohort_kmeans`) groups the 90 hospitals into 4 **Cohorts** using four orthogonal curve geometry features.
   - The 3 Northeast **Outbreak** hospitals (`HOSP_NE_001`, `HOSP_NE_004`, `HOSP_NE_006`, with `seasonal_trend = 2.7143`) isolate cleanly into their own dedicated 3-hospital **Cohort**.
-* **Checkpoint Fallbacks**:
+* **Window 2 Fallback A (trigger at `00:52`, `57s`)**:
+  ```bash
+  ./run-ws2-cohorts
+  ```
+  Runs the reference SQL, not the agent's.
+* **Window 2 Fallback B (trigger at `00:54`, `6s`)**: if Fallback A errors or runs more than 60 seconds past its runtime, swap in the **Checkpoints**:
   ```bash
   ./checkpoint ws2_seasonal_features
   ./checkpoint ws2_hospital_cohorts
   ```
 
-#### Segment 2B: `ARIMA_PLUS` vs Zero-Shot `TimesFM` (`AI.FORECAST`) & WAPE Leaderboard (`00:55–01:05`)
-* **Type This Prompt into the Command Center (`00:55` — Start `ARIMA_PLUS` First!)**:
+#### Segment 2B: The Agent Writes `ARIMA_PLUS` vs Zero-Shot `TimesFM` (`AI.FORECAST`) & the WAPE Leaderboard (`00:55–01:05`)
+* **Type This Prompt into Window 1 (Command Center, `00:55` — Start `ARIMA_PLUS` Training First)**:
   ```text
-  Start training the multi-series BQML ARIMA_PLUS models per Cohort on both cleaned staging.hospital_flu_clean and uncleaned staging.hospital_flu first. Next, run zero-shot TimesFM forecasts per Cohort using AI.FORECAST, log all runs to ml.experiment_trials, and rank them by chronological backtest WAPE in ml.forecast_leaderboard.
+  Write the BigQuery ML forecasting SQL, saved under sql/, and start the ARIMA_PLUS training first: multi-series ARIMA_PLUS models per Cohort on both cleaned staging.hospital_flu_clean and uncleaned staging.hospital_flu. While ARIMA_PLUS trains, write and run zero-shot TimesFM forecasts per Cohort using AI.FORECAST. Log every run to ml.experiment_trials and rank them by chronological backtest WAPE in ml.forecast_leaderboard. Show me the ARIMA_PLUS SQL before you start it.
   ```
+* **Review and Start (`00:55–00:57`)**: Approve the `ARIMA_PLUS` SQL so training starts by `00:57`. `ARIMA_PLUS` training takes **`18s`–`46s`** and `TimesFM` (`AI.FORECAST`) **`13s`**, so 60 seconds past the slower job means swapping in at `00:59`.
 * **Key Evidence Shown**:
   - `ml.experiment_trials` records model family (`ARIMA_PLUS` vs `TimesFM`), training data state (`clean` vs `uncleaned`), **Cohort**, and chronological backtest **WAPE**.
   - `ml.forecast_leaderboard` proves that models trained on `staging.hospital_flu_clean` beat uncleaned models across every **Cohort**, and zero-shot `TimesFM` (`AI.FORECAST`) delivers competitive accuracy without training a model object.
-* **Checkpoint Fallbacks**:
+* **Window 2 Fallback A (trigger at `00:59`, ~`60s`)**:
+  ```bash
+  ./run-ws2-forecasts
+  ```
+  Runs the reference SQL, not the agent's.
+* **Window 2 Fallback B (trigger at `01:01`, `6s`)**: if Fallback A errors or runs more than 60 seconds past its runtime, swap in the **Checkpoints**:
   ```bash
   ./checkpoint ws2_experiment_trials
   ./checkpoint ws2_forecast_leaderboard
   ```
 
 #### Segment 2C: The Reveal Finale (`01:05–01:11`)
-* **Run in the Presenter Terminal**:
-  Supply your separate withheld Cloud Storage bucket URI (stored outside the repo per [ADR 0001](docs/adr/0001-answer-key-outside-agent-reach.md)) to load the six post-**Cutoff** **Reveal** weeks (`2026-11-01` through `2026-12-12`):
+* **Window 2 — Load the Reveal (`01:05`, `11s`)**: Supply your separate withheld Cloud Storage bucket URI (stored outside the repo per [ADR 0001](docs/adr/0001-answer-key-outside-agent-reach.md)) to load the six post-**Cutoff** **Reveal** weeks (`2026-11-01` through `2026-12-12`):
   ```bash
   ./load-reveal gs://<your-withheld-bucket>/reveal
   ```
-* **Type This Prompt into the Command Center**:
+* **Type This Prompt into Window 1 (Command Center, `01:06`)**:
   ```text
   Compare our Cohort forecasts trained on uncleaned staging.hospital_flu versus cleaned staging.hospital_flu_clean against the six withheld post-Cutoff Reveal weeks, and display the Reveal comparison chart and post-Cutoff WAPE by model and data cleanliness.
   ```
 * **Say to the Audience (The Finale Punchline)**:
   > "Until this moment, no agent or table in the workspace had access to what happened after Saturday, October 31, 2026. Look at `ml.reveal_forecast_evaluation`: the forecast trained on uncleaned `staging.hospital_flu` dramatically overshoots the six **Reveal** weeks because it mistook the +15-point **Pipeline Defect** and +8-point **Sampling Artifact** for exponential disease spread. The forecast trained on `staging.hospital_flu_clean` tracks reality tightly (`WAPE ~0.075` vs `~0.165` on uncleaned data). That is why **Workstream** 1 and **Workstream** 2 belong in the same **Command Center**."
 
-#### Segment 2D: Codify & Run the `cohort-forecast-refresh` Skill (`01:11–01:15`)
-* **Type This Prompt into the Command Center**:
+#### Segment 2D: The Agent Creates & Runs the `cohort-forecast-refresh` Skill (`01:11–01:15`)
+* **Type This Prompt into Window 1 (Command Center, `01:11`)**:
   ```text
-  Package our Cohort feature refresh, ARIMA_PLUS and AI.FORECAST evaluation, and ml.experiment_trials logging workflow into .agents/plugins/ds-command-center/skills/cohort-forecast-refresh/SKILL.md, then dispatch a fresh subagent to run cohort-forecast-refresh for period 2026-W44.
+  Create .agents/plugins/ds-command-center/skills/cohort-forecast-refresh/SKILL.md, following Rule 2 in the ds-command-center rules, that packages our Cohort feature refresh, ARIMA_PLUS and AI.FORECAST evaluation, and ml.experiment_trials logging workflow as a repeatable skill. Then dispatch a fresh subagent to run cohort-forecast-refresh for period 2026-W44.
   ```
-* **Terminal Verification**:
+* **Timing**: give the agent until `01:12` to create `SKILL.md` and dispatch the subagent. The refresh repeats the 2A and 2B jobs (`57s` + `46s` + `13s`, about `2 min`); if it runs more than 60 seconds past `01:12`, swap in at `01:13`. If the subagent is still running at `01:15`, move to Q&A and show its results there.
+* **Window 2 Fallback (trigger at `01:13`, ~`2 min`)**:
   ```bash
   ./run-cohort-forecast-refresh --period 2026-W44
   ```
+  Runs the presenter repo's copy of the skill, not the one the agent just wrote: say so on stage.
 
 ---
 
@@ -321,9 +357,9 @@ You can deliver this demo in shorter slots without changing a single file by swa
 
 | Format | Total Time | What to Run Live vs Swap via `./checkpoint` |
 | :--- | :---: | :--- |
-| **45-Minute Executive Briefing** | `45 min` | - **Opening (`8 min`)**: Narrative setup + live `guardrail-hook` block.<br>- **Workstream 1 (`17 min`)**: Run parallel triage subagents + `stats-reviewer` live; show `git diff` on `pipeline_clean.py` and immediately run `./checkpoint ws1_staging_clean` (`6s`).<br>- **Workstream 2 & Reveal (`15 min`)**: Swap `./checkpoint ws2_seasonal_features` & `./checkpoint ws2_hospital_cohorts`, run zero-shot `AI.FORECAST` live, swap `./checkpoint ws2_forecast_leaderboard`, and run `./load-reveal` for the **Reveal** punchline.<br>- **Q&A (`5 min`)**. |
-| **60-Minute Technical Session** | `60 min` | - **Opening (`10 min`)**: Full tour + live `guardrail-hook` block.<br>- **Workstream 1 (`22 min`)**: Live EDA, parallel triage subagents, `stats-reviewer`, `git diff`, and `./run-pipeline-clean --sql-fallback` (`5s`).<br>- **Workstream 2 & Reveal (`20 min`)**: Live K-means **Cohorts**, zero-shot `TimesFM` (`AI.FORECAST`) + `./checkpoint ws2_forecast_leaderboard`, live **Reveal** (`./load-reveal`), and `cohort-forecast-refresh` skill.<br>- **Q&A (`8 min`)**. |
-| **90-Minute Full Workshop** | `90 min` | Full live execution of every step in [Section 4](#4-act-by-act-live-demo-script) using the early-start triggers in [Section 3.2](#32-early-start-triggers-for-longer-jobs-docsrecorded_runtimesjson). |
+| **45-Minute Executive Briefing** | `45 min` | Prepare with the same T-15 reset ([Section 2](#2-pre-stage-checklist-t-15-minutes)).<br>- **Opening (`8 min`)**: Narrative setup + live `guardrail-hook` block (Window 1).<br>- **Workstream 1 (`17 min`)**: In Window 1, run parallel triage subagents + `stats-reviewer` live and review the agent's `pipeline_clean.py` diff; then swap in the Window 2 fallback `./checkpoint ws1_staging_clean` (`6s`) instead of waiting for the batch.<br>- **Workstream 2 & Reveal (`15 min`)**: Window 2 swaps in `./checkpoint ws2_seasonal_features` & `./checkpoint ws2_hospital_cohorts`. In Window 1, the agent writes and runs the zero-shot `AI.FORECAST` SQL live. Window 2 then swaps in the fallback `./checkpoint ws2_forecast_leaderboard` and runs `./load-reveal` for the **Reveal** punchline.<br>- **Q&A (`5 min`)**. |
+| **60-Minute Technical Session** | `60 min` | Prepare with the same T-15 reset ([Section 2](#2-pre-stage-checklist-t-15-minutes)).<br>- **Opening (`10 min`)**: Full tour + live `guardrail-hook` block (Window 1).<br>- **Workstream 1 (`22 min`)**: In Window 1, live EDA, parallel triage subagents, `stats-reviewer`, and the agent's `pipeline_clean.py` diff; then the Window 2 fallback `./run-pipeline-clean --sql-fallback` (`5s`, runs the reference pipeline).<br>- **Workstream 2 & Reveal (`20 min`)**: In Window 1, the agent writes and runs the K-means **Cohort** SQL and the zero-shot `TimesFM` (`AI.FORECAST`) SQL live. Window 2 swaps in the fallback `./checkpoint ws2_forecast_leaderboard`, then loads the **Reveal** (`./load-reveal`). Back in Window 1, the agent creates the `cohort-forecast-refresh` skill.<br>- **Q&A (`8 min`)**. |
+| **90-Minute Full Workshop** | `90 min` | Full live execution of every step in [Section 4](#4-act-by-act-live-demo-script), with the Window 2 fallback triggers in [Section 3.2](#32-window-2-fallback-triggers-docsrecorded_runtimesjson). |
 
 ---
 

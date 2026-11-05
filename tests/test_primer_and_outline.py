@@ -6,6 +6,7 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DOCS_DIR = os.path.join(REPO_ROOT, "docs")
 PRIMER_PATH = os.path.join(DOCS_DIR, "data-science-primer.md")
 OUTLINE_PATH = os.path.join(DOCS_DIR, "demo-outline.md")
+SKILL_PATH = ".agents/plugins/ds-command-center/skills/cohort-forecast-refresh/SKILL.md"
 
 TOPICS = [
     "Positivity",
@@ -82,8 +83,8 @@ class TestPrimerAndOutline(unittest.TestCase):
 
         # Three messages
         pattern_fits_work_today = r"fits how you work today"
-        pattern_directs_army_agents = (
-            r"one data scientist directs an army of agents and "
+        pattern_directs_team_of_agents = (
+            r"one data scientist directs a team of specialized agents and "
             r"reviews the evidence"
         )
         pattern_team_owned_files = (
@@ -95,7 +96,7 @@ class TestPrimerAndOutline(unittest.TestCase):
             "Outline must include message 1: 'fits how you work today'",
         )
         self.assertTrue(
-            re.search(pattern_directs_army_agents, content, re.IGNORECASE),
+            re.search(pattern_directs_team_of_agents, content, re.IGNORECASE),
             "Outline must include message 2: 'one data scientist...'",
         )
         self.assertTrue(
@@ -125,6 +126,29 @@ class TestPrimerAndOutline(unittest.TestCase):
         self.assertIn("Workstream 1", content)
         self.assertIn("Workstream 2", content)
         self.assertIn("Reveal", content)
+
+    def test_outline_matches_the_stage_flow(self):
+        content = self._get_doc(OUTLINE_PATH)
+
+        # Segment 1C: the agent writes the clean pipeline on stage.
+        self.assertNotIn("pipeline_v2.py", content)
+        self.assertRegex(content, r"(?i)\bwrites?\b[^.\n]*`pipeline_clean\.py`")
+
+        # Rule 2: the live-captured skill lives in the Command Center plugin.
+        self.assertNotIn(".gemini/skills/cohort-forecast-refresh", content)
+        self.assertIn(SKILL_PATH, content)
+        self.assertNotRegex(content, r"(?i)\barmy\b")
+
+        # Workstream 2 runs the Reveal before codifying the skill, in clock order.
+        ws2 = re.search(
+            r"^### 3\.3 Workstream 2.*?(?=^### )", content, re.MULTILINE | re.DOTALL
+        ).group(0)
+        timed = re.findall(r"^\s*\* \*\*(\d{2}:\d{2}) – [^\n]*", ws2, re.MULTILINE)
+        self.assertEqual(timed, sorted(timed))
+        bullets = re.findall(r"^\s*\* \*\*\d{2}:\d{2} – [^\n]*", ws2, re.MULTILINE)
+        reveal = next(i for i, b in enumerate(bullets) if "Reveal" in b)
+        skill = next(i for i, b in enumerate(bullets) if "cohort-forecast-refresh" in b)
+        self.assertLess(reveal, skill)
 
     def test_tailoring_needs_no_core_content_edits(self):
         content = self._get_doc(OUTLINE_PATH)
