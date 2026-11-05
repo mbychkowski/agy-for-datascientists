@@ -140,14 +140,20 @@ class TestPrimerAndOutline(unittest.TestCase):
         self.assertNotRegex(content, r"(?i)\barmy\b")
 
         # Workstream 2 runs the Reveal before codifying the skill, in clock order.
-        ws2 = re.search(
+        match = re.search(
             r"^### 3\.3 Workstream 2.*?(?=^### )", content, re.MULTILINE | re.DOTALL
-        ).group(0)
+        )
+        self.assertIsNotNone(match, "No ### 3.3 Workstream 2 section")
+        ws2 = match.group(0)
         timed = re.findall(r"^\s*\* \*\*(\d{2}:\d{2}) – [^\n]*", ws2, re.MULTILINE)
         self.assertEqual(timed, sorted(timed))
         bullets = re.findall(r"^\s*\* \*\*\d{2}:\d{2} – [^\n]*", ws2, re.MULTILINE)
-        reveal = next(i for i, b in enumerate(bullets) if "Reveal" in b)
-        skill = next(i for i, b in enumerate(bullets) if "cohort-forecast-refresh" in b)
+        reveal = next((i for i, b in enumerate(bullets) if "Reveal" in b), None)
+        skill = next(
+            (i for i, b in enumerate(bullets) if "cohort-forecast-refresh" in b), None
+        )
+        self.assertIsNotNone(reveal, "No timed Reveal bullet")
+        self.assertIsNotNone(skill, "No timed cohort-forecast-refresh bullet")
         self.assertLess(reveal, skill)
 
     def test_tailoring_needs_no_core_content_edits(self):

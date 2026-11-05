@@ -149,9 +149,9 @@ WS1_SEGMENTS = {
 WS2_SECTION = 'Workstream 2: "Forecast at Scale"'
 WS2_SEGMENTS = ("Segment 2A", "Segment 2B", "Segment 2C", "Segment 2D")
 
-# Presenter scripts that once started Workstream 2 jobs early. Each is now a
-# Window 2 fallback for the agent's own run, swapped in by the 60-second rule,
-# backed by its Checkpoints and timed from these recorded runtimes.
+# Per Workstream 2 segment: the Window 2 fallback script for the agent's own
+# run, the Checkpoints that back it, and the recorded-runtime keys that time
+# its 60-second-rule trigger.
 WS2_FALLBACKS = {
     "Segment 2A": (
         "./run-ws2-cohorts",
@@ -583,9 +583,11 @@ class TestPresenterRunbookAndReuserDocs(unittest.TestCase):
         for name, doc in self._docs():
             for title, (script, checkpoints, runtimes) in WS2_FALLBACKS.items():
                 section = _segment(doc, title)
-                start, end = re.search(
+                clock = re.search(
                     r"`(\d{2}:\d{2})–(\d{2}:\d{2})`", section.splitlines()[0]
-                ).groups()
+                )
+                self.assertIsNotNone(clock, f"{name} {title} heading has no clock")
+                start, end = clock.groups()
                 blocks = _labelled_blocks(section, "bash")
                 triggers = []
                 for command in (script, *checkpoints):

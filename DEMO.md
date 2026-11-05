@@ -149,7 +149,7 @@ The agent runs every long job itself from Window 1. **The 60-second rule**: if a
 | **Workstream 1C Dataproc Clean Batch** | Window 1: the agent submits its own `pipeline_clean.py` batch | **`94s`** (reference pipeline) | The agent submits at **`00:38`** right after you approve its diff; narrate Spark 4 ANSI mode and [ADR 0002](docs/adr/0002-dataproc-runs-as-presenter.md) while the batch runs. If it runs more than 60 seconds past `94s`, swap in from Window 2 at **`00:41`**. | Window 2: `./run-pipeline-clean --sql-fallback` (`5s`, runs the reference pipeline) or `./checkpoint ws1_staging_clean` (`6s`) |
 | **Workstream 2A BQML K-Means Cohorts** | Window 1: the agent runs its own seasonal-features and `KMEANS` SQL | **`57s`** (reference SQL) | The agent runs its SQL at **`00:50`** after you review it; explain the 4 seasonal curve features while `KMEANS` trains. If it runs more than 60 seconds past `57s`, swap in the Window 2 fallback at **`00:52`**. | Window 2: `./run-ws2-cohorts` (`57s`, runs the reference SQL) or, at **`00:54`**, `./checkpoint ws2_seasonal_features` & `./checkpoint ws2_hospital_cohorts` (`6s`) |
 | **Workstream 2B `ARIMA_PLUS` + `TimesFM`** | Window 1: the agent starts its own `ARIMA_PLUS` SQL first, then runs its `TimesFM` (`AI.FORECAST`) SQL | **`18s`–`46s`** (`ARIMA_PLUS`) / **`13s`** (`TimesFM`) | The agent starts `ARIMA_PLUS` training first at **`00:57`**, then runs zero-shot `TimesFM` while `ARIMA_PLUS` completes. If `ARIMA_PLUS` runs more than 60 seconds past `46s`, swap in the Window 2 fallback at **`00:59`**. | Window 2: `./run-ws2-forecasts` (~`60s`, runs the reference SQL) or, at **`01:01`**, `./checkpoint ws2_experiment_trials` & `./checkpoint ws2_forecast_leaderboard` (`6s`) |
-| **Workstream 2D `cohort-forecast-refresh` Skill** | Window 1: the agent writes `SKILL.md`, then a fresh subagent runs `2026-W44` | No entry of its own; the run repeats the 2A and 2B jobs, ~`2 min` (`57s` + `46s` + `13s`) | Give the agent until **`01:12`** to write `SKILL.md` and dispatch the subagent. If it runs more than 60 seconds past that, swap in the Window 2 fallback at **`01:13`**. | Window 2: `./run-cohort-forecast-refresh --period 2026-W44` (~`2 min`, runs the presenter repo's copy of the skill) |
+| **Workstream 2D `cohort-forecast-refresh` Skill** | Window 1: the agent writes `SKILL.md`, then a fresh subagent runs `2026-W44` | No entry of its own; the run repeats the 2A and 2B jobs, ~`2 min` (`57s` + `46s` + `13s`) | Give the agent until **`01:12`** to write `SKILL.md` and dispatch the subagent. If it hasn't dispatched the subagent 60 seconds past that, stop the agent and swap in the Window 2 fallback at **`01:13`**; once dispatched, never run the fallback alongside it. | Window 2: `./run-cohort-forecast-refresh --period 2026-W44` (~`2 min`, runs the presenter repo's copy of the skill) |
 
 ---
 
@@ -237,7 +237,7 @@ The agent runs every long job itself from Window 1. **The 60-second rule**: if a
   ./run-pipeline-clean --verify-equivalence
   ```
   *(Compares the agent's `staging.hospital_flu_clean` against the reference SQL in `sql/verify_clean_equivalence.sql`: matching row counts (`101,430` on the full-scale dataset), `0` duplicate `(hospital_id, feed_date)` keys, and `0` row differences in both directions.)*
-* **The 60-Second Rule**: if a step runs more than 60 seconds past its recorded runtime, swap in from Window 2. For the agent's batch, that is `94s` + `60s` after submission, so with a `00:38` submission, trigger Fallback A at `00:41` if `staging.hospital_flu_clean` isn't written yet.
+* **The 60-Second Rule**: if a step runs more than 60 seconds past its recorded runtime, stop the agent's job first, then swap in from Window 2. For the agent's batch, that is `94s` + `60s` after submission, so with a `00:38` submission, trigger Fallback A at `00:41` if `staging.hospital_flu_clean` isn't written yet.
 * **Window 2 Fallback A (trigger at `00:41`, `5s`)**:
   ```bash
   ./run-pipeline-clean --sql-fallback
@@ -252,9 +252,9 @@ The agent runs every long job itself from Window 1. **The 60-second rule**: if a
 
 ### 4.3 Workstream 2: "Forecast at Scale" & The Reveal (`28 min`, `00:47–01:15`)
 
-**Stay in the Workstream 1 stage clone.** At `00:47`, keep Window 1 on `~/demo-stage/agy-ws1`: the agent carries its own **Workstream** 1 outputs (`staging.hospital_flu_clean` and the Attribution) forward and writes the **Workstream** 2 SQL and skill live, just as it wrote `pipeline_clean.py`. Window 2 stays on the presenter repo with the fallbacks below.
+**Stay in the Workstream 1 stage clone.** At `00:47`, keep Window 1 on `~/demo-stage/agy-ws1`: the agent carries its own **Workstream** 1 outputs (`staging.hospital_flu_clean` and the **Attribution**) forward and writes the **Workstream** 2 SQL and skill live, just as it wrote `pipeline_clean.py`. Window 2 stays on the presenter repo with the fallbacks below.
 
-> **Recovery Only: Restart from the Workstream 2 Start Point.** Use this only after an intermission or if **Workstream** 1 can't be recovered on stage. Delete any leftover `~/demo-stage/agy-ws2` first, then run from Window 2 (presenter repo on `main`):
+> **Recovery Only: Restart from the Workstream 2 Start Point.** Use this only after an intermission or if **Workstream** 1 can't be recovered on stage. Close Window 1, delete any leftover clone from a previous run (`rm -rf ~/demo-stage/agy-ws2`), then run from Window 2 (presenter repo on `main`):
 > ```bash
 > git clone --single-branch --branch workstream-2-start "$(git remote get-url origin)" ~/demo-stage/agy-ws2
 > git -C ~/demo-stage/agy-ws2 remote remove origin
@@ -266,7 +266,7 @@ The agent runs every long job itself from Window 1. **The 60-second rule**: if a
 > ```
 > Then reopen Window 1 on `~/demo-stage/agy-ws2`, a separate clone outside the presenter repo, so the agent still sees only the **Start Point** branch.
 
-* **The 60-Second Rule**: if a step runs more than 60 seconds past its recorded runtime in [`docs/recorded_runtimes.json`](docs/recorded_runtimes.json), swap in from Window 2. The Window 2 fallbacks run the reference SQL, not the agent's: say so on stage.
+* **The 60-Second Rule**: if a step runs more than 60 seconds past its recorded runtime in [`docs/recorded_runtimes.json`](docs/recorded_runtimes.json), stop the agent's job first (ask it to cancel its BigQuery job) so both runs don't write the same tables, then swap in from Window 2. The Window 2 fallbacks run the reference SQL, not the agent's: say so on stage.
 
 #### Segment 2A: The Agent Writes Seasonal Features & BQML K-Means Cohorts (`00:47–00:55`)
 * **Type This Prompt into Window 1 (Command Center, `00:47`)**:
@@ -325,7 +325,7 @@ The agent runs every long job itself from Window 1. **The 60-second rule**: if a
   ```text
   Create .agents/plugins/ds-command-center/skills/cohort-forecast-refresh/SKILL.md, following Rule 2 in the ds-command-center rules, that packages our Cohort feature refresh, ARIMA_PLUS and AI.FORECAST evaluation, and ml.experiment_trials logging workflow as a repeatable skill. Then dispatch a fresh subagent to run cohort-forecast-refresh for period 2026-W44.
   ```
-* **Timing**: give the agent until `01:12` to create `SKILL.md` and dispatch the subagent. The refresh repeats the 2A and 2B jobs (`57s` + `46s` + `13s`, about `2 min`); if it runs more than 60 seconds past `01:12`, swap in at `01:13`. If the subagent is still running at `01:15`, move to Q&A and show its results there.
+* **Timing**: the agent should create `SKILL.md` and dispatch the subagent by `01:12`. If it hasn't dispatched the subagent 60 seconds past that, stop the agent and swap in the Window 2 fallback at `01:13`. Once the subagent is dispatched, never run the fallback alongside it: the refresh repeats the 2A and 2B jobs (`57s` + `46s` + `13s`, about `2 min`) and writes the same `ml.experiment_trials` rows. If the subagent is still running at `01:15`, move to Q&A and show its results there.
 * **Window 2 Fallback (trigger at `01:13`, ~`2 min`)**:
   ```bash
   ./run-cohort-forecast-refresh --period 2026-W44

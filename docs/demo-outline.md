@@ -93,7 +93,7 @@ The demonstration lands three foundational messages:
 * **Where it runs**: The presenter stays in the Workstream 1 stage clone, so the agent carries its own outputs forward. Every prompt is typed into Window 1; the presenter terminal (Window 2) loads the Reveal and holds the fallback scripts and Checkpoints.
 * **Timing**:
   * **47:00 – 55:00 (Feature Engineering & BQML K-means Cohorts - 8 min)**:
-    * The agent writes the BigQuery SQL for per-hospital seasonal features: peak arrival week, peak volume, curve width, and baseline trend.
+    * The agent writes the BigQuery SQL for per-hospital seasonal features: peak arrival week, peak volume, curve width, and seasonal trend (`seasonal_trend`).
     * It then writes and runs the BQML K-means SQL that clusters the 90 hospitals into four seasonal **Cohorts**.
     * The Outbreak hospitals cluster into an anomalous Cohort, confirming that segmentation captures genuine clinical differences.
   * **55:00 – 65:00 (Forecasting Benchmark: ARIMA_PLUS vs TimesFM - 10 min)**:
