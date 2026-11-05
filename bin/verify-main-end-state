@@ -26,6 +26,9 @@ done
 SCRIPT_DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
+# shellcheck source=lib/pinning.sh
+source "${SCRIPT_DIR}/lib/pinning.sh"
+
 ENV_FILE="${REPO_ROOT}/demo.env"
 DATASET_DIR="${REPO_ROOT}/fixtures/mock_dataset"
 CLI_DATASET_SET=false
@@ -130,30 +133,11 @@ if [[ -z "${ANSWER_KEY_LOC}" ]] || [[ -z "${REVEAL_LOC}" ]]; then
     exit 1
 fi
 
-if [[ ! -f "${ENV_FILE}" ]]; then
-    echo "[FAIL] Environment file not found: ${ENV_FILE}" >&2
+if ! pinned_load_env "${ENV_FILE}"; then
     exit 1
 fi
 
-# shellcheck disable=SC1090
-source "${ENV_FILE}"
-
-if [[ "${CLI_DATASET_SET}" == "false" ]] && [[ -n "${DATASET_LOCATION:-}" ]] && [[ "${DATASET_LOCATION}" != *"your-"* ]]; then
-    DATASET_DIR="${DATASET_LOCATION}"
-fi
-
-if [[ -z "${PROJECT_ID:-}" ]] || [[ "${PROJECT_ID}" == *"your-"* ]]; then
-    echo "[FAIL] PROJECT_ID is unset or contains a placeholder value in ${ENV_FILE}" >&2
-    exit 1
-fi
-
-if [[ -z "${REGION:-}" ]] || [[ "${REGION}" == *"your-"* ]]; then
-    echo "[FAIL] REGION is unset or contains a placeholder value in ${ENV_FILE}" >&2
-    exit 1
-fi
-
-if ! command -v bq >/dev/null 2>&1; then
-    echo "[FAIL] bq CLI is not installed or not in PATH." >&2
+if ! pinned_require_cli bq; then
     exit 1
 fi
 
@@ -191,31 +175,12 @@ MAIN_TABLES=(
 )
 
 for tbl in "${MAIN_TABLES[@]}"; do
-    if ! table_meta=$(bq show --project_id="${PROJECT_ID}" --location="${REGION}" --format=json "${PROJECT_ID}:${tbl}" 2>&1); then
+    if ! table_meta=$(pinned_bq show --format=json "${PROJECT_ID}:${tbl}" 2>&1); then
         echo "[FAIL] Required end-state table missing: ${PROJECT_ID}:${tbl}" >&2
         exit 1
     fi
 
-    if ! python3 -c '
-import json, sys
-raw = sys.argv[1]
-decoder = json.JSONDecoder()
-meta = None
-for idx, ch in enumerate(raw):
-    if ch == "{":
-        try:
-            candidate, _ = decoder.raw_decode(raw[idx:])
-            if isinstance(candidate, dict):
-                meta = candidate
-                break
-        except Exception:
-            continue
-if not isinstance(meta, dict):
-    sys.exit(1)
-labels = meta.get("labels")
-if not isinstance(labels, dict) or labels.get("demo") != "true":
-    sys.exit(1)
-' "${table_meta}"; then
+    if ! pinned_has_demo_label "${table_meta}"; then
         echo "[FAIL] Table ${PROJECT_ID}:${tbl} is missing required label demo:true" >&2
         exit 1
     fi
@@ -261,11 +226,9 @@ CROSS JOIN dup_check AS d
 CROSS JOIN ne_weekly AS n
 EOF
 
-if ! query_out=$(bq query \
+if ! query_out=$(pinned_bq query \
     --quiet \
     --use_legacy_sql=false \
-    --project_id="${PROJECT_ID}" \
-    --location="${REGION}" \
     --format=json \
     "${WS1_SQL}" 2>&1); then
     echo "[FAIL] Read-only verification query failed on ${PROJECT_ID}: ${query_out}" >&2
@@ -287,19 +250,19 @@ if [[ "${DATASET_DIR}" == gs://* ]]; then
     LOCAL_DATASET_DIR="${STAGE_TMP_DIR}/dataset"
     mkdir -p "${LOCAL_DATASET_DIR}/raw/hospital_flu_feeds" "${LOCAL_DATASET_DIR}/ops"
     DS_ROOT="${DATASET_DIR%/}"
-    if ! gcloud storage cp --project="${PROJECT_ID}" \
+    if ! pinned_storage cp \
         "${DS_ROOT}/raw/hospital_reference.csv" \
         "${LOCAL_DATASET_DIR}/raw/hospital_reference.csv" >/dev/null 2>&1; then
         echo "[FAIL] Failed to stage ${DS_ROOT}/raw/hospital_reference.csv from Cloud Storage" >&2
         exit 1
     fi
-    if ! gcloud storage cp --project="${PROJECT_ID}" \
+    if ! pinned_storage cp \
         "${DS_ROOT}/raw/hospital_flu_feeds/feeds.csv" \
         "${LOCAL_DATASET_DIR}/raw/hospital_flu_feeds/feeds.csv" >/dev/null 2>&1; then
         echo "[FAIL] Failed to stage ${DS_ROOT}/raw/hospital_flu_feeds/feeds.csv from Cloud Storage" >&2
         exit 1
     fi
-    if ! gcloud storage cp --project="${PROJECT_ID}" \
+    if ! pinned_storage cp \
         "${DS_ROOT}/ops/pipeline_run_log.csv" \
         "${LOCAL_DATASET_DIR}/ops/pipeline_run_log.csv" >/dev/null 2>&1; then
         echo "[FAIL] Failed to stage ${DS_ROOT}/ops/pipeline_run_log.csv from Cloud Storage" >&2
@@ -313,7 +276,7 @@ if [[ "${ANSWER_KEY_LOC}" == gs://* ]]; then
     LOCAL_ANSWER_KEY="${STAGE_TMP_DIR}/answer_key.json"
     AK_SRC="${ANSWER_KEY_LOC%/}"
     [[ "${AK_SRC}" != *.json ]] && AK_SRC="${AK_SRC}/answer_key.json"
-    if ! gcloud storage cp --project="${PROJECT_ID}" "${AK_SRC}" "${LOCAL_ANSWER_KEY}" >/dev/null 2>&1; then
+    if ! pinned_storage cp "${AK_SRC}" "${LOCAL_ANSWER_KEY}" >/dev/null 2>&1; then
         echo "[FAIL] Failed to stage Answer Key from Cloud Storage: ${AK_SRC}" >&2
         exit 1
     fi
@@ -333,7 +296,7 @@ if [[ "${REVEAL_LOC}" == gs://* ]]; then
             REV_SRC="${REV_SRC}/reveal/hospital_flu_feeds_reveal/reveal.csv"
         fi
     fi
-    if ! gcloud storage cp --project="${PROJECT_ID}" "${REV_SRC}" "${LOCAL_REVEAL}" >/dev/null 2>&1; then
+    if ! pinned_storage cp "${REV_SRC}" "${LOCAL_REVEAL}" >/dev/null 2>&1; then
         echo "[FAIL] Failed to stage Reveal CSV from Cloud Storage: ${REV_SRC}" >&2
         exit 1
     fi
