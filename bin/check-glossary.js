@@ -90,8 +90,10 @@ const VOCABULARY_RULES = [
     section: 'Causes of the Spike'
   },
   {
-    pattern: /\bbaseline[- ]growths?\b/i,
-    prohibited: 'baseline growth',
+    // Any "baseline <change>" phrase describes the Seasonal Ramp; a bare
+    // statistical "baseline" (e.g. a classical ARIMA_PLUS baseline) is fine.
+    pattern: /\bbaseline[- ](growths?|trends?|increases?|rises?)\b/i,
+    prohibited: 'baseline growth / trend / increase / rise',
     preferred: 'Seasonal Ramp',
     section: 'Causes of the Spike'
   },
@@ -206,6 +208,72 @@ function checkFile(relPath) {
     }
   }
 
+  if (BOLD_REQUIRED_FILES.has(relPath.replace(/\\/g, '/'))) {
+    for (const v of findUnboldedTerms(content, loadGlossaryTerms())) {
+      violations.push({ file: relPath, ...v });
+    }
+  }
+
+  return violations;
+}
+
+// Presenter docs where every glossary term in prose must be **bolded**.
+const BOLD_REQUIRED_FILES = new Set(['DEMO.md', 'docs/presenter-runbook.md']);
+
+// Glossary terms are the bold definition headings in GLOSSARY.md ("**Term**:").
+function loadGlossaryTerms() {
+  const glossary = fs.readFileSync(path.join(REPO_ROOT, 'GLOSSARY.md'), 'utf8');
+  return [...glossary.matchAll(/^\*\*(.+?)\*\*:/gm)].map(m => m[1]);
+}
+
+function escapeRegExp(text) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// Reports capitalised glossary terms (or plurals) that appear unbolded in prose.
+// Exempt: fenced code, headings, table header rows, inline code, link text,
+// text already in **bold**, and lines carrying glossary-ignore.
+function findUnboldedTerms(content, terms) {
+  const lines = content.split('\n');
+  const patterns = terms.map(term => ({
+    term,
+    pattern: new RegExp(`\\b${escapeRegExp(term)}s?\\b`, 'g')
+  }));
+  const violations = [];
+  let inFence = false;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (/^\s*(```|~~~)/.test(line)) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence || /^\s*#/.test(line) || line.includes('glossary-ignore')) continue;
+    const next = lines[i + 1] || '';
+    if (/^\s*\|/.test(line) && /^\s*\|\s*:?-{3}/.test(next)) continue;
+
+    // Blank out exempt spans so reported columns still match the original line.
+    const blank = s => ' '.repeat(s.length);
+    const prose = line
+      .replace(/\*\*.+?\*\*/g, blank)
+      .replace(/`[^`]*`/g, blank)
+      .replace(/\[[^\]]*\]\([^)]*\)/g, blank);
+
+    for (const { term, pattern } of patterns) {
+      for (const match of prose.matchAll(pattern)) {
+        violations.push({
+          line: i + 1,
+          column: match.index + 1,
+          match: match[0],
+          prohibited: `unbolded ${term}`,
+          preferred: `**${match[0]}**`,
+          section: term,
+          lineContent: line.trim()
+        });
+      }
+    }
+  }
+
   return violations;
 }
 
@@ -253,3 +321,5 @@ function main() {
 if (require.main === module) {
   main();
 }
+
+module.exports = { BOLD_REQUIRED_FILES, findUnboldedTerms, loadGlossaryTerms };
