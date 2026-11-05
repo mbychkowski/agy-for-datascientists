@@ -229,3 +229,30 @@ Once Terraform, workspace Data Agent Kit skills, Java 21, and ADC are configured
    ./stage-clean-env --stash
    ```
    Follow the [Presenter Runbook](presenter-runbook.md) for the live 90-minute session, and run `./stage-clean-env --restore` when finished.
+
+---
+
+## 8. Two-Repository Stage Setup (Window 1 and Window 2)
+
+The live session runs from **two separate repositories**, never from one checkout:
+
+| Window | Repository | What runs there |
+| :--- | :--- | :--- |
+| **Window 1 (agent)** | A fresh single-branch clone of `workstream-1-start`, outside this repo, with its remote removed and `demo.env` copied in | Antigravity. The agent writes and runs its code here. |
+| **Window 2 (presenter terminal)** | This repo on `main` | Every presenter script: `./stage-clean-env`, `./preflight`, `./reset`, `./verify-start-point`, `./checkpoint`, `./run-pipeline-clean`, `./run-ws2-cohorts`, `./run-ws2-forecasts`, `./load-reveal`, `./run-cohort-forecast-refresh`. |
+
+The presenter scripts read the answer files (the **Workstream** 2 SQL, the **Workstream** 2 **Checkpoint** manifests, and the **Reveal** comparison SQL), and the branch-boundary tests keep those files off the stage branches ([ADR 0001](adr/0001-answer-key-outside-agent-reach.md)). That is why the presenter scripts only exist on `main`, and why `main` must stay out of the agent's reach:
+
+* A **worktree** shares `.git` with this repo, so an agent in it could still run `git show main:…`.
+* An **in-repo folder** sits inside the agent's workspace.
+* A **local-path clone** hardlinks the whole object store, `main` included. Clone from the remote URL instead.
+
+Create the stage clone once per machine, from this repo on `main`:
+
+```bash
+git clone --single-branch --branch workstream-1-start "$(git remote get-url origin)" ~/demo-stage/agy-ws1
+git -C ~/demo-stage/agy-ws1 remote remove origin
+cp demo.env ~/demo-stage/agy-ws1/
+```
+
+Before every rehearsal and on Demo Day, the T-15 checklist resets the clone's code (`git reset --hard`, `git clean -fd`) and then runs `./reset ws1 --yes` and `./verify-start-point ws1` from this repo. See the [Presenter Runbook](presenter-runbook.md#1-pre-stage-checklist-t-15-minutes) for the full sequence.

@@ -52,6 +52,50 @@ FORBIDDEN_COMPANY_PATTERNS = [
 ]
 
 
+# Presenter tooling that exists only on `main`, or that is stale on the stage
+# branches, so Window 2 (the `main` repo) must run it, never the stage clone.
+MAIN_ONLY_SCRIPTS = (
+    "stage-clean-env",
+    "preflight",
+    "reset",
+    "verify-start-point",
+    "checkpoint",
+    "run-pipeline-clean",
+    "run-ws2-cohorts",
+    "run-ws2-forecasts",
+    "run-cohort-forecast-refresh",
+    "load-reveal",
+)
+
+
+def _pre_stage_checklist(doc: str) -> str:
+    """Return the T-15 Pre-Stage Checklist section of DEMO.md or the runbook."""
+    match = re.search(
+        r"^## \d+\. Pre-Stage Checklist.*?(?=^## )", doc, re.MULTILINE | re.DOTALL
+    )
+    if match is None:
+        raise AssertionError("Pre-Stage Checklist section not found")
+    return match.group(0)
+
+
+def _bash_blocks(doc: str) -> list[str]:
+    """Return the bodies of every fenced bash block (blockquoted ones included)."""
+    unquoted = re.sub(r"^\s*> ?", "", doc, flags=re.MULTILINE)
+    return re.findall(r"```bash\n(.*?)```", unquoted, re.DOTALL)
+
+
+def _stage_clone_dir(doc: str) -> str:
+    """Return the target directory of the documented stage-clone command."""
+    match = re.search(
+        r"git clone\b[^\n]*--branch workstream-1-start[^\n]*?(\S+)\s*$",
+        doc,
+        re.MULTILINE,
+    )
+    if match is None:
+        raise AssertionError("No `git clone ... --branch workstream-1-start` command")
+    return match.group(1)
+
+
 class TestPresenterRunbookAndReuserDocs(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -78,6 +122,124 @@ class TestPresenterRunbookAndReuserDocs(unittest.TestCase):
         self.assertIn("Workstream 2", self.demo)
         self.assertIn("./stage-clean-env --stash", self.demo)
         self.assertIn("./checkpoint", self.demo)
+
+    def test_t15_checklist_builds_isolated_single_branch_stage_clone(self) -> None:
+        for name, doc in (("DEMO.md", self.demo), ("runbook", self.runbook)):
+            with self.subTest(doc=name):
+                checklist = _pre_stage_checklist(doc)
+                self.assertRegex(
+                    checklist,
+                    r"git clone --single-branch --branch workstream-1-start ",
+                )
+                clone_dir = _stage_clone_dir(checklist)
+                self.assertRegex(
+                    clone_dir,
+                    r"^(~/|\$HOME/|\.\./)",
+                    f"{name}: stage clone must live outside the presenter repo",
+                )
+                self.assertIn(f"git -C {clone_dir} remote remove origin", checklist)
+                self.assertIn(f"cp demo.env {clone_dir}/", checklist)
+
+    def test_docs_explain_why_worktree_or_in_repo_folder_breaks_guarantee(
+        self,
+    ) -> None:
+        for name, doc in (("DEMO.md", self.demo), ("runbook", self.runbook)):
+            with self.subTest(doc=name):
+                checklist = _pre_stage_checklist(doc)
+                self.assertRegex(checklist, r"(?i)worktree")
+                self.assertRegex(checklist, r"(?i)share[sd]? `?\.git`?")
+                self.assertIn("git show main:", checklist)
+                self.assertRegex(checklist, r"(?i)in-repo folder")
+                self.assertIn("0001-answer-key-outside-agent-reach.md", checklist)
+
+    def test_t15_resets_clone_code_then_ws1_data_from_main_repo(self) -> None:
+        for name, doc in (("DEMO.md", self.demo), ("runbook", self.runbook)):
+            with self.subTest(doc=name):
+                checklist = _pre_stage_checklist(doc)
+                clone_dir = _stage_clone_dir(checklist)
+                ordered_steps = (
+                    f"git -C {clone_dir} reset --hard",
+                    f"git -C {clone_dir} clean -fd",
+                    "./reset ws1 --yes",
+                    "./verify-start-point ws1",
+                )
+                positions = []
+                for step in ordered_steps:
+                    self.assertIn(step, checklist, f"{name} T-15 missing: {step}")
+                    positions.append(checklist.index(step))
+                self.assertEqual(
+                    positions,
+                    sorted(positions),
+                    f"{name}: reset the clone's code before resetting ws1 data",
+                )
+                self.assertRegex(checklist, r"(?i)every rehearsal")
+
+    def test_stage_clean_env_and_preflight_are_window_2_commands(self) -> None:
+        for name, doc in (("DEMO.md", self.demo), ("runbook", self.runbook)):
+            sections = re.split(r"^(?=#{2,4} )", doc, flags=re.MULTILINE)
+            labelled = 0
+            for section in sections:
+                commands = "\n".join(_bash_blocks(section))
+                if not re.search(r"\./(stage-clean-env|preflight)\b", commands):
+                    continue
+                labelled += 1
+                heading = section.splitlines()[0]
+                with self.subTest(doc=name, section=heading):
+                    self.assertIn("Window 2", section)
+            self.assertGreaterEqual(labelled, 3, f"{name}: stash, preflight, restore")
+
+    def test_no_main_only_script_runs_from_the_stage_clone(self) -> None:
+        main_only = re.compile(
+            r"(?:^|[;&|]\s*)\./(" + "|".join(MAIN_ONLY_SCRIPTS) + r")\b"
+        )
+        for name, doc in (("DEMO.md", self.demo), ("runbook", self.runbook)):
+            with self.subTest(doc=name):
+                # Checking out the stage branch in the presenter repo is the
+                # one-checkout model this setup replaces.
+                self.assertNotIn("git checkout workstream-1-start", doc)
+                clone_dir = _stage_clone_dir(doc)
+                for block in _bash_blocks(doc):
+                    in_clone = False
+                    for line in block.splitlines():
+                        line = line.strip()
+                        cd = re.match(r"cd\s+(\S+)", line)
+                        if cd:
+                            in_clone = cd.group(1).startswith(clone_dir)
+                        if in_clone:
+                            self.assertIsNone(
+                                main_only.search(line),
+                                f"{name} runs a main-only script from the "
+                                f"stage clone: {line}",
+                            )
+
+    def test_window_1_opens_on_the_stage_clone(self) -> None:
+        for name, doc in (("DEMO.md", self.demo), ("runbook", self.runbook)):
+            with self.subTest(doc=name):
+                checklist = _pre_stage_checklist(doc)
+                clone_dir = _stage_clone_dir(checklist)
+                layout = next(
+                    section
+                    for section in re.split(r"^(?=### )", checklist, flags=re.MULTILINE)
+                    if section.startswith("### ") and "**Window 1" in section
+                )
+                self.assertIn(clone_dir, layout)
+                self.assertRegex(layout, r"\*\*Window 2[^\n]*`main`")
+
+    def test_readme_notes_the_two_stage_windows(self) -> None:
+        self.assertRegex(self.readme, r"Window 1[^\n]*workstream-1-start")
+        self.assertRegex(self.readme, r"Window 2[^\n]*`main`")
+        self.assertIn("DEMO.md#2-pre-stage-checklist-t-15-minutes", self.readme)
+
+    def test_reuser_guide_explains_the_two_repository_setup(self) -> None:
+        guide = self.reuser_guide
+        self.assertIn("git clone --single-branch --branch workstream-1-start ", guide)
+        clone_dir = _stage_clone_dir(guide)
+        self.assertIn(f"git -C {clone_dir} remote remove origin", guide)
+        self.assertIn(f"cp demo.env {clone_dir}/", guide)
+        self.assertIn("Window 1", guide)
+        self.assertIn("Window 2", guide)
+        self.assertRegex(guide, r"(?i)worktree")
+        self.assertIn("git show main:", guide)
 
     def test_runbook_covers_per_segment_timings_prompts_and_narration(self) -> None:
         content = self.runbook
