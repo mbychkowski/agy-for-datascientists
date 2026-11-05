@@ -8,6 +8,17 @@
 #   3. Blocks invalid `spark.dataproc.ShieldedVm.*` properties on Dataproc Serverless.
 #   4. Blocks all agent access (read or write, SQL or CLI or MCP) to `checkpoint`.
 #   5. Blocks DML/DDL and mutating CLI commands against read-only `raw` and `ops`.
+#
+# The Dataproc checks (2-3 above) skip lines that only carry prose: text-only
+# commands, with git and gh limited to PROSE_SUBCOMMANDS (commit, tag, issue,
+# pr, ...), so commit messages and issue bodies can name the blocked flags. A
+# real submit, chained or behind bash -c, is still denied.
+#
+# The checkpoint and raw/ops checks (4-5 above, step 3 in check_shell_command)
+# run on every shell command except text-only ones: every command is on
+# TEXT_ONLY_COMMANDS (git, gh, echo, cat, ...) and nothing in the line can reach
+# BigQuery. This lets prose in commit messages, gh bodies, and heredocs into
+# files name the `checkpoint` dataset without being read as SQL.
 # ==============================================================================
 
 set -uo pipefail
@@ -334,9 +345,180 @@ def check_bq_segment(segment: str, fallback_ds: str = ""):
                 deny(RAW_OPS_DENY_REASON)
 
 
+# Commands that only handle text (messages, file contents, listings) and never
+# send SQL to BigQuery. No shells, interpreters, make, env, or ssh.
+TEXT_ONLY_COMMANDS = {
+    "git", "gh", "cd", "echo", "printf", "cat", "ls", "grep", "head", "tail", "wc", "diff", "mkdir", "touch",
+}
+BIGQUERY_WORD_RE = re.compile(r"\b(?:bq|gcloud|bigquery)\b", re.IGNORECASE)
+# Substitution and eval-like words, plus git hook paths a same-line write could make git run.
+INDIRECTION_RE = re.compile(r"\$\(|`|<\(|>\(|\b(?:eval|source|exec|xargs)\b|\.husky|\.git/hooks|hooksPath")
+# git and gh arguments that make the allowlisted command run a shell command.
+SHELL_RUNNING_ARGS = {
+    "git": {"-c", "--config-env", "--exec-path", "-x", "--exec", "bisect", "submodule", "filter-branch"},
+    "gh": {"alias", "extension"},
+}
+# The only git and gh subcommands whose text the Dataproc checks skip. git and gh
+# have many more options that run a command, so this list names what is allowed.
+PROSE_SUBCOMMANDS = {
+    "git": {"add", "commit", "tag"},
+    "gh": {"issue", "pr"},
+}
+HEREDOC_RE = re.compile(r"<<(-?)[ \t]*(?:\x27([^\x27\n]+)\x27|\"([^\"\n]+)\"|\\?([A-Za-z0-9_.-]+))")
+
+
+def split_shell_commands(cmd: str):
+    """Split cmd on unquoted ; && || | & and newlines, dropping heredoc bodies.
+
+    Returns None when a quote is unterminated, a heredoc cannot be parsed, an
+    unquoted # starts a comment (a comment can hide text from this splitter), or
+    an ANSI-C $'...' string appears (bash reads its backslash escapes, this does not).
+    """
+    parts: list = []
+    buf: list = []
+    pending: list = []
+    quote = ""
+    word_start = True
+    i, n = 0, len(cmd)
+    while i < n:
+        c = cmd[i]
+        if quote:
+            if c == "\\" and quote == "\"":
+                buf.append(cmd[i : i + 2])
+                i += 2
+                continue
+            if c == quote:
+                quote = ""
+            buf.append(c)
+            i += 1
+            continue
+        if c in (" ", "\t"):
+            word_start = True
+            buf.append(c)
+            i += 1
+            continue
+        if c == "#" and word_start:
+            return None
+        word_start = False
+        if c in ("\x27", "\""):
+            if c == "\x27" and cmd[i - 1 : i] == "$":
+                return None
+            quote = c
+        elif c == "\\":
+            buf.append(cmd[i : i + 2])
+            i += 2
+            continue
+        elif cmd.startswith("<<<", i):
+            buf.append("<<<")
+            i += 3
+            continue
+        elif cmd.startswith("<<", i):
+            m = HEREDOC_RE.match(cmd, i)
+            if not m:
+                return None
+            delim = next(g for g in m.groups()[1:] if g is not None)
+            pending.append((m.group(1) == "-", delim))
+            buf.append(m.group(0))
+            i = m.end()
+            continue
+        elif c == "&" and (cmd[i - 1 : i] in (">", "<") or cmd.startswith("&>", i)):
+            buf.append(c)
+            i += 1
+            continue
+        elif c in (";", "&", "|", "\n"):
+            parts.append("".join(buf))
+            buf.clear()
+            word_start = True
+            i += 1
+            if c == "\n" and pending:
+                for strip_tabs, delim in pending:
+                    while True:
+                        if i >= n:
+                            return None
+                        nl = cmd.find("\n", i)
+                        end = n if nl == -1 else nl
+                        line = cmd[i:end]
+                        i = end + 1
+                        if (line.lstrip("\t") if strip_tabs else line).rstrip("\r") == delim:
+                            break
+                pending.clear()
+            continue
+        buf.append(c)
+        i += 1
+    if quote or pending:
+        return None
+    parts.append("".join(buf))
+    return parts
+
+
+def text_command_words(cmd: str):
+    """Return the words of each command in the line when all of them only handle text.
+
+    Every command must start with a TEXT_ONLY_COMMANDS word, with no substitution,
+    eval, source, exec, xargs, git hook path, or git/gh option that runs a shell
+    command, even with the name split by quotes or backslashes. Words inside quoted
+    strings and heredoc bodies are prose, not commands.
+    Returns None otherwise, or when the line fails to parse.
+    """
+    if INDIRECTION_RE.search(cmd) or INDIRECTION_RE.search(re.sub(r"[\"\x27\\\\]", "", cmd)):
+        return None
+    parts = split_shell_commands(cmd)
+    if parts is None:
+        return None
+    commands = []
+    for part in parts:
+        try:
+            words = shlex.split(part, posix=True)
+        except ValueError:
+            return None
+        if not words:
+            continue
+        if words[0] not in TEXT_ONLY_COMMANDS:
+            return None
+        if words[0] in SHELL_RUNNING_ARGS and SHELL_RUNNING_ARGS[words[0]].intersection(words[1:]):
+            return None
+        commands.append(words)
+    return commands
+
+
+def is_text_only_command(cmd: str) -> bool:
+    """True when the checkpoint and raw/ops text checks can be skipped.
+
+    Every command must pass text_command_words, and nothing in the line (heredoc
+    bodies and quoted strings included) may name bq, gcloud, or bigquery, even
+    split by quotes or backslashes. Anything else keeps the strict check.
+    """
+    unquoted = re.sub(r"[\"\x27\\\\]", "", cmd)
+    if BIGQUERY_WORD_RE.search(unquoted):
+        return False
+    return text_command_words(cmd) is not None
+
+
+def is_prose_only_command(cmd: str) -> bool:
+    """True when the Dataproc flag checks can be skipped.
+
+    Every command must pass text_command_words, and each git or gh command must
+    use a PROSE_SUBCOMMANDS subcommand right after the command word (commit
+    messages, tags, issue and PR bodies). The line may name gcloud, so this
+    stricter allowlist stands in for the word check in is_text_only_command.
+    """
+    commands = text_command_words(cmd)
+    if commands is None:
+        return False
+    return all(
+        words[0] not in PROSE_SUBCOMMANDS or (len(words) > 1 and words[1] in PROSE_SUBCOMMANDS[words[0]])
+        for words in commands
+    )
+
+
 def check_shell_command(cmd: str):
     if not cmd or not cmd.strip():
         return
+
+    # The text-only and prose-only parsers get the raw line: bash does not join
+    # backslash-newline inside a quoted heredoc body, so collapsing first could
+    # hide a heredoc terminator and make a real command look like body text.
+    raw_cmd = cmd
 
     # Collapse backslash-newline line continuations before inspecting commands
     cmd = re.sub(r"\\\r?\n", " ", cmd)
@@ -348,8 +530,9 @@ def check_shell_command(cmd: str):
             "Push a feature branch from .worktree/issue-XXX and open a PR with gh pr create."
         )
 
-    # 2. Block ADR 0002 --service-account or invalid ShieldedVm properties on Dataproc Serverless batches
-    if "dataproc batches submit" in cmd:
+    # 2. Block ADR 0002 --service-account or invalid ShieldedVm properties on Dataproc Serverless batches.
+    # Skipped when the line only carries prose, so commit messages and issue bodies can name the flags.
+    if "dataproc batches submit" in cmd and not is_prose_only_command(raw_cmd):
         if "--service-account" in cmd:
             deny(
                 "ADR 0002 violation: Dataproc Serverless batches must run as the presenter identity "
@@ -361,7 +544,9 @@ def check_shell_command(cmd: str):
                 "spark.dataproc.ShieldedVm.* properties."
             )
 
-    # 3. Inspect bq CLI commands and embedded SQL
+    # 3. Inspect bq CLI commands and embedded SQL, unless the command is text-only
+    if is_text_only_command(raw_cmd):
+        return
     if re.search(r"\bbq\b", cmd):
         cmd_ds_list = re.findall(
             r"--dataset(?:_id)?(?:\s*=\s*|\s+)[\"\x27]?([A-Za-z0-9_${}.:-]+)",
