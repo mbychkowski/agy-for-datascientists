@@ -38,4 +38,4 @@ Make every change in its own worktree and land it through a PR; the main checkou
 
 ### Verification guardrail
 
-Every commit runs the full guardrail (`.husky/pre-commit`, mirrored by CI): ruff, glossary, tests, shellcheck and Terraform checks, about 3 minutes. Run single test files while iterating (for docs-only changes, `make check-docs` runs the glossary check, ruff and the doc tests in seconds), then commit once per finished step and wait for the commit to finish before staging more changes.
+Every commit runs the full guardrail (`.husky/pre-commit`, mirrored by CI): ruff, glossary, tests, shellcheck and Terraform checks, about 3 minutes. Run single test files while iterating; for docs-only changes run `make check-docs` instead. Commit once per finished step and wait for the commit to finish before staging more changes.
