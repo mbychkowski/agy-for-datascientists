@@ -12,6 +12,9 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 RUNBOOK_PATH = REPO_ROOT / "docs" / "presenter-runbook.md"
 REUSER_GUIDE_PATH = REPO_ROOT / "docs" / "reuser-guide.md"
 RECORDED_RUNTIMES_PATH = REPO_ROOT / "docs" / "recorded_runtimes.json"
+EQUIVALENCE_SQL = (REPO_ROOT / "sql" / "verify_clean_equivalence.sql").read_text(
+    encoding="utf-8"
+)
 README_PATH = REPO_ROOT / "README.md"
 DEMO_PATH = REPO_ROOT / "DEMO.md"
 STAGE_CLEAN_BIN = REPO_ROOT / "bin" / "stage-clean-env"
@@ -369,6 +372,13 @@ class TestPresenterRunbookAndReuserDocs(unittest.TestCase):
                     self.assertIn(pin, prompt)
                 self.assertIn("staging.hospital_flu_clean", prompt)
                 # ADR 0002: the batch runs as the presenter identity.
+                # The equivalence SQL compares these columns by name, so the
+                # agent has to write exactly the reference schema.
+                select = re.search(
+                    r"pyspark_clean AS \(\s*SELECT(.*?)FROM", EQUIVALENCE_SQL, re.DOTALL
+                )
+                for column in re.findall(r"(\w+),?\n", select.group(1)):
+                    self.assertRegex(prompt, rf"\b{column}\b")
                 self.assertNotIn("--service-account", section)
                 # The agent's batch replaces the presenter's early-start job.
                 self.assertNotIn("--async", section)
@@ -406,12 +416,20 @@ class TestPresenterRunbookAndReuserDocs(unittest.TestCase):
                     self.assertRegex(labels[0], r"(?i)fallback")
                     self.assertRegex(labels[0], r"`\d{2}:\d{2}`", "trigger time")
             with self.subTest(doc=name, rule="60-second rule"):
-                self.assertRegex(section, r"(?i)more than 60 seconds past")
+                self.assertRegex(section, r"(?i)60 seconds")
                 self.assertIn(f"{clean_runtime}s", section)
-                self.assertRegex(
-                    section,
-                    r"(?i)--sql-fallback[^\n]*reference pipeline, not the agent",
-                )
+                self.assertRegex(section, r"(?i)--sql-fallback[^\n]*reference pipeline")
+            with self.subTest(doc=name, rule="trigger order"):
+                # Fallback A fires once the batch is 60s past its runtime,
+                # Fallback B after A, and both before the Window 2 check.
+                trigger = {
+                    command: re.search(r"`(\d{2}:\d{2})`", label).group(1)
+                    for label, body in blocks
+                    for command in ("--sql-fallback", "ws1_staging_clean", "--verify")
+                    if command in body
+                }
+                self.assertLess(trigger["--sql-fallback"], trigger["ws1_staging_clean"])
+                self.assertLess(trigger["ws1_staging_clean"], trigger["--verify"])
 
     def test_docs_cite_the_real_equivalence_sql_file(self) -> None:
         self.assertTrue((REPO_ROOT / "sql" / "verify_clean_equivalence.sql").is_file())

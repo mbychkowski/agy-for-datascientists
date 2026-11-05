@@ -89,7 +89,7 @@ If a rehearsal left a commit in the stage clone, delete the clone and repeat Ste
 
 | Segment | Clock Window | Duration | Primary On-Stage Activity | Checkpoint Swap Command(s) |
 | :--- | :--- | :--- | :--- | :--- |
-| **Opening: Antigravity 101 & Command Center Tour** | `00:00–00:12` | **12 min** | Narrative framing (`+35%` Northeast **Spike** through **Cutoff** `2026-10-31`), tour of `ds-command-center` and `dak-bigquery`, live guardrail moment | *(N/A — pre-tool-use hook blocks writes)* |
+| **Opening: Antigravity 101 & Command Center Tour** | `00:00–00:12` | **12 min** | Narrative framing (`+35%` Northeast **Spike** through **Cutoff** `2026-10-31`), tour of `ds-command-center` and `dak-bigquery`, live guardrail moment on the agent's own tool call (Window 1) | *(N/A — pre-tool-use hook blocks writes)* |
 | **Workstream 1: "Is the Data Good to Use?"** | `00:12–00:47` | **35 min** | Segment 1A (`10 min`, Window 1): EDA & hospital × week heatmap<br>Segment 1B (`12 min`, Window 1): Parallel triage subagents, 4-cause **Attribution**, `stats-reviewer`<br>Segment 1C (`13 min`, Window 1): the agent writes `pipeline_clean.py` and submits its own Dataproc Serverless batch; Window 2: `./run-pipeline-clean --verify-equivalence` | Window 2: `./checkpoint ws1_eda_heatmap`<br>Window 2: `./checkpoint ws1_attribution`<br>Window 2 fallbacks: `./run-pipeline-clean --sql-fallback` or `./checkpoint ws1_staging_clean` |
 | **Workstream 2: "Forecast at Scale" & The Reveal** | `00:47–01:15` | **28 min** | Segment 2A (`8 min`): Seasonal features & BQML K-means **Cohorts**<br>Segment 2B (`10 min`): Early-start `ARIMA_PLUS` vs zero-shot `TimesFM` (`AI.FORECAST`) & WAPE leaderboard<br>Segment 2C (`6 min`): The **Reveal** finale<br>Segment 2D (`4 min`): Codify & run `cohort-forecast-refresh` skill | `./checkpoint ws2_seasonal_features`<br>`./checkpoint ws2_hospital_cohorts`<br>`./checkpoint ws2_experiment_trials`<br>`./checkpoint ws2_forecast_leaderboard` |
 | **Q&A & Wrap-Up** | `01:15–01:30` | **15 min** | Audience Q&A using the [Data Science Primer](data-science-primer.md) and post-stage environment restoration | `./stage-clean-env --restore` |
@@ -99,7 +99,7 @@ If a rehearsal left a commit in the stage clone, delete the clone and repeat Ste
 
 | Job Key / Step | Runner / Command | Recorded Runtime (`docs/recorded_runtimes.json`) | When to Trigger Early | Live Fallback / Checkpoint |
 | :--- | :--- | :--- | :--- | :--- |
-| `ws1_pipeline_clean_dataproc_runtime_3_0` (`pipelines/pipeline_clean.py`) | Window 1: the agent submits its own Dataproc Serverless batch | **`94s`** (`last_observed_seconds: 94` for the reference pipeline on Dataproc Serverless runtime `3.0`; SQL fallback **`5s`**) | **`00:38` (Segment 1C)**: The agent submits right after you approve its diff on `pipelines/pipeline_clean.py`; narrate orchestration patterns while the batch runs. If it runs more than 60 seconds past `94s`, swap in from Window 2 at **`00:42`**. | Window 2 fallbacks: `./run-pipeline-clean --sql-fallback` (`5s`, runs the reference pipeline, not the agent's) or `./checkpoint ws1_staging_clean` (`6s`) |
+| `ws1_pipeline_clean_dataproc_runtime_3_0` (`pipelines/pipeline_clean.py`) | Window 1: the agent submits its own Dataproc Serverless batch | **`94s`** (`last_observed_seconds: 94` for the reference pipeline on Dataproc Serverless runtime `3.0`; SQL fallback **`5s`**) | **`00:38` (Segment 1C)**: The agent submits right after you approve its diff on `pipelines/pipeline_clean.py`; narrate orchestration patterns while the batch runs. If it runs more than 60 seconds past `94s`, swap in from Window 2 at **`00:41`**. | Window 2 fallbacks: `./run-pipeline-clean --sql-fallback` (`5s`, runs the reference pipeline, not the agent's) or `./checkpoint ws1_staging_clean` (`6s`) |
 | `ws1_pipeline_v1_dataproc_runtime_3_0` (`pipelines/pipeline_v1.py`) | `./bin/run-pipeline-v1` | **`88s`** (`last_observed_seconds: 88` on Dataproc Serverless runtime `3.0`) | **Pre-stage only (`./setup`)**: Materialises defective `staging.hospital_flu` before the session starts; never run live on stage. | `./checkpoint ws1_pipeline_v1` (`6s`) |
 | `ws2_seasonal_features_and_kmeans` (`sql/ws2_kmeans_cohorts.sql`) | `./run-ws2-cohorts` | **`57s`** (`last_observed_seconds: 57` on the 90-hospital refined dataset) | **`00:47` (Start of Segment 2A)**: Trigger seasonal feature engineering and BQML `KMEANS` (`num_clusters=4`) immediately at the start of Segment 2A, then narrate the 4 seasonal curve features while `KMEANS` trains. | `./checkpoint ws2_seasonal_features` and `./checkpoint ws2_hospital_cohorts` (`6s` each) |
 | `ws2_arima_plus_cohort_training` & `ws2_timesfm_ai_forecast` (`sql/ws2_forecasts_and_trials.sql`) | `./run-ws2-forecasts` (or BQML `ARIMA_PLUS` + `AI.FORECAST`) | **`18s`–`45.6s`** (`ws2_arima_plus_cohort_training`, `last_observed_seconds: 18`) vs **`13s`–`14.0s`** (`ws2_timesfm_ai_forecast`, `last_observed_seconds: 13`) | **`00:55` (Start of Segment 2B)**: Trigger `ARIMA_PLUS` training first, then run zero-shot `TimesFM` (`AI.FORECAST`) and walk through `ml.experiment_trials` while `ARIMA_PLUS` finishes. | `./checkpoint ws2_experiment_trials` and `./checkpoint ws2_forecast_leaderboard` (`6s` each) |
@@ -196,7 +196,7 @@ If a rehearsal left a commit in the stage clone, delete the clone and repeat Ste
 
 * **Prompt 1 to Type (Window 1, `00:34`)**:
   ```text
-  Write pipelines/pipeline_clean.py, starting from pipelines/pipeline_v1.py. Deduplicate Hospital Feeds by (hospital_id, feed_date), keeping the row with the latest ingested_at and then batch_id, join raw.hospital_reference, and add a null-safe Positivity column that is NULL when total_flu_tests is 0 so Spark 4 ANSI mode never divides by zero. The output table is staging.hospital_flu_clean. Show me the diff against pipelines/pipeline_v1.py and wait for my approval before running anything.
+  Write pipelines/pipeline_clean.py, starting from pipelines/pipeline_v1.py. Deduplicate Hospital Feeds by (hospital_id, feed_date), keeping the row with the latest ingested_at and then the greatest batch_id, inner join raw.hospital_reference, and add a null-safe Positivity column named positivity that is NULL when total_flu_tests is 0 so Spark 4 ANSI mode never divides by zero. Write staging.hospital_flu_clean with exactly these columns: hospital_id, hospital_name, region, state, urban_rural, bed_count, feed_date, total_flu_tests, positive_flu_tests, positivity, batch_id, ingested_at. Show me the diff against pipelines/pipeline_v1.py and wait for my approval before running anything.
   ```
 * **Review the Diff (`00:34–00:38`)**: `pipelines/pipeline_clean.py` doesn't exist on `workstream-1-start`, so the agent writes it on stage. Check for a window function over `hospital_id` and `feed_date` ordered by `ingested_at` and `batch_id` descending, and a **Positivity** expression that returns `NULL` when `total_flu_tests` is `0`. If the code is wrong, ask the agent to fix it; if it can't be fixed by `00:40`, go straight to Fallback A.
 * **Prompt 2 to Type (Window 1, After Approving the Diff, `00:38`)**:
@@ -214,13 +214,13 @@ If a rehearsal left a commit in the stage clone, delete the clone and repeat Ste
   ```bash
   ./run-pipeline-clean --verify-equivalence
   ```
-* **The 60-Second Rule**: if a step runs more than 60 seconds past its recorded runtime, swap in from Window 2. For the agent's batch, that is `94s` + `60s` after submission, so trigger Fallback A at `00:42` if `staging.hospital_flu_clean` isn't written yet.
-* **Window 2 Fallback A (trigger at `00:42`, `5s`)**:
+* **The 60-Second Rule**: if a step runs more than 60 seconds past its recorded runtime, swap in from Window 2. For the agent's batch, that is `94s` + `60s` after submission, so with a `00:38` submission, trigger Fallback A at `00:41` if `staging.hospital_flu_clean` isn't written yet.
+* **Window 2 Fallback A (trigger at `00:41`, `5s`)**:
   ```bash
   ./run-pipeline-clean --sql-fallback
   ```
-  `--sql-fallback` materialises the reference pipeline, not the agent's: narrate it that way ("this is the reference result the agent's pipeline has to match"), then run the equivalence step above.
-* **Window 2 Fallback B (trigger at `00:43`, `6s`)**: if Fallback A errors or runs more than 60 seconds past its `5s` runtime, swap in the **Checkpoint**:
+  `--sql-fallback` materialises the reference pipeline, not the agent's: narrate it that way ("this is the reference result the agent's pipeline has to match"). The equivalence step then compares the reference with itself, so present it only as a duplicate-key check, not as proof of the agent's code.
+* **Window 2 Fallback B (trigger at `00:42`, `6s`)**: if Fallback A errors or runs more than 60 seconds past its `5s` runtime, swap in the **Checkpoint**:
   ```bash
   ./checkpoint ws1_staging_clean
   ```
