@@ -38,4 +38,4 @@ Make every change in its own worktree and land it through a PR; the main checkou
 
 ### Verification guardrail
 
-Run `uvx ruff check . && uvx ruff format --check . && make test && make lint-sh && make lint-tf` (mirrors `.husky/pre-commit` and CI) to execute formatting, linting, glossary, syntax, test, shellcheck, and Terraform validate/fmt suites.
+Every commit runs the full guardrail (`.husky/pre-commit`, mirrored by CI): ruff, glossary, tests, shellcheck and Terraform checks, about 3 minutes. Run single test files while iterating, then commit once per finished step and wait for the commit to finish before staging more changes.
