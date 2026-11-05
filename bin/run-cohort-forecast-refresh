@@ -30,7 +30,10 @@ ENV_FILE="${REPO_ROOT}/demo.env"
 PERIOD_LABEL="2026-W44"
 CUTOFF_DATE="2026-11-07"
 DATASET_DIR="${REPO_ROOT}/fixtures/mock_dataset"
-CLI_DATASET_SET=false
+# This runner reads a local dataset directory only, so opt out of the
+# Pinning module's DATASET_LOCATION override (which may be a gs:// URI).
+# shellcheck disable=SC2034  # read by pinned_load_env
+CLI_DATASET_SET=true
 OUTPUT_JSON=""
 
 usage() {
@@ -61,7 +64,6 @@ while [[ $# -gt 0 ]]; do
             ;;
         --dataset-dir)
             DATASET_DIR="$2"
-            CLI_DATASET_SET=true
             shift 2
             ;;
         --output-json)
