@@ -7,6 +7,8 @@
  *   node bin/check-glossary.js           # Check all git-tracked files
  *   node bin/check-glossary.js --staged  # Check git-staged files only
  *   node bin/check-glossary.js <file>... # Check specific files
+ *
+ * Also exports checkContent, findUnboldedTerms and loadGlossaryTerms for tests.
  */
 
 const fs = require('fs');
@@ -90,8 +92,9 @@ const VOCABULARY_RULES = [
     section: 'Causes of the Spike'
   },
   {
-    // Any "baseline <change>" phrase describes the Seasonal Ramp; a bare
-    // statistical "baseline" (e.g. a classical ARIMA_PLUS baseline) is fine.
+    // Any "baseline <change>" phrase describes the Seasonal Ramp. A bare
+    // "baseline" in the statistical sense (a classical ARIMA_PLUS baseline) is
+    // fine; its Start Point sense (GLOSSARY.md) is left to human review.
     pattern: /\bbaseline[- ](growths?|trends?|increases?|rises?)\b/i,
     prohibited: 'baseline growth / trend / increase / rise',
     preferred: 'Seasonal Ramp',
@@ -118,6 +121,9 @@ const VOCABULARY_RULES = [
 ];
 
 // Files and directories excluded from vocabulary checks
+// Presenter docs where every glossary term in prose must be **bolded**.
+const BOLD_REQUIRED_FILES = new Set(['DEMO.md', 'docs/presenter-runbook.md']);
+
 const EXCLUDED_PATHS = new Set([
   'GLOSSARY.md',
   'bin/check-glossary.js',
@@ -180,16 +186,21 @@ function checkFile(relPath) {
   } catch (err) {
     return [];
   }
+  return checkContent(relPath, content);
+}
 
+// Inline suppression: glossary-ignore on the line itself or the line above.
+function isIgnored(lines, i) {
+  return lines[i].includes('glossary-ignore') || (i > 0 && lines[i - 1].includes('glossary-ignore'));
+}
+
+function checkContent(relPath, content) {
   const lines = content.split('\n');
   const violations = [];
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-
-    // Check for inline suppression comment (e.g. glossary-ignore)
-    if (line.includes('glossary-ignore')) continue;
-    if (i > 0 && lines[i - 1].includes('glossary-ignore')) continue;
+    if (isIgnored(lines, i)) continue;
 
     for (const rule of VOCABULARY_RULES) {
       const match = rule.pattern.exec(line);
@@ -217,13 +228,11 @@ function checkFile(relPath) {
   return violations;
 }
 
-// Presenter docs where every glossary term in prose must be **bolded**.
-const BOLD_REQUIRED_FILES = new Set(['DEMO.md', 'docs/presenter-runbook.md']);
-
-// Glossary terms are the bold definition headings in GLOSSARY.md ("**Term**:").
+// Glossary terms are the bold definition headings in GLOSSARY.md: a "**Term**:"
+// line followed by its definition and an _Avoid_: line.
 function loadGlossaryTerms() {
   const glossary = fs.readFileSync(path.join(REPO_ROOT, 'GLOSSARY.md'), 'utf8');
-  return [...glossary.matchAll(/^\*\*(.+?)\*\*:/gm)].map(m => m[1]);
+  return [...glossary.matchAll(/^\*\*(.+?)\*\*:\n.*\n_Avoid_:/gm)].map(m => m[1]);
 }
 
 function escapeRegExp(text) {
@@ -231,8 +240,11 @@ function escapeRegExp(text) {
 }
 
 // Reports capitalised glossary terms (or plurals) that appear unbolded in prose.
-// Exempt: fenced code, headings, table header rows, inline code, link text,
-// text already in **bold**, and lines carrying glossary-ignore.
+// Exempt: fenced code, headings, table header rows, inline code, inline link
+// text, text already in **bold**, and glossary-ignore lines (see isIgnored).
+// Known limits: "Cohort-level" needs **Cohort**-level; a capitalised term
+// starting a sentence ("Reveal the ...") is flagged, so use glossary-ignore;
+// bare URLs, reference links, indented code and pipe-less tables aren't exempt.
 function findUnboldedTerms(content, terms) {
   const lines = content.split('\n');
   const patterns = terms.map(term => ({
@@ -248,15 +260,15 @@ function findUnboldedTerms(content, terms) {
       inFence = !inFence;
       continue;
     }
-    if (inFence || /^\s*#/.test(line) || line.includes('glossary-ignore')) continue;
+    if (inFence || /^\s*#/.test(line) || isIgnored(lines, i)) continue;
     const next = lines[i + 1] || '';
     if (/^\s*\|/.test(line) && /^\s*\|\s*:?-{3}/.test(next)) continue;
 
     // Blank out exempt spans so reported columns still match the original line.
     const blank = s => ' '.repeat(s.length);
     const prose = line
-      .replace(/\*\*.+?\*\*/g, blank)
       .replace(/`[^`]*`/g, blank)
+      .replace(/\*\*.+?\*\*/g, blank)
       .replace(/\[[^\]]*\]\([^)]*\)/g, blank);
 
     for (const { term, pattern } of patterns) {
@@ -322,4 +334,4 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { BOLD_REQUIRED_FILES, findUnboldedTerms, loadGlossaryTerms };
+module.exports = { checkContent, findUnboldedTerms, loadGlossaryTerms };
