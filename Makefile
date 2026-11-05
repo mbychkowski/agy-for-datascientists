@@ -1,4 +1,4 @@
-.PHONY: check test check-glossary lint-sh lint-tf
+.PHONY: check check-docs test check-glossary lint-sh lint-tf
 
 # Candidate paths for lint-sh. A file is checked when line 1 is a bash or sh shebang
 # (sh for .husky/pre-commit, which husky runs with `sh -e`) or, for sourced libraries,
@@ -7,6 +7,17 @@
 SHELLCHECK := uvx --from shellcheck-py==0.11.0.1 shellcheck
 SH_CANDIDATES := $(wildcard bin/* bin/lib/* .agents/plugins/*/bin/* .husky/pre-commit)
 SH_MARKER := ^(\#!.*[/ ](ba)?sh([[:space:]]|$$)|\# shellcheck shell=bash)
+
+# Ruff from PATH, then uvx, then /opt/uv; py_compile only if neither exists.
+RUFF_CHECK := if command -v ruff >/dev/null 2>&1; then \
+		ruff check . && ruff format --check .; \
+	elif command -v uvx >/dev/null 2>&1; then \
+		uvx ruff check . && uvx ruff format --check .; \
+	elif [ -x /opt/uv/uvx ]; then \
+		/opt/uv/uvx ruff check . && /opt/uv/uvx ruff format --check .; \
+	elif [ -d tests ]; then \
+		python3 -m py_compile tests/*.py lib/*.py; \
+	fi
 
 check: check-glossary
 	@echo "Checking scripts and Python test files..."
@@ -18,16 +29,20 @@ check: check-glossary
 			*) bash -n "$$f" ;; \
 		esac; \
 	done; fi
-	@if command -v ruff >/dev/null 2>&1; then \
-		ruff check . && ruff format --check .; \
-	elif [ -x /opt/uv/uvx ]; then \
-		/opt/uv/uvx ruff check . && /opt/uv/uvx ruff format --check .; \
-	elif [ -d tests ]; then \
-		python3 -m py_compile tests/*.py lib/*.py; \
-	fi
+	@$(RUFF_CHECK)
 
 check-glossary:
 	@node bin/check-glossary.js
+
+# Fast loop for docs-only changes: glossary, ruff and the doc-focused test modules.
+# Doc assertions inside workstream tests still run only in the full guardrail.
+DOC_TESTS := tests/test_runbook_and_reuser_docs.py tests/test_primer_and_outline.py \
+    tests/test_fallback_trigger_timing.py tests/test_check_glossary.py \
+    tests/test_worktree_workflow.py tests/test_check_docs_target.py
+
+check-docs: check-glossary
+	@$(RUFF_CHECK)
+	python3 -m unittest $(patsubst tests/%.py,tests.%,$(DOC_TESTS))
 
 test: check
 	@if [ -d tests ]; then python3 -m unittest discover -s tests; else echo "No tests directory found."; fi
