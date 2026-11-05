@@ -8,6 +8,7 @@ from tests.helpers import (
     PREFLIGHT_BIN,
     PREFLIGHT_SYMLINK,
     WORKTREE_ROOT,
+    create_demo_env_file,
     setup_preflight_test_env,
 )
 
@@ -518,6 +519,78 @@ class TestPreflightCLI(unittest.TestCase):
                     "[FAIL] Fresh agent sees Data Agent Kit skills installed in the workspace",
                     proc.stdout,
                 )
+
+
+def _run_preflight(
+    env_file: Path, env: dict[str, str]
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [str(PREFLIGHT_BIN), "--env", str(env_file)],
+        cwd=WORKTREE_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+class TestPreflightEnvironmentLoading(unittest.TestCase):
+    def test_preflight_sources_environment_file_exactly_once(self):
+        """preflight must load demo.env once in its main flow; checks re-validate without re-sourcing it."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env_file, env, _ = setup_preflight_test_env(tmpdir)
+            source_log = Path(tmpdir) / "sourced.log"
+            with env_file.open("a", encoding="utf-8") as fh:
+                fh.write(f'echo "$(basename "$0")" >> "{source_log}"\n')
+
+            proc = _run_preflight(env_file, env)
+
+            self.assertEqual(proc.returncode, 0, f"{proc.stdout}\n{proc.stderr}")
+            sourcers = source_log.read_text(encoding="utf-8").split()
+            self.assertEqual(sourcers.count("preflight"), 1, sourcers)
+
+    def test_missing_env_file_fails_env_check_despite_ambient_variables(self):
+        """With demo.env missing, preflight must not pass the environment check on inherited shell variables."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _, env, _ = setup_preflight_test_env(tmpdir)
+            env.update(
+                {
+                    "PROJECT_ID": "ambient-proj",
+                    "REGION": "us-central1",
+                    "STAGING_BUCKET": "ambient-staging",
+                    "STATE_BUCKET": "ambient-state",
+                }
+            )
+            missing = Path(tmpdir) / "missing.env"
+
+            proc = _run_preflight(missing, env)
+
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertIn("[FAIL] Environment file exists", proc.stdout)
+            self.assertIn(f"Environment file not found: {missing}", proc.stdout)
+            self.assertIn("cp demo.env.example demo.env", proc.stdout)
+            self.assertIn(
+                "[FAIL] Environment variables and overrides configured", proc.stdout
+            )
+
+    def test_placeholder_staging_bucket_fails_dataproc_probe_before_submit(self):
+        """A placeholder STAGING_BUCKET must fail the Dataproc probe with a remediation hint and no batch submit."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _, env, log_file = setup_preflight_test_env(tmpdir)
+            env_file = create_demo_env_file(
+                tmpdir, staging_bucket="your-staging-bucket"
+            )
+
+            proc = _run_preflight(env_file, env)
+
+            self.assertNotEqual(proc.returncode, 0)
+            dataproc_title = "[FAIL] Dataproc Serverless runtime 3.0 hello-world batch writes to BigQuery"
+            self.assertIn(dataproc_title, proc.stdout)
+            dataproc_block = proc.stdout.split(dataproc_title, 1)[1].split("\n[", 1)[0]
+            self.assertIn("STAGING_BUCKET", dataproc_block)
+            self.assertIn("terraform -chdir=infra apply", dataproc_block)
+            calls = log_file.read_text(encoding="utf-8") if log_file.exists() else ""
+            self.assertNotIn("dataproc batches submit", calls)
 
 
 if __name__ == "__main__":
