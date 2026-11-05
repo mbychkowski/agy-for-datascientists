@@ -208,4 +208,4 @@ When session time is constrained (e.g., a 45-minute executive briefing or 60-min
 * **[Data Science Primer](data-science-primer.md)**: Intuitions, methodological justifications, skeptic challenges, and Q&A-ready responses covering Positivity, Sampling Artifacts, Simpson's Paradox, K-means, ARIMA_PLUS, TimesFM, backtesting, and WAPE.
 * **[Domain Glossary](../GLOSSARY.md)**: Canonical terminology and vocabulary rules for all demo narratives, documentation, and agent prompts.
 * **[Architecture Decision Records (ADRs)](adr/)**: Foundational architectural decisions, including ADR 0001 (Answer Key Isolation) and repo design standards.
-* **Presenter Runbook & Execution Scripts**: Detailed operational step-by-step instructions, preflight verification checks, and live speaker staging checklists are documented in the companion presenter runbook (Issue #20).
+* **Presenter Run-Through & Execution Scripts**: Detailed operational step-by-step instructions, preflight verification checks, and live speaker staging checklists are documented in [DEMO.md](../DEMO.md), the single run-through for both Workstreams.

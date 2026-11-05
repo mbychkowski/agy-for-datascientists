@@ -36,7 +36,7 @@ check-glossary:
 
 # Fast loop for docs-only changes: glossary, ruff and the doc-focused test modules.
 # Doc assertions inside workstream tests still run only in the full guardrail.
-DOC_TESTS := tests/test_runbook_and_reuser_docs.py tests/test_primer_and_outline.py \
+DOC_TESTS := tests/test_demo_and_reuser_docs.py tests/test_primer_and_outline.py \
     tests/test_fallback_trigger_timing.py tests/test_check_glossary.py \
     tests/test_worktree_workflow.py tests/test_check_docs_target.py
 

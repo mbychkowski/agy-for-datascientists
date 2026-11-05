@@ -7,7 +7,7 @@
 # ml.experiment_trials, materialises the ranked leaderboard
 # (sql/ws2_leaderboard.sql) into ml.forecast_leaderboard, applies label
 # demo:true to both tables, and records observed runtimes in
-# docs/recorded_runtimes.json for the presenter runbook.
+# docs/recorded_runtimes.json for DEMO.md.
 # ==============================================================================
 
 set -uo pipefail

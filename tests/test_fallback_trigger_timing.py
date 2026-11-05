@@ -2,9 +2,8 @@
 
 Each trigger is computed from docs/recorded_runtimes.json: the step's start
 time plus its recorded (or estimated) runtime plus 60 seconds, rounded up to
-the next whole minute. The test then checks that DEMO.md and the presenter
-runbook state the computed times, so editing a runtime or a start time without
-the other fails. A slower live run recorded by bin/run-ws2-forecasts or
+the next whole minute. The test then checks that DEMO.md states the computed
+times, so editing a runtime or a start time without the other fails. A slower live run recorded by bin/run-ws2-forecasts or
 bin/run-pipeline-clean fails it too, on purpose: move the triggers in the docs.
 """
 
@@ -23,7 +22,6 @@ RUNTIMES = json.loads(
 )
 DOCS = {
     "DEMO.md": REPO_ROOT / "DEMO.md",
-    "docs/presenter-runbook.md": REPO_ROOT / "docs" / "presenter-runbook.md",
 }
 RULE_SECONDS = 60
 
@@ -52,7 +50,6 @@ STEPS = (
         ("ws1_pipeline_clean_dataproc_runtime_3_0", "sql_fallback_observed_seconds"),
         {
             "DEMO.md": "| **Workstream 1C ",
-            "docs/presenter-runbook.md": "| `ws1_pipeline_clean_dataproc_runtime_3_0` ",
         },
         {
             "./run-pipeline-clean --sql-fallback": "A",
@@ -66,7 +63,6 @@ STEPS = (
         ("ws2_seasonal_features_and_kmeans", None),
         {
             "DEMO.md": "| **Workstream 2A ",
-            "docs/presenter-runbook.md": "| `ws2_seasonal_features_and_kmeans` ",
         },
         {
             "./run-ws2-cohorts": "A",
@@ -82,7 +78,6 @@ STEPS = (
         ("ws2_forecasts_reference_runner", None),
         {
             "DEMO.md": "| **Workstream 2B ",
-            "docs/presenter-runbook.md": "| `ws2_arima_plus_cohort_training` ",
         },
         {
             "./run-ws2-forecasts": "A",
@@ -98,7 +93,6 @@ STEPS = (
         None,
         {
             "DEMO.md": "| **Workstream 2D ",
-            "docs/presenter-runbook.md": "| `cohort-forecast-refresh` ",
         },
         {"./run-cohort-forecast-refresh --period 2026-W44": "A"},
     ),

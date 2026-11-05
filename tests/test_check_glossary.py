@@ -112,7 +112,7 @@ A deliberate Attribution mention. <!-- glossary-ignore -->
         found = _unbolded("`a**b` Attribution `c**d`\n")
         self.assertEqual([v["match"] for v in found], ["Attribution"])
 
-    def test_bold_check_applies_only_to_demo_and_runbook(self) -> None:
+    def test_bold_check_applies_only_to_demo(self) -> None:
         script = (
             "const g = require(process.argv[1]);"
             "const out = {};"
@@ -123,10 +123,10 @@ A deliberate Attribution mention. <!-- glossary-ignore -->
         )
         files = [
             "DEMO.md",
-            "docs/presenter-runbook.md",
-            "docs\\presenter-runbook.md",
             "README.md",
             "docs/demo-outline.md",
+            "docs/reuser-guide.md",
+            "docs\\reuser-guide.md",
         ]
         counts = json.loads(
             subprocess.run(
@@ -140,10 +140,10 @@ A deliberate Attribution mention. <!-- glossary-ignore -->
             counts,
             {
                 "DEMO.md": 1,
-                "docs/presenter-runbook.md": 1,
-                "docs\\presenter-runbook.md": 1,
                 "README.md": 0,
                 "docs/demo-outline.md": 0,
+                "docs/reuser-guide.md": 0,
+                "docs\\reuser-guide.md": 0,
             },
         )
 

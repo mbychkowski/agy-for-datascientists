@@ -611,7 +611,7 @@ class TestRefinedDatasetSwitchover(unittest.TestCase):
                 str(WORKTREE_ROOT / "bin" / "check-glossary.js"),
                 str(WORKTREE_ROOT / "demo.env.example"),
                 str(WORKTREE_ROOT / "docs" / "reuser-guide.md"),
-                str(WORKTREE_ROOT / "docs" / "presenter-runbook.md"),
+                str(WORKTREE_ROOT / "DEMO.md"),
                 str(LOAD_RAW_OPS_BIN),
                 str(SETUP_BIN),
                 str(RESET_BIN),
