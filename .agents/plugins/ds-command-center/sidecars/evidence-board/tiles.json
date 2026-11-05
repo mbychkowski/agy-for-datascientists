@@ -1,5 +1,5 @@
 {
-  "_comment": "Tile manifest: the single source of truth for every Evidence Board Tile, in demo order. Tables and chart queries may only touch staging, features or ml (board/manifest.py rejects anything else). Chart queries for 1A-2D are placeholders until their tickets (#94-#96) land; 2D's readiness rule is deferred to #96.",
+  "_comment": "Tile manifest: the single source of truth for every Evidence Board Tile, in demo order. Tables and chart queries may only touch staging, features or ml (board/manifest.py rejects anything else). Only the Opening can land in this slice: 1A-2D use the deferred readiness rule, and their chart queries and 'proves' lines are placeholders, until their tickets (#94-#96) define them.",
   "tiles": [
     {
       "id": "opening",
@@ -42,7 +42,7 @@
       "step": "Segment 1A",
       "title": "Where the Spike lives",
       "tables": ["staging.ws1_eda_heatmap"],
-      "readiness": {"rule": "non_empty"},
+      "readiness": {"rule": "deferred"},
       "chart": {
         "type": "heatmap",
         "query": "SELECT * FROM `staging.ws1_eda_heatmap` LIMIT 500"
@@ -55,7 +55,7 @@
       "step": "Segment 1B",
       "title": "Attribution of the Spike",
       "tables": ["staging.ws1_attribution"],
-      "readiness": {"rule": "non_empty"},
+      "readiness": {"rule": "deferred"},
       "chart": {
         "type": "waterfall",
         "query": "SELECT * FROM `staging.ws1_attribution` LIMIT 50"
@@ -68,7 +68,7 @@
       "step": "Segment 1C",
       "title": "The Pipeline Defect removed",
       "tables": ["staging.hospital_flu_clean"],
-      "readiness": {"rule": "non_empty"},
+      "readiness": {"rule": "deferred"},
       "chart": {
         "type": "before_after",
         "query": "SELECT * FROM `staging.hospital_flu_clean` LIMIT 500"
@@ -81,7 +81,7 @@
       "step": "Segment 2A",
       "title": "Hospital Cohorts",
       "tables": ["features.hospital_cohorts"],
-      "readiness": {"rule": "non_empty"},
+      "readiness": {"rule": "deferred"},
       "chart": {
         "type": "cohorts",
         "query": "SELECT * FROM `features.hospital_cohorts` LIMIT 500"
@@ -94,7 +94,7 @@
       "step": "Segment 2B",
       "title": "WAPE leaderboard",
       "tables": ["ml.forecast_leaderboard"],
-      "readiness": {"rule": "non_empty"},
+      "readiness": {"rule": "deferred"},
       "chart": {
         "type": "leaderboard",
         "query": "SELECT * FROM `ml.forecast_leaderboard` LIMIT 200"
@@ -107,7 +107,7 @@
       "step": "Segment 2C",
       "title": "The Reveal",
       "tables": ["ml.reveal_forecast_evaluation"],
-      "readiness": {"rule": "non_empty"},
+      "readiness": {"rule": "deferred"},
       "chart": {
         "type": "reveal",
         "query": "SELECT * FROM `ml.reveal_forecast_evaluation` LIMIT 500"

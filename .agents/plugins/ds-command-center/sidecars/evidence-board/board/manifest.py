@@ -23,6 +23,12 @@ _TABLE_NAME = re.compile(r"^([a-z_]+)\.([A-Za-z0-9_]+)$")
 _FORBIDDEN_DATASET_REF = re.compile(r"(?i)(?<![\w.])`?(raw|ops|checkpoint)`?\s*\.")
 # Table references after FROM/JOIN, with or without backticks.
 _FROM_REF = re.compile(r"(?i)\b(?:FROM|JOIN)\s+`?([\w.-]+)`?")
+# A second table in a comma cross-join: FROM `a.b` [AS x], other.t
+_COMMA_JOIN_REF = re.compile(
+    r"(?i)\b(?:FROM|JOIN)\s+`?[\w.-]+`?(?:\s+(?:AS\s+)?\w+)?\s*,\s*`?([\w.-]+)`?"
+)
+# Every backtick-quoted dotted identifier, wherever it appears.
+_QUOTED_REF = re.compile(r"`([^`]*\.[^`]*)`")
 _MUTATING_KEYWORD = re.compile(
     r"(?i)\b(INSERT|UPDATE|DELETE|MERGE|CREATE|ALTER|DROP|TRUNCATE|GRANT|REVOKE"
     r"|EXPORT|LOAD|CALL|EXECUTE|DECLARE|SET|BEGIN)\b"
@@ -163,7 +169,12 @@ def _check_query(tile_id: str, query: str, tables: list[str]) -> None:
         raise ManifestError(
             f"Tile {tile_id}: chart query must be read-only, found {keyword.group(1)}"
         )
-    for ref in _FROM_REF.findall(query):
+    refs = (
+        _FROM_REF.findall(query)
+        + _COMMA_JOIN_REF.findall(query)
+        + _QUOTED_REF.findall(query)
+    )
+    for ref in refs:
         parts = ref.split(".")
         if len(parts) == 1:
             continue  # a CTE name or UNNEST

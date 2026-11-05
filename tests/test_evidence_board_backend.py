@@ -21,7 +21,7 @@ import unittest
 import urllib.request
 from pathlib import Path
 
-from tests.helpers import WORKTREE_ROOT
+from tests.helpers import WORKTREE_ROOT, create_demo_env_file
 
 BOARD_DIR = (
     WORKTREE_ROOT
@@ -312,6 +312,9 @@ class ManifestContractTest(unittest.TestCase):
             "SELECT * FROM `staging.hospital_flu` JOIN raw.hospital_reference USING (hospital_id)",
             "SELECT * FROM `other-project.staging.hospital_flu`",
             "SELECT * FROM `staging.ws1_attribution`",
+            "SELECT * FROM `staging.hospital_flu`, `other.t`",
+            "SELECT * FROM `staging.hospital_flu` AS h, other.t",
+            "SELECT `other.t`.x FROM `staging.hospital_flu`",
             "DELETE FROM `staging.hospital_flu` WHERE TRUE",
             "SELECT 1; DROP TABLE staging.hospital_flu",
         ]
@@ -325,6 +328,10 @@ class ManifestContractTest(unittest.TestCase):
         manifest = parse_manifest(_manifest_with(chart={"type": "bar", "query": query}))
 
         self.assertEqual(manifest.tiles[0].chart_query, query)
+
+
+def _env_without_port() -> dict[str, str]:
+    return {k: v for k, v in os.environ.items() if k != "ANTIGRAVITY_SIDECAR_WEB_PORT"}
 
 
 def _free_port() -> int:
@@ -347,9 +354,7 @@ class LauncherTest(unittest.TestCase):
 
     def _serve(self, args: list[str], env_port: int | None) -> tuple[int, str]:
         """Start the backend, wait for /api/health, return (bound port, log output)."""
-        env = {
-            k: v for k, v in os.environ.items() if k != "ANTIGRAVITY_SIDECAR_WEB_PORT"
-        }
+        env = _env_without_port()
         if env_port is not None:
             env["ANTIGRAVITY_SIDECAR_WEB_PORT"] = str(env_port)
         cmd = [sys.executable, "-m", "board", "--fake-catalog", str(self.fake), *args]
@@ -411,9 +416,7 @@ class LauncherTest(unittest.TestCase):
         self.assertIn(f"127.0.0.1:{flag_port}", output)
 
     def test_refuses_to_start_without_a_port(self) -> None:
-        env = {
-            k: v for k, v in os.environ.items() if k != "ANTIGRAVITY_SIDECAR_WEB_PORT"
-        }
+        env = _env_without_port()
 
         result = subprocess.run(
             [sys.executable, "-m", "board", "--fake-catalog", str(self.fake)],
@@ -431,9 +434,7 @@ class LauncherTest(unittest.TestCase):
     def test_refuses_to_start_against_bigquery_without_pinned_project_and_region(
         self,
     ) -> None:
-        (self.tmp / "demo.env").write_text(
-            "PROJECT_ID=your-project-id\nREGION=us-central1\n", "utf-8"
-        )
+        create_demo_env_file(self.tmp, project_id="your-project-id")
 
         result = subprocess.run(
             [
@@ -454,6 +455,23 @@ class LauncherTest(unittest.TestCase):
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("PROJECT_ID", result.stderr)
+
+    @unittest.skipIf(
+        (WORKTREE_ROOT / "demo.env").exists(),
+        "a real demo.env would send the board to BigQuery",
+    )
+    def test_defaults_to_the_demo_env_at_the_repo_root(self) -> None:
+        result = subprocess.run(
+            [sys.executable, "-m", "board", "--port", str(_free_port())],
+            cwd=BOARD_DIR,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(str(WORKTREE_ROOT / "demo.env"), result.stderr)
 
 
 if __name__ == "__main__":

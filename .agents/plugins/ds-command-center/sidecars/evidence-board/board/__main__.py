@@ -19,9 +19,10 @@ from board.manifest import ManifestError, load_manifest
 
 HOST = "127.0.0.1"
 PORT_ENV = "ANTIGRAVITY_SIDECAR_WEB_PORT"
-BOARD_DIR = Path(__file__).resolve().parent.parent
+SIDECAR_DIR = Path(__file__).resolve().parent.parent
 # In the repo the sidecar lives at <repo>/.agents/plugins/ds-command-center/sidecars/evidence-board.
-DEFAULT_WORKSPACE = BOARD_DIR.parents[3]
+# The installed copy (#91) is outside the repo, so it must pass --workspace.
+DEFAULT_WORKSPACE = SIDECAR_DIR.parents[4]
 
 
 def _port(flag: int | None, env: dict[str, str]) -> int:
@@ -47,7 +48,10 @@ def main(argv: list[str] | None = None) -> int:
         help="repo root holding demo.env",
     )
     parser.add_argument(
-        "--manifest", type=Path, default=BOARD_DIR / "tiles.json", help="Tile manifest"
+        "--manifest",
+        type=Path,
+        default=SIDECAR_DIR / "tiles.json",
+        help="Tile manifest",
     )
     parser.add_argument(
         "--fake-catalog", type=Path, help="offline catalog JSON instead of BigQuery"

@@ -62,10 +62,6 @@ class FakeCatalog:
                 "rows": list(rows or []),
             }
 
-    def drop_table(self, table: str) -> None:
-        with self._lock:
-            self._tables.pop(table, None)
-
     def table_info(self, table: str) -> TableInfo | None:
         with self._lock:
             if self.failing:
