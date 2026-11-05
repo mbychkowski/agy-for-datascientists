@@ -125,6 +125,7 @@ def setup_preflight_test_env(
     clean_equiv_diff_ab: int = 0,
     clean_equiv_diff_ba: int = 0,
     clean_equiv_dup_keys: int = 0,
+    clean_equiv_status_preamble: bool = False,
 ) -> tuple[Path, dict[str, str], Path]:
     """Build a complete mock CLI and ADC environment for testing bin/preflight and CLIs."""
     tmp_path = Path(tmpdir)
@@ -301,6 +302,11 @@ exit 0
         f'"diff_a_minus_b_count":{clean_equiv_diff_ab},"diff_b_minus_a_count":{clean_equiv_diff_ba},'
         f'"duplicate_key_count":{clean_equiv_dup_keys}}}]'
     )
+    clean_equiv_preamble = (
+        'echo "Waiting on bqjob_r1_000001 ... (0s) [status] Current status: DONE"'
+        if clean_equiv_status_preamble
+        else ":"
+    )
 
     fake_bq = bin_dir / "bq"
     fake_bq.write_text(
@@ -451,6 +457,7 @@ for tok in args:
     exit 0
 fi
 if [[ "$*" == *"diff_a_minus_b_count"* ]]; then
+    {clean_equiv_preamble}
     echo '{clean_equiv_json}'
     exit 0
 fi

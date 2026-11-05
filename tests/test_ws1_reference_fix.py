@@ -549,6 +549,28 @@ class TestWorkstream1ReferenceFix(unittest.TestCase):
                 self.assertNotEqual(proc.returncode, 0)
                 self.assertIn(expected_err, f"{proc.stdout}\n{proc.stderr}")
 
+    def test_verify_equivalence_tolerates_bq_status_preamble(self) -> None:
+        """--verify-equivalence must parse the equivalence JSON even when bq prints a job status line first."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env_file, env, _ = setup_preflight_test_env(
+                tmpdir, clean_equiv_status_preamble=True
+            )
+            proc = subprocess.run(
+                [
+                    str(RUN_PIPELINE_CLEAN_BIN),
+                    "--env",
+                    str(env_file),
+                    "--verify-equivalence",
+                ],
+                cwd=WORKTREE_ROOT,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(proc.returncode, 0, f"{proc.stdout}\n{proc.stderr}")
+            self.assertIn("[PASS] Equivalence check passed", proc.stdout)
+
     def test_clean_staging_checkpoint_list_build_and_swap(self) -> None:
         """bin/checkpoint must list, build (from sql/staging_hospital_flu_clean.sql), and swap ws1_staging_clean into staging.hospital_flu_clean with demo:true."""
         list_proc = subprocess.run(

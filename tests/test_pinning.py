@@ -402,6 +402,65 @@ EOF
         self.assertNotEqual(proc3.returncode, 0)
 
 
+def _path_without(tools: set[str], extra_first: Path) -> str:
+    """Build a PATH that shadows every system tool except *tools*, with *extra_first* first."""
+    shadow = extra_first.parent / "sysbin"
+    shadow.mkdir(exist_ok=True)
+    for entry in os.environ.get("PATH", "").split(os.pathsep):
+        directory = Path(entry)
+        if not directory.is_dir():
+            continue
+        for tool in directory.iterdir():
+            link = shadow / tool.name
+            if tool.name in tools or link.exists() or link.is_symlink():
+                continue
+            link.symlink_to(tool)
+    return f"{extra_first}{os.pathsep}{shadow}"
+
+
+class TestPinnedRequireCli(unittest.TestCase):
+    def test_reports_each_missing_cli_and_passes_when_all_present(self) -> None:
+        """pinned_require_cli must fail with [FAIL] naming a missing CLI and succeed when all are on PATH."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _, env, _ = setup_preflight_test_env(tmpdir)
+            bin_dir = Path(tmpdir) / "bin"
+            (bin_dir / "bq").unlink()
+            env["PATH"] = _path_without({"bq"}, bin_dir)
+            missing = _run_bash("pinned_require_cli gcloud bq", env=env)
+            self.assertNotEqual(missing.returncode, 0)
+            self.assertIn(
+                "[FAIL] bq CLI is not installed or not on PATH", missing.stderr
+            )
+
+            present = _run_bash("pinned_require_cli gcloud", env=env)
+            self.assertEqual(present.returncode, 0, present.stderr)
+
+
+class TestWorkstream1RunnersFailFastWithoutBq(unittest.TestCase):
+    def test_runners_fail_before_dataproc_submit_when_bq_missing(self) -> None:
+        """WS1 runners must reject a missing bq CLI before submitting a Dataproc batch, not at the label step."""
+        for runner in ("run-pipeline-v1", "run-pipeline-clean"):
+            with self.subTest(runner=runner), tempfile.TemporaryDirectory() as tmpdir:
+                env_file, env, log_file = setup_preflight_test_env(tmpdir)
+                bin_dir = Path(tmpdir) / "bin"
+                (bin_dir / "bq").unlink()
+                env["PATH"] = _path_without({"bq"}, bin_dir)
+                proc = subprocess.run(
+                    [str(WORKTREE_ROOT / "bin" / runner), "--env", str(env_file)],
+                    cwd=WORKTREE_ROOT,
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertNotEqual(proc.returncode, 0)
+                self.assertIn("[FAIL] bq CLI is not installed", proc.stderr)
+                calls = (
+                    log_file.read_text(encoding="utf-8") if log_file.exists() else ""
+                )
+                self.assertNotIn("dataproc batches submit", calls)
+
+
 UNMIGRATED_PINNING_ALLOWLIST: frozenset[str] = frozenset(
     {
         "bin/bootstrap-tf-state",

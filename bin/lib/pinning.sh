@@ -59,6 +59,17 @@ pinned_load_env() {
   return 0
 }
 
+pinned_require_cli() {
+  local cli
+  for cli in "$@"; do
+    if ! command -v "${cli}" >/dev/null 2>&1; then
+      echo "[FAIL] ${cli} CLI is not installed or not on PATH" >&2
+      return 1
+    fi
+  done
+  return 0
+}
+
 pinned_bq() {
   if ! command -v bq >/dev/null 2>&1; then
     echo "[FAIL] bq CLI is not installed or not on PATH" >&2

@@ -76,6 +76,11 @@ if ! pinned_load_env "${ENV_FILE}"; then
     exit 1
 fi
 
+# Fail fast: the sync path labels via bq only after a multi-minute Dataproc batch.
+if ! pinned_require_cli gcloud bq; then
+    exit 1
+fi
+
 run_equivalence_verification() {
     local equiv_sql_file="${REPO_ROOT}/sql/verify_clean_equivalence.sql"
     if [[ ! -f "${equiv_sql_file}" ]]; then

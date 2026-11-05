@@ -52,6 +52,11 @@ if ! pinned_load_env "${ENV_FILE}"; then
     exit 1
 fi
 
+# Fail fast: the sync path labels via bq only after a multi-minute Dataproc batch.
+if ! pinned_require_cli gcloud bq; then
+    exit 1
+fi
+
 PIPELINE_SCRIPT="${REPO_ROOT}/pipelines/pipeline_v1.py"
 if [[ ! -f "${PIPELINE_SCRIPT}" ]]; then
     echo "[FAIL] Pipeline v1 script not found: ${PIPELINE_SCRIPT}" >&2
