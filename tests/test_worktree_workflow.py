@@ -114,6 +114,19 @@ class TestWorktreeDocs(unittest.TestCase):
         self.assertIn("git worktree list", agents_text)
         self.assertNotIn("pull `main`, and remove the worktree", agents_text)
 
+    def test_agents_md_briefs_reviewers_with_guardrail_result(self):
+        # Reviewers should not re-run or re-flag what the hook already enforces.
+        agents_text = AGENTS_MD.read_text(encoding="utf-8")
+        review_line = next(
+            (line for line in agents_text.splitlines() if "/code-review" in line), ""
+        )
+        self.assertRegex(review_line, r"(?i)guardrail.*re-?flag")
+
+    def test_agents_md_requires_scripted_edits_to_assert_match_counts(self):
+        # Silent zero- or over-matching replaces have mislabelled docs before.
+        agents_text = AGENTS_MD.read_text(encoding="utf-8")
+        self.assertRegex(agents_text, r"(?i)scripted.*edit.*match count.*mismatch")
+
     def test_readme_points_to_agents_md(self):
         readme_text = README_MD.read_text(encoding="utf-8")
         self.assertIn("AGENTS.md#worktree-execution", readme_text)
