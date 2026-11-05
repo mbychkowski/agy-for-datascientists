@@ -161,7 +161,7 @@ flowchart TB
 │   ├── data-science-primer.md                   # Methodological intuitions & Q&A defense playbook
 │   ├── demo-outline.md                          # 90-minute narrative arc & audience tailoring guide
 │   ├── presenter-runbook.md                     # Detailed stage script with timings & prompts
-│   ├── recorded_runtimes.json                   # Empirical job runtimes from live GCP execution
+│   ├── recorded_runtimes.json                   # Job runtimes from live GCP runs, plus multi-job estimates
 │   └── reuser-guide.md                          # Provisioning, IAM, DAK skills, Java 21 & ADC guide
 ├── fixtures/                                    # Deterministic hermetic fixtures for unit testing
 │   ├── mock_dataset/                            # Pre-Cutoff mock Hospital Feeds & ops logs
@@ -355,7 +355,7 @@ What `make test` runs:
 | **[Reuser Setup & Operations Guide](docs/reuser-guide.md)** | Complete guide for provisioning a new GCP project, configuring IAM ([ADR 0002](docs/adr/0002-dataproc-runs-as-presenter.md)), installing Data Agent Kit skills, setting up Java 21, and resolving stale ADC quota project errors. |
 | **[Data Science Primer](docs/data-science-primer.md)** | Plain-language statistical intuitions and 10-second stage answers for defending **Positivity**, **Sampling Artifacts**, Simpson's Paradox, K-means **Cohorts**, `ARIMA_PLUS`, `TimesFM`, chronological backtesting, and **WAPE**. |
 | **[Demo Outline](docs/demo-outline.md)** | Executive narrative blueprint, audience tailoring guide (Data Scientists, Data Engineers, Analytics Leaders, Executives), and cross-industry translation matrix. |
-| **[Recorded Runtimes](docs/recorded_runtimes.json)** | Empirical execution times recorded against Google Cloud for Dataproc Serverless batches, BigQuery ML models, resets, and **Checkpoint** swaps. |
+| **[Recorded Runtimes](docs/recorded_runtimes.json)** | Empirical execution times recorded against Google Cloud for Dataproc Serverless batches, BigQuery ML models, resets, and **Checkpoint** swaps. Multi-job runners without a recording of their own list `estimated_from` component jobs instead. |
 | **[CODING_STANDARDS.md](CODING_STANDARDS.md)** | Engineering conventions for CLI scripts (`bin/*`), preflight modularity, Python determinism, and `unittest` seams. |
 | **[ADR 0001](docs/adr/0001-answer-key-outside-agent-reach.md)** | Architecture Decision Record: Why the **Answer Key** and post-**Cutoff** **Reveal** data live outside agent reach. |
 | **[ADR 0002](docs/adr/0002-dataproc-runs-as-presenter.md)** | Architecture Decision Record: Why Dataproc Serverless, BigQuery, and BigQuery MCP run under the presenter's user identity. |

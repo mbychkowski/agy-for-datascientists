@@ -47,6 +47,27 @@
     "baseline_observed_seconds": 14,
     "last_observed_seconds": 13
   },
+  "ws2_forecasts_reference_runner": {
+    "sql_file": "sql/ws2_forecasts_and_trials.sql",
+    "runner": "bin/run-ws2-forecasts",
+    "target_table": "ml.experiment_trials",
+    "estimated_from": [
+      "ws2_arima_plus_cohort_training",
+      "ws2_timesfm_ai_forecast"
+    ],
+    "estimate_note": "No whole-runner recording yet: the estimate is the worst-case sum of estimated_from, computed by tests/test_fallback_trigger_timing.py. It excludes sql/ws2_leaderboard.sql, which has no recorded runtime."
+  },
+  "ws2_cohort_forecast_refresh": {
+    "skill": ".agents/plugins/ds-command-center/skills/cohort-forecast-refresh/SKILL.md",
+    "runner": "bin/run-cohort-forecast-refresh",
+    "target_table": "ml.experiment_trials",
+    "estimated_from": [
+      "ws2_seasonal_features_and_kmeans",
+      "ws2_arima_plus_cohort_training",
+      "ws2_timesfm_ai_forecast"
+    ],
+    "estimate_note": "No whole-runner recording yet: the estimate is the worst-case sum of estimated_from, computed by tests/test_fallback_trigger_timing.py."
+  },
   "refined_dataset_verification": {
     "scale": "full",
     "hospitals": 90,
