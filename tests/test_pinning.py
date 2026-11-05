@@ -248,6 +248,96 @@ pinned_label "pinned-proj-46:features.t2"
             )
 
 
+def _argv_recording_env(tmpdir: str) -> tuple[dict[str, str], Path]:
+    """Env whose bq stub writes each argument NUL-terminated to argv.bin, so multi-line SQL survives intact."""
+    bin_dir = Path(tmpdir) / "bin"
+    bin_dir.mkdir()
+    argv_file = Path(tmpdir) / "argv.bin"
+    _write_logging_stub(
+        bin_dir,
+        "bq",
+        Path(tmpdir) / "calls.log",
+        f'printf "%s\\0" "$@" > "{argv_file}"',
+    )
+    env = os.environ.copy()
+    env.update(
+        {
+            "PATH": f"{bin_dir}{os.pathsep}{env['PATH']}",
+            "PROJECT_ID": "pinned-proj-74",
+            "REGION": "us-east4",
+        }
+    )
+    return env, argv_file
+
+
+def _recorded_argv(argv_file: Path) -> list[str]:
+    return argv_file.read_text(encoding="utf-8").split("\0")[:-1]
+
+
+_PINNED_BQ_FLAGS = ("--project_id=pinned-proj-74", "--location=us-east4")
+
+
+class TestPinnedBqLeadingDashSql(unittest.TestCase):
+    def _bq_argv(self, call: str) -> list[str]:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env, argv_file = _argv_recording_env(tmpdir)
+            proc = _run_bash(call, env=env)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            return _recorded_argv(argv_file)
+
+    def test_sql_starting_with_comment_reaches_bq_as_the_query(self) -> None:
+        """SQL beginning with a '-- comment' line must reach bq as the query after an end-of-flags '--', not as a flag."""
+        argv = self._bq_argv(
+            "sql=$'-- comment\\nSELECT 1'\n"
+            'pinned_bq query --use_legacy_sql=false --format=json "${sql}"'
+        )
+        self.assertEqual(
+            argv,
+            [
+                "query",
+                "--use_legacy_sql=false",
+                "--format=json",
+                *_PINNED_BQ_FLAGS,
+                "--",
+                "-- comment\nSELECT 1",
+            ],
+        )
+
+    def test_single_line_sql_starting_with_comment_marker_is_the_query(self) -> None:
+        """A single-line SQL argument such as '-- note' (dash-dash then a space) is query text, not a flag."""
+        argv = self._bq_argv('pinned_bq query --use_legacy_sql=false "-- note"')
+        self.assertEqual(
+            argv,
+            ["query", "--use_legacy_sql=false", *_PINNED_BQ_FLAGS, "--", "-- note"],
+        )
+
+    def test_caller_end_of_flags_marker_keeps_pinned_flags_before_it(self) -> None:
+        """A caller-supplied '--' must end the flags after --project_id/--location, never before them."""
+        argv = self._bq_argv(
+            'pinned_bq query --use_legacy_sql=false -- "--x\nSELECT 2"'
+        )
+        self.assertEqual(
+            argv,
+            [
+                "query",
+                "--use_legacy_sql=false",
+                *_PINNED_BQ_FLAGS,
+                "--",
+                "--x\nSELECT 2",
+            ],
+        )
+
+    def test_plain_positionals_get_no_end_of_flags_marker(self) -> None:
+        """Ordinary SQL and table refs keep today's argv exactly: no '--' is inserted."""
+        argv = self._bq_argv(
+            'pinned_bq query --use_legacy_sql=false "SELECT 1"\n'
+            'pinned_bq rm -f -t "pinned-proj-74:staging.t"'
+        )
+        self.assertEqual(
+            argv, ["rm", "-f", "-t", *_PINNED_BQ_FLAGS, "pinned-proj-74:staging.t"]
+        )
+
+
 class TestPinnedStorageAndDataproc(unittest.TestCase):
     def test_pinned_storage_injects_project_flag(self) -> None:
         """pinned_storage must inject --project=${PROJECT_ID} for cp, ls, and buckets subcommands."""
@@ -706,6 +796,31 @@ class TestStartPointAndCheckpointScriptsFailFast(unittest.TestCase):
                     )
                     self.assertNotIn("bq ", calls)
 
+    def test_verify_main_fails_before_any_call_when_gcloud_missing_for_gs_locations(
+        self,
+    ) -> None:
+        """bin/verify-main-end-state must reject a missing gcloud CLI up front when any location is a gs:// URI."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env_file, env, log_file = setup_preflight_test_env(tmpdir)
+            bin_dir = Path(tmpdir) / "bin"
+            (bin_dir / "gcloud").unlink()
+            env["PATH"] = _path_without({"gcloud"}, bin_dir)
+            proc = _run_start_point_script(
+                [
+                    "verify-main-end-state",
+                    "--answer-key",
+                    "gs://fake-bucket-74/a.json",
+                    "--reveal",
+                    "gs://fake-bucket-74/r.csv",
+                    "--env",
+                    str(env_file),
+                ],
+                env,
+            )
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertIn("[FAIL] gcloud CLI is not installed", proc.stderr)
+            self.assertEqual(_read_calls(log_file), "")
+
     def test_reset_rejects_placeholder_staging_bucket_before_any_bq_call(
         self,
     ) -> None:
@@ -1020,6 +1135,117 @@ class TestPinningSourceScanGuard(unittest.TestCase):
             {},
             f"Scripts have unmigrated bq/gcloud/env calls: {unexpected}",
         )
+
+
+# A script that calls any wrapper on the left must fail fast with
+# `pinned_require_cli <cli>` so a missing CLI is reported up front, not mid-run.
+_CLI_REQUIREMENTS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"\b(?:pinned_bq|pinned_bq_json|pinned_label)\b"), "bq"),
+    (re.compile(r"\b(?:pinned_storage|pinned_dataproc_\w+)\b"), "gcloud"),
+)
+
+
+def _scan_cli_requirement_violations(script_path: Path) -> list[str]:
+    code = [
+        "" if line.lstrip().startswith("#") else line.split(" #", 1)[0]
+        for line in script_path.read_text(encoding="utf-8").splitlines()
+    ]
+    required = {
+        cli
+        for line in code
+        if (match := re.search(r"\bpinned_require_cli\b([^;&|#)]*)", line))
+        for cli in match.group(1).split()
+    }
+    violations: list[str] = []
+    for wrapper, cli in _CLI_REQUIREMENTS:
+        if cli in required:
+            continue
+        for lineno, line in enumerate(code, start=1):
+            if wrapper.search(line):
+                violations.append(
+                    f"calls {wrapper.search(line).group(0)} (L{lineno}) "
+                    f"without `pinned_require_cli {cli}`"
+                )
+                break
+    return violations
+
+
+class TestPinningCliRequirementGuard(unittest.TestCase):
+    def _violations(self, body: str) -> list[str]:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            script = Path(tmpdir) / "script"
+            script.write_text(body, encoding="utf-8")
+            return _scan_cli_requirement_violations(script)
+
+    def test_scanner_flags_wrapper_use_without_matching_require_cli(self) -> None:
+        """A script calling a bq or gcloud wrapper without `pinned_require_cli <cli>` is flagged."""
+        cases = {
+            'pinned_bq query "SELECT 1"\n': ["bq"],
+            'pinned_label "staging.t"\n': ["bq"],
+            'x=$(pinned_bq_json show "t")\n': ["bq"],
+            'pinned_storage cp "gs://b/o" .\n': ["gcloud"],
+            'pinned_dataproc_submit "p.py" "b1"\n': ["gcloud"],
+            "pinned_require_cli gcloud\npinned_bq ls\n": ["bq"],
+            "pinned_require_cli bq\npinned_dataproc_delete b1\n": ["gcloud"],
+            "# pinned_require_cli bq\npinned_bq ls\n": ["bq"],
+            "echo x  # pinned_require_cli bq\npinned_bq ls\n": ["bq"],
+            "pinned_require_cli bq\npinned_bq ls\npinned_storage ls gs://b\n": [
+                "gcloud"
+            ],
+        }
+        for body, missing in cases.items():
+            with self.subTest(body=body):
+                violations = self._violations(body)
+                self.assertEqual(len(violations), len(missing), violations)
+                for violation, cli in zip(violations, missing, strict=True):
+                    self.assertIn(f"`pinned_require_cli {cli}`", violation)
+
+    def test_scanner_accepts_matching_require_cli_and_unrelated_wrappers(self) -> None:
+        """Matching requirements in any form pass; env/label-check wrappers and comments need no CLI requirement."""
+        for body in (
+            "if ! pinned_require_cli bq; then exit 1; fi\npinned_bq ls\n",
+            "pinned_require_cli gcloud bq || return 1\npinned_label t\npinned_storage ls gs://b\n",
+            "pinned_require_cli gcloud\npinned_require_cli bq\npinned_dataproc_describe b\npinned_bq_json x\n",
+            "pinned_load_env\npinned_require_project_region\npinned_has_demo_label x\n",
+            "# pinned_bq query is mentioned only in a comment\n",
+            "",
+        ):
+            with self.subTest(body=body):
+                self.assertEqual(self._violations(body), [])
+
+    def test_bin_scripts_require_the_clis_their_wrappers_need(self) -> None:
+        """Every bin/* script using a bq or gcloud wrapper must call `pinned_require_cli` for that CLI."""
+        unexpected = {
+            f"bin/{path.name}": violations
+            for path in sorted((WORKTREE_ROOT / "bin").iterdir())
+            if path.is_file() and (violations := _scan_cli_requirement_violations(path))
+        }
+        self.assertEqual(unexpected, {}, unexpected)
+
+
+_PUBLIC_FUNCTION = re.compile(r"^(pinned_\w+)\(\)\s*\{", re.MULTILINE)
+_GLOBALS_ENTRY = re.compile(
+    r"^#\s+(pinned_\w+)\s*\n#\s+reads:\s*(?P<reads>.+)\n#\s+writes:\s*(?P<writes>.+)$",
+    re.MULTILINE,
+)
+
+
+class TestPinningGlobalsHeader(unittest.TestCase):
+    def test_header_documents_reads_and_writes_for_every_public_function(
+        self,
+    ) -> None:
+        """pinning.sh must list, for every public pinned_* function, the globals it reads and writes."""
+        text = PINNING_SH.read_text(encoding="utf-8")
+        defined = set(_PUBLIC_FUNCTION.findall(text))
+        documented = {m.group(1): m for m in _GLOBALS_ENTRY.finditer(text)}
+        self.assertTrue(defined)
+        self.assertEqual(set(documented), defined)
+
+        load_env = documented["pinned_load_env"]
+        for name in ("CLI_DATASET_SET", "DATASET_LOCATION", "ENV_FILE"):
+            self.assertIn(name, load_env.group("reads"))
+        for name in ("DATASET_DIR", "ENV_FILE", "PROJECT_ID", "REGION", "REPO_ROOT"):
+            self.assertIn(name, load_env.group("writes"))
 
 
 if __name__ == "__main__":

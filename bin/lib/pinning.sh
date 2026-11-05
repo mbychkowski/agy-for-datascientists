@@ -2,6 +2,59 @@
 # Shared Pinning library for Command Center CLI scripts.
 # Sourced by bin/* scripts to load demo.env, validate PROJECT_ID and REGION,
 # and pin all bq, gcloud storage, and Dataproc Serverless calls.
+#
+# Globals contract. Sourcing this file sets REPO_ROOT (kept if already set).
+# Each public function reads and writes only these shell globals ("-" = none);
+# keep this block in sync when a function starts using another global.
+#
+#   pinned_require_project_region
+#     reads:  PROJECT_ID, REGION
+#     writes: -
+#   pinned_require_staging_bucket
+#     reads:  STAGING_BUCKET
+#     writes: -
+#   pinned_require_state_bucket
+#     reads:  STATE_BUCKET
+#     writes: -
+#   pinned_load_env
+#     reads:  REPO_ROOT, ENV_FILE, CLI_DATASET_SET, DATASET_LOCATION
+#     writes: REPO_ROOT, ENV_FILE, PROJECT_ID, REGION (both exported), DATASET_DIR (unless CLI_DATASET_SET=true), plus every variable the env file assigns
+#   pinned_require_cli
+#     reads:  PATH
+#     writes: -
+#   pinned_bq
+#     reads:  PATH, PROJECT_ID, REGION
+#     writes: -
+#   pinned_label
+#     reads:  PATH, PROJECT_ID, REGION
+#     writes: -
+#   pinned_bq_json
+#     reads:  REPO_ROOT, PATH (python3; bq when wrapping a subcommand), PROJECT_ID, REGION
+#     writes: REPO_ROOT (when unset)
+#   pinned_has_demo_label
+#     reads:  REPO_ROOT, PATH (python3)
+#     writes: REPO_ROOT (when unset)
+#   pinned_storage
+#     reads:  PATH, PROJECT_ID, REGION
+#     writes: -
+#   pinned_gcloud_profile
+#     reads:  PATH (unsets CLOUDSDK_CORE_ACCOUNT, CLOUDSDK_CORE_PROJECT, CLOUDSDK_COMPUTE_REGION for gcloud only)
+#     writes: -
+#   pinned_project_lifecycle_state
+#     reads:  PATH, PROJECT_ID, REGION
+#     writes: -
+#   pinned_adc_token_ok
+#     reads:  PATH
+#     writes: -
+#   pinned_dataproc_submit
+#     reads:  PATH, PROJECT_ID, REGION, STAGING_BUCKET, SUBNET
+#     writes: -
+#   pinned_dataproc_describe
+#     reads:  PATH, PROJECT_ID, REGION
+#     writes: -
+#   pinned_dataproc_delete
+#     reads:  PATH, PROJECT_ID, REGION
+#     writes: -
 
 _pinning_resolve_repo_root() {
   local src="${BASH_SOURCE[0]}"
@@ -101,9 +154,19 @@ pinned_bq() {
   local subcmd="$1"
   shift
 
+  # Leading flags go before the pinned --project_id/--location. The flag run
+  # stops at a caller-supplied '--' or at SQL text that starts with dashes: a
+  # '-- comment' line ('--' then whitespace) or any multi-line argument, since
+  # bq flags never contain a newline.
   local -a flag_args=()
+  local newline=$'\n'
   while [[ $# -gt 0 && "$1" == -* ]]; do
-    if [[ "$1" == "--set_label" && $# -ge 2 ]]; then
+    if [[ "$1" == "--" ]]; then
+      shift
+      break
+    elif [[ "$1" == --[[:space:]]* || "$1" == *"${newline}"* ]]; then
+      break
+    elif [[ "$1" == "--set_label" && $# -ge 2 ]]; then
       flag_args+=("$1" "$2")
       shift 2
     else
@@ -112,9 +175,17 @@ pinned_bq() {
     fi
   done
 
+  # bq (absl flags) would parse a positional starting with '-' as a flag, so
+  # end the flags explicitly before one.
+  local -a end_of_flags_marker=()
+  if [[ $# -gt 0 && "$1" == -* ]]; then
+    end_of_flags_marker=(--)
+  fi
+
   bq "${subcmd}" ${flag_args[@]+"${flag_args[@]}"} \
     --project_id="${PROJECT_ID}" \
     --location="${REGION}" \
+    ${end_of_flags_marker[@]+"${end_of_flags_marker[@]}"} \
     "$@"
 }
 
