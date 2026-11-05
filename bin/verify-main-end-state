@@ -141,6 +141,16 @@ if ! pinned_require_cli bq; then
     exit 1
 fi
 
+# gcloud is needed only to stage gs:// locations; check it before any work.
+for loc in "${DATASET_DIR}" "${ANSWER_KEY_LOC}" "${REVEAL_LOC}"; do
+    if [[ "${loc}" == gs://* ]]; then
+        if ! pinned_require_cli gcloud; then
+            exit 1
+        fi
+        break
+    fi
+done
+
 # 1. Verify that main holds the reference version of every live step
 REFERENCE_FILES=(
     "pipelines/pipeline_v1.py"
