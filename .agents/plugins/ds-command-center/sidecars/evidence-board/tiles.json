@@ -1,0 +1,132 @@
+{
+  "_comment": "Tile manifest: the single source of truth for every Evidence Board Tile, in demo order. Tables and chart queries may only touch staging, features or ml (board/manifest.py rejects anything else). Chart queries for 1A-2D are placeholders until their tickets (#94-#96) land; 2D's readiness rule is deferred to #96.",
+  "tiles": [
+    {
+      "id": "opening",
+      "step": "Opening",
+      "title": "The Northeast Spike",
+      "tables": ["staging.hospital_flu"],
+      "readiness": {"rule": "non_empty"},
+      "chart": {
+        "type": "weekly_bar",
+        "query": [
+          "WITH weekly AS (",
+          "  SELECT",
+          "    DATE_ADD(DATE_TRUNC(feed_date, WEEK(SUNDAY)), INTERVAL 6 DAY) AS week_end,",
+          "    SUM(positive_flu_tests) AS positive_flu_tests",
+          "  FROM `staging.hospital_flu`",
+          "  WHERE region = 'Northeast'",
+          "    AND feed_date BETWEEN DATE '2026-09-06' AND DATE '2026-10-31'",
+          "  GROUP BY week_end",
+          ")",
+          "SELECT",
+          "  week_end,",
+          "  positive_flu_tests,",
+          "  ROUND(",
+          "    SAFE_DIVIDE(",
+          "      positive_flu_tests - LAG(positive_flu_tests) OVER (ORDER BY week_end),",
+          "      LAG(positive_flu_tests) OVER (ORDER BY week_end)",
+          "    ) * 100.0,",
+          "    1",
+          "  ) AS wow_pct",
+          "FROM weekly",
+          "ORDER BY week_end"
+        ]
+      },
+      "proves": "Northeast flu-positive counts rose {wow_pct:+.0f}% in the week ending on the Cutoff, in raw counts: the Spike the agents must explain.",
+      "proves_fallback": "Northeast flu-positive counts jumped in the week ending on the Cutoff, in raw counts: the Spike the agents must explain.",
+      "matchers": []
+    },
+    {
+      "id": "1a",
+      "step": "Segment 1A",
+      "title": "Where the Spike lives",
+      "tables": ["staging.ws1_eda_heatmap"],
+      "readiness": {"rule": "non_empty"},
+      "chart": {
+        "type": "heatmap",
+        "query": "SELECT * FROM `staging.ws1_eda_heatmap` LIMIT 500"
+      },
+      "proves": "The Spike is concentrated in specific Northeast hospitals in the week ending on the Cutoff, not spread evenly across the region.",
+      "matchers": []
+    },
+    {
+      "id": "1b",
+      "step": "Segment 1B",
+      "title": "Attribution of the Spike",
+      "tables": ["staging.ws1_attribution"],
+      "readiness": {"rule": "non_empty"},
+      "chart": {
+        "type": "waterfall",
+        "query": "SELECT * FROM `staging.ws1_attribution` LIMIT 50"
+      },
+      "proves": "Four causes (Pipeline Defect, Sampling Artifact, Outbreak and Seasonal Ramp) sum to the Spike, and the stats-reviewer challenged the Attribution.",
+      "matchers": []
+    },
+    {
+      "id": "1c",
+      "step": "Segment 1C",
+      "title": "The Pipeline Defect removed",
+      "tables": ["staging.hospital_flu_clean"],
+      "readiness": {"rule": "non_empty"},
+      "chart": {
+        "type": "before_after",
+        "query": "SELECT * FROM `staging.hospital_flu_clean` LIMIT 500"
+      },
+      "proves": "Deduplicating the Hospital Feeds removes the duplicate rows behind the Pipeline Defect.",
+      "matchers": []
+    },
+    {
+      "id": "2a",
+      "step": "Segment 2A",
+      "title": "Hospital Cohorts",
+      "tables": ["features.hospital_cohorts"],
+      "readiness": {"rule": "non_empty"},
+      "chart": {
+        "type": "cohorts",
+        "query": "SELECT * FROM `features.hospital_cohorts` LIMIT 500"
+      },
+      "proves": "K-means groups hospitals into Cohorts with shared seasonal shape, isolating the Outbreak hospitals.",
+      "matchers": []
+    },
+    {
+      "id": "2b",
+      "step": "Segment 2B",
+      "title": "WAPE leaderboard",
+      "tables": ["ml.forecast_leaderboard"],
+      "readiness": {"rule": "non_empty"},
+      "chart": {
+        "type": "leaderboard",
+        "query": "SELECT * FROM `ml.forecast_leaderboard` LIMIT 200"
+      },
+      "proves": "Forecasts trained on clean data beat forecasts trained on uncleaned data on WAPE.",
+      "matchers": []
+    },
+    {
+      "id": "2c",
+      "step": "Segment 2C",
+      "title": "The Reveal",
+      "tables": ["ml.reveal_forecast_evaluation"],
+      "readiness": {"rule": "non_empty"},
+      "chart": {
+        "type": "reveal",
+        "query": "SELECT * FROM `ml.reveal_forecast_evaluation` LIMIT 500"
+      },
+      "proves": "Against the six withheld weeks after the Cutoff, the clean-data forecast tracks the truth more closely.",
+      "matchers": []
+    },
+    {
+      "id": "2d",
+      "step": "Segment 2D",
+      "title": "Next-period refresh",
+      "tables": ["ml.experiment_trials", "ml.forecast_leaderboard"],
+      "readiness": {"rule": "deferred"},
+      "chart": {
+        "type": "refresh",
+        "query": "SELECT * FROM `ml.experiment_trials` LIMIT 200"
+      },
+      "proves": "The team skill reruns the whole forecasting workflow for the next epidemiological period.",
+      "matchers": []
+    }
+  ]
+}

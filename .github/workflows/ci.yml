@@ -52,6 +52,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Install Evidence Board backend dependencies
+        run: uv pip install --system -r .agents/plugins/ds-command-center/sidecars/evidence-board/requirements.txt
+
       - name: Check GLOSSARY compliance
         run: node bin/check-glossary.js
 
