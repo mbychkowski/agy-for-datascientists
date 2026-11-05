@@ -2,7 +2,7 @@
 
 A reusable, end-to-end live demonstration and reference workspace for data science teams operating in the **Antigravity Command Center**. Across two connected **Workstreams**, a data scientist directs specialized agents and subagents to investigate whether a **+35% week-over-week Northeast flu Spike** across 90 hospitals (through the **Cutoff**, Saturday, October 31, 2026) is a genuine localized **Outbreak**, a **Sampling Artifact**, or a **Pipeline Defect**, remediates the PySpark ingestion pipeline on **Dataproc Serverless**, and builds **Cohort**-level time-series forecasts in **BigQuery ML** (`KMEANS`, `ARIMA_PLUS`, and zero-shot `TimesFM` via `AI.FORECAST`) before evaluating them against six withheld post-**Cutoff** **Reveal** weeks.
 
-> **Looking to present or rehearse the live session?** Go straight to **[DEMO.md](DEMO.md)** or the detailed **[Presenter Runbook](docs/presenter-runbook.md)**.
+> **Looking to present or rehearse the live session?** Go straight to **[DEMO.md](DEMO.md)**, the single run-through for both Workstreams.
 
 ---
 
@@ -160,7 +160,6 @@ flowchart TB
 │   ├── agents/                                  # Issue tracker, triage labels, and domain conventions
 │   ├── data-science-primer.md                   # Methodological intuitions & Q&A defense playbook
 │   ├── demo-outline.md                          # 90-minute narrative arc & audience tailoring guide
-│   ├── presenter-runbook.md                     # Detailed stage script with timings & prompts
 │   ├── recorded_runtimes.json                   # Job runtimes from live GCP runs, plus multi-job estimates
 │   └── reuser-guide.md                          # Provisioning, IAM, DAK skills, Java 21 & ADC guide
 ├── fixtures/                                    # Deterministic hermetic fixtures for unit testing
@@ -349,9 +348,8 @@ What `make test` runs:
 
 | Document | Description |
 | :--- | :--- |
-| **[DEMO.md](DEMO.md)** | **How to demo this project**: Pre-stage setup, 90-minute timeline, copy-paste **Command Center** prompts, speaker narration, **Checkpoint** swaps, and 45/60-minute cuts. |
+| **[DEMO.md](DEMO.md)** | **How to demo this project**: the single run-through for both Workstreams. Pre-stage setup, 90-minute timeline with minute-by-minute clock windows, copy-paste **Command Center** prompts, speaker narration, Window 2 fallback triggers, **Checkpoint** swaps, and 45/60-minute cuts. |
 | **[GLOSSARY.md](GLOSSARY.md)** | Canonical domain vocabulary (`Command Center`, `Hospital Feed`, `Positivity`, `Spike`, `Cutoff`, `Pipeline Defect`, `Sampling Artifact`, `Outbreak`, `Seasonal Ramp`, `Attribution`, `Answer Key`, `Cohort`, `Reveal`, `Workstream`, `Start Point`, `Checkpoint`) and prohibited terms. |
-| **[Presenter Runbook](docs/presenter-runbook.md)** | Detailed on-stage execution script with minute-by-minute clock windows and Window 2 fallback triggers. |
 | **[Reuser Setup & Operations Guide](docs/reuser-guide.md)** | Complete guide for provisioning a new GCP project, configuring IAM ([ADR 0002](docs/adr/0002-dataproc-runs-as-presenter.md)), installing Data Agent Kit skills, setting up Java 21, and resolving stale ADC quota project errors. |
 | **[Data Science Primer](docs/data-science-primer.md)** | Plain-language statistical intuitions and 10-second stage answers for defending **Positivity**, **Sampling Artifacts**, Simpson's Paradox, K-means **Cohorts**, `ARIMA_PLUS`, `TimesFM`, chronological backtesting, and **WAPE**. |
 | **[Demo Outline](docs/demo-outline.md)** | Executive narrative blueprint, audience tailoring guide (Data Scientists, Data Engineers, Analytics Leaders, Executives), and cross-industry translation matrix. |

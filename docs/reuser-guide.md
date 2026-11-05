@@ -2,7 +2,7 @@
 
 End-to-end guide for setting up the **Antigravity for Data Scientists** **Command Center** in your own Google Cloud project, installing the licensed Data Agent Kit skills into the workspace, running local Spark 4 tests with Java 21, and avoiding common authentication pitfalls.
 
-All terminology follows [GLOSSARY.md](../GLOSSARY.md). Once your environment passes `./preflight` and `./verify-start-point ws1`, use the [Presenter Runbook](presenter-runbook.md) to rehearse or deliver the live session.
+All terminology follows [GLOSSARY.md](../GLOSSARY.md). Once your environment passes `./preflight` and `./verify-start-point ws1`, use [DEMO.md](../DEMO.md) to rehearse or deliver the live session.
 
 ---
 
@@ -228,7 +228,7 @@ Once Terraform, workspace Data Agent Kit skills, Java 21, and ADC are configured
    ```bash
    ./stage-clean-env --stash
    ```
-   Follow the [Presenter Runbook](presenter-runbook.md) for the live 90-minute session, and run `./stage-clean-env --restore` when finished.
+   Follow [DEMO.md](../DEMO.md) for the live 90-minute session, and run `./stage-clean-env --restore` when finished.
 
 ---
 
@@ -259,4 +259,4 @@ cp -R .gemini/skills ~/demo-stage/agy-ws1/.gemini/
 
 `.gemini/skills/` is git-ignored, so the clone starts without the licensed Data Agent Kit skills; the last two lines copy your workspace install across. `./preflight` checks the presenter repo, not the clone, so confirm the copy with `ls ~/demo-stage/agy-ws1/.gemini/skills/bigquery-ai-ml/SKILL.md`.
 
-Before every rehearsal and on Demo Day, the T-15 checklist resets the clone's code (`git reset --hard`, `git clean -fd`) and then runs `./reset ws1 --yes` and `./verify-start-point ws1` from this repo. See the [Presenter Runbook](presenter-runbook.md#1-pre-stage-checklist-t-15-minutes) for the full sequence.
+Before every rehearsal and on Demo Day, the T-15 checklist resets the clone's code (`git reset --hard`, `git clean -fd`) and then runs `./reset ws1 --yes` and `./verify-start-point ws1` from this repo. See the [DEMO.md Pre-Stage Checklist](../DEMO.md#2-pre-stage-checklist-t-15-minutes) for the full sequence.

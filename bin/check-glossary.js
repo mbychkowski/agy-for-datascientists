@@ -121,8 +121,8 @@ const VOCABULARY_RULES = [
 ];
 
 // Files and directories excluded from vocabulary checks
-// Presenter docs where every glossary term in prose must be **bolded**.
-const BOLD_REQUIRED_FILES = new Set(['DEMO.md', 'docs/presenter-runbook.md']);
+// The presenter run-through where every glossary term in prose must be **bolded**.
+const BOLD_REQUIRED_FILES = new Set(['DEMO.md']);
 
 const EXCLUDED_PATHS = new Set([
   'GLOSSARY.md',

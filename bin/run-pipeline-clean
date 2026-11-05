@@ -5,7 +5,7 @@
 # Submits pipelines/pipeline_clean.py to Dataproc Serverless runtime 3.0 as the
 # presenter (synchronously or with --async) to materialise the deduplicated
 # staging.hospital_flu_clean table with null-safe Positivity, labels it
-# demo:true, and records the observed end-to-end runtime for the runbook.
+# demo:true, and records the observed end-to-end runtime for DEMO.md.
 #
 # Also supports --sql-fallback (materialising staging.hospital_flu_clean via
 # sql/staging_hospital_flu_clean.sql) and --verify-equivalence (checking that

@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-RUNBOOK_PATH = REPO_ROOT / "docs" / "presenter-runbook.md"
+RETIRED_RUNBOOK_PATH = REPO_ROOT / "docs" / "presenter-runbook.md"
 REUSER_GUIDE_PATH = REPO_ROOT / "docs" / "reuser-guide.md"
 RECORDED_RUNTIMES_PATH = REPO_ROOT / "docs" / "recorded_runtimes.json"
 EQUIVALENCE_SQL = (REPO_ROOT / "sql" / "verify_clean_equivalence.sql").read_text(
@@ -72,7 +72,7 @@ MAIN_ONLY_SCRIPTS = (
 
 
 def _pre_stage_checklist(doc: str) -> str:
-    """Return the T-15 Pre-Stage Checklist section of DEMO.md or the runbook."""
+    """Return the T-15 Pre-Stage Checklist section of DEMO.md."""
     match = re.search(
         r"^## \d+\. Pre-Stage Checklist.*?(?=^## )", doc, re.MULTILINE | re.DOTALL
     )
@@ -139,14 +139,14 @@ def _table_rows(section: str, first_cell: str) -> list[str]:
     ]
 
 
-# Opening guardrail and Workstream 1 segment titles in DEMO.md and the runbook.
-WS1_SEGMENTS = {
-    "DEMO.md": ("Live Guardrail Moment", "Segment 1A", "Segment 1B", "Segment 1C"),
-    "runbook": ("The Guardrail Moment", "Segment 1A", "Segment 1B", "Segment 1C"),
-}
+# Opening guardrail and Workstream 1 segment titles in DEMO.md.
+GUARDRAIL_MOMENT = "Live Guardrail Moment"
+WS1_SEGMENTS = ("Segment 1A", "Segment 1B", "Segment 1C")
 
-# Workstream 2 section and segment titles, shared by DEMO.md and the runbook.
+# Top-level DEMO.md sections for each Workstream and the handoff between them.
+WS1_SECTION = 'Workstream 1: "Is the Data Good to Use?"'
 WS2_SECTION = 'Workstream 2: "Forecast at Scale"'
+HANDOFF_SECTION = "Intermission: Handoff Between Workstreams"
 WS2_SEGMENTS = ("Segment 2A", "Segment 2B", "Segment 2C", "Segment 2D")
 
 # Per Workstream 2 segment: the Window 2 fallback script for the agent's own
@@ -171,10 +171,9 @@ SKILL_PATH = ".agents/plugins/ds-command-center/skills/cohort-forecast-refresh/S
 EARLY_START = r"(?i)early[- ]start|start(?:ed)? early|trigger(?:ed)? early"
 
 
-class TestPresenterRunbookAndReuserDocs(unittest.TestCase):
+class TestDemoAndReuserDocs(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        cls.runbook = RUNBOOK_PATH.read_text(encoding="utf-8")
         cls.reuser_guide = REUSER_GUIDE_PATH.read_text(encoding="utf-8")
         cls.readme = README_PATH.read_text(encoding="utf-8")
         cls.demo = DEMO_PATH.read_text(encoding="utf-8")
@@ -182,12 +181,14 @@ class TestPresenterRunbookAndReuserDocs(unittest.TestCase):
             RECORDED_RUNTIMES_PATH.read_text(encoding="utf-8")
         )
 
+    def _docs(self) -> tuple[tuple[str, str], ...]:
+        """The presenter docs every run-through assertion covers: DEMO.md only."""
+        return (("DEMO.md", self.demo),)
+
     def test_files_exist_and_readme_links_them(self) -> None:
-        self.assertTrue(RUNBOOK_PATH.is_file(), f"Missing {RUNBOOK_PATH}")
         self.assertTrue(REUSER_GUIDE_PATH.is_file(), f"Missing {REUSER_GUIDE_PATH}")
         self.assertTrue(DEMO_PATH.is_file(), f"Missing {DEMO_PATH}")
         self.assertIn("DEMO.md", self.readme)
-        self.assertIn("docs/presenter-runbook.md", self.readme)
         self.assertIn("docs/reuser-guide.md", self.readme)
         self.assertIn("docs/data-science-primer.md", self.readme)
         self.assertIn("docs/demo-outline.md", self.readme)
@@ -199,7 +200,7 @@ class TestPresenterRunbookAndReuserDocs(unittest.TestCase):
         self.assertIn("./checkpoint", self.demo)
 
     def test_t15_checklist_builds_isolated_single_branch_stage_clone(self) -> None:
-        for name, doc in (("DEMO.md", self.demo), ("runbook", self.runbook)):
+        for name, doc in self._docs():
             with self.subTest(doc=name):
                 checklist = _pre_stage_checklist(doc)
                 self.assertRegex(
@@ -221,7 +222,7 @@ class TestPresenterRunbookAndReuserDocs(unittest.TestCase):
     def test_docs_explain_why_worktree_or_in_repo_folder_breaks_guarantee(
         self,
     ) -> None:
-        for name, doc in (("DEMO.md", self.demo), ("runbook", self.runbook)):
+        for name, doc in self._docs():
             with self.subTest(doc=name):
                 checklist = _pre_stage_checklist(doc)
                 self.assertRegex(checklist, r"(?i)worktree")
@@ -231,7 +232,7 @@ class TestPresenterRunbookAndReuserDocs(unittest.TestCase):
                 self.assertIn("0001-answer-key-outside-agent-reach.md", checklist)
 
     def test_t15_resets_clone_code_then_ws1_data_from_main_repo(self) -> None:
-        for name, doc in (("DEMO.md", self.demo), ("runbook", self.runbook)):
+        for name, doc in self._docs():
             with self.subTest(doc=name):
                 checklist = _pre_stage_checklist(doc)
                 clone_dir = _stage_clone_dir(checklist)
@@ -253,7 +254,7 @@ class TestPresenterRunbookAndReuserDocs(unittest.TestCase):
                 self.assertRegex(checklist, r"(?i)every rehearsal")
 
     def test_stage_clean_env_and_preflight_are_window_2_commands(self) -> None:
-        for name, doc in (("DEMO.md", self.demo), ("runbook", self.runbook)):
+        for name, doc in self._docs():
             sections = re.split(r"^(?=#{2,4} )", doc, flags=re.MULTILINE)
             labelled = 0
             for section in sections:
@@ -268,7 +269,7 @@ class TestPresenterRunbookAndReuserDocs(unittest.TestCase):
 
     def test_no_main_only_script_runs_from_the_stage_clone(self) -> None:
         main_only = re.compile(r"\./(" + "|".join(MAIN_ONLY_SCRIPTS) + r")\b")
-        for name, doc in (("DEMO.md", self.demo), ("runbook", self.runbook)):
+        for name, doc in self._docs():
             with self.subTest(doc=name):
                 # Checking out the stage branch in the presenter repo is the
                 # one-checkout model this setup replaces.
@@ -316,7 +317,7 @@ class TestPresenterRunbookAndReuserDocs(unittest.TestCase):
                             )
 
     def test_window_1_opens_on_the_stage_clone(self) -> None:
-        for name, doc in (("DEMO.md", self.demo), ("runbook", self.runbook)):
+        for name, doc in self._docs():
             with self.subTest(doc=name):
                 checklist = _pre_stage_checklist(doc)
                 clone_dir = _stage_clone_dir(checklist)
@@ -344,12 +345,9 @@ class TestPresenterRunbookAndReuserDocs(unittest.TestCase):
         self.assertRegex(guide, r"(?i)worktree")
         self.assertIn("git show main:", guide)
 
-    def _docs(self) -> tuple[tuple[str, str], ...]:
-        return (("DEMO.md", self.demo), ("runbook", self.runbook))
-
     def test_stage_prompts_are_typed_into_window_1(self) -> None:
         for name, doc in self._docs():
-            for title in (*WS1_SEGMENTS[name], *WS2_SEGMENTS):
+            for title in (GUARDRAIL_MOMENT, *WS1_SEGMENTS, *WS2_SEGMENTS):
                 prompts = _labelled_blocks(_segment(doc, title), "text")
                 with self.subTest(doc=name, segment=title):
                     self.assertTrue(prompts, "segment has no prompt to type")
@@ -358,7 +356,7 @@ class TestPresenterRunbookAndReuserDocs(unittest.TestCase):
 
     def test_stage_presenter_commands_run_from_window_2(self) -> None:
         for name, doc in self._docs():
-            for title in (*WS1_SEGMENTS[name][1:], *WS2_SEGMENTS):
+            for title in (*WS1_SEGMENTS, *WS2_SEGMENTS):
                 for label, body in _labelled_blocks(_segment(doc, title), "bash"):
                     if "./" not in body:
                         continue
@@ -480,30 +478,12 @@ class TestPresenterRunbookAndReuserDocs(unittest.TestCase):
                 if first_cell != "Opening":
                     self.assertIn("Window 2", row)
 
-        runbook_table = _segment(self.runbook, "2.1 Segment Timing Summary")
-        (ws1_row,) = _table_rows(runbook_table, "Workstream 1")
-        with self.subTest(doc="runbook 2.1"):
-            for segment in ("1A", "1B", "1C"):
-                self.assertRegex(ws1_row, rf"Segment {segment}[^<|]*Window 1")
-            self.assertGreaterEqual(ws1_row.count("Window 2"), 3)
-
-        (ws2_row,) = _table_rows(runbook_table, "Workstream 2")
-        with self.subTest(doc="runbook 2.1 Workstream 2"):
-            for segment in ("2A", "2B", "2C", "2D"):
-                self.assertRegex(ws2_row, rf"Segment {segment}[^<|]*Window 1")
-            self.assertGreaterEqual(ws2_row.count("Window 2"), 4)
-
         demo_matrix = _segment(self.demo, "3.2 ")
-        runbook_matrix = _segment(self.runbook, "2.2 ")
         for name, matrix, first_cell in (
             ("DEMO.md 3.2", demo_matrix, "Workstream 1C"),
             ("DEMO.md 3.2", demo_matrix, "Workstream 2A"),
             ("DEMO.md 3.2", demo_matrix, "Workstream 2B"),
             ("DEMO.md 3.2", demo_matrix, "Workstream 2D"),
-            ("runbook 2.2", runbook_matrix, "ws1_pipeline_clean"),
-            ("runbook 2.2", runbook_matrix, "ws2_seasonal_features_and_kmeans"),
-            ("runbook 2.2", runbook_matrix, "ws2_arima_plus_cohort_training"),
-            ("runbook 2.2", runbook_matrix, "cohort-forecast-refresh"),
         ):
             with self.subTest(doc=name, row=first_cell):
                 (row,) = _table_rows(matrix, first_cell)
@@ -516,7 +496,7 @@ class TestPresenterRunbookAndReuserDocs(unittest.TestCase):
     def test_ws2_stays_in_the_ws1_clone(self) -> None:
         for name, doc in self._docs():
             with self.subTest(doc=name):
-                ws2 = _segment(doc, WS2_SECTION)
+                ws2 = _segment(doc, HANDOFF_SECTION)
                 self.assertNotIn("git checkout workstream-2-start", doc)
                 # The agent carries its own Workstream 1 outputs forward.
                 self.assertRegex(ws2, r"(?i)\bstay\b[^.]*clone")
@@ -525,7 +505,7 @@ class TestPresenterRunbookAndReuserDocs(unittest.TestCase):
     def test_ws2_start_is_recovery_only_and_cloned_in_isolation(self) -> None:
         for name, doc in self._docs():
             with self.subTest(doc=name):
-                ws2 = _segment(doc, WS2_SECTION)
+                ws2 = _segment(doc, HANDOFF_SECTION)
                 self.assertRegex(ws2, r"(?i)recovery")
                 match = re.search(
                     r"git clone --single-branch --branch workstream-2-start "
@@ -647,8 +627,8 @@ class TestPresenterRunbookAndReuserDocs(unittest.TestCase):
             with self.subTest(doc=name):
                 self.assertIn("team of specialized agents", doc)
 
-    def test_runbook_covers_per_segment_timings_prompts_and_narration(self) -> None:
-        content = self.runbook
+    def test_demo_covers_per_segment_timings_prompts_and_narration(self) -> None:
+        content = self.demo
 
         # 90-minute master timings (12 + 35 + 28 + 15 = 90)
         self.assertRegex(content, re.compile(r"Opening.*12\s*min", re.IGNORECASE))
@@ -657,34 +637,29 @@ class TestPresenterRunbookAndReuserDocs(unittest.TestCase):
         self.assertRegex(content, re.compile(r"Q&A.*15\s*min", re.IGNORECASE))
         self.assertRegex(content, re.compile(r"90\s*min", re.IGNORECASE))
 
-        # Sub-segment breakdown in Workstream 1 (10 + 12 + 13 = 35) and Workstream 2 (8 + 10 + 6 + 4 = 28)
-        for seg_header in (
-            "Segment 1A",
-            "Segment 1B",
-            "Segment 1C",
-            "Segment 2A",
-            "Segment 2B",
-            "Segment 2C",
-            "Segment 2D",
+        # Every Opening part and Workstream segment has a prompt to type into
+        # Window 1 and a narration cue for the audience.
+        for title in (
+            "Part A",
+            "Part B",
+            "Part C",
+            *WS1_SEGMENTS,
+            *WS2_SEGMENTS,
         ):
-            self.assertIn(seg_header, content)
+            with self.subTest(segment=title):
+                section = _segment(content, title)
+                self.assertRegex(section, r"(?i)say to the audience")
+                if title in ("Part A", "Part B"):
+                    continue
+                prompts = [
+                    label
+                    for label, _ in _labelled_blocks(section, "text")
+                    if "Window 1" in label
+                ]
+                self.assertTrue(prompts, f"{title} has no Window 1 prompt")
 
-        # Prompts to type and narration cues across segments
-        prompt_headers = re.findall(r"Prompt(?:\s+\d+)?\s+to\s+Type", content)
-        narration_headers = re.findall(r"What\s+to\s+Narrate", content)
-        self.assertGreaterEqual(
-            len(prompt_headers),
-            7,
-            "Runbook must include explicit prompts to type for each interactive step",
-        )
-        self.assertGreaterEqual(
-            len(narration_headers),
-            8,
-            "Runbook must include speaker narration cues for every segment",
-        )
-
-    def test_runbook_covers_fallback_jobs_and_recorded_runtimes(self) -> None:
-        content = self.runbook
+    def test_demo_covers_fallback_jobs_and_recorded_runtimes(self) -> None:
+        content = self.demo
         clean_entry = self.recorded_runtimes["ws1_pipeline_clean_dataproc_runtime_3_0"]
         v1_entry = self.recorded_runtimes["ws1_pipeline_v1_dataproc_runtime_3_0"]
 
@@ -699,15 +674,16 @@ class TestPresenterRunbookAndReuserDocs(unittest.TestCase):
             re.compile(r"Start.*ARIMA_PLUS.*Training\s+First", re.IGNORECASE),
         )
 
-    def test_runbook_covers_guardrail_moment_and_checkpoint_swaps(self) -> None:
-        content = self.runbook
+    def test_demo_covers_guardrail_moment_and_checkpoint_swaps(self) -> None:
+        content = self.demo
 
         # Guardrail moment in Antigravity 101
-        self.assertIn("The Guardrail Moment in Antigravity 101", content)
-        self.assertIn("raw.hospital_flu_feeds", content)
-        self.assertIn("ops.pipeline_run_log", content)
-        self.assertIn(".agents/plugins/ds-command-center/bin/guardrail-hook", content)
-        self.assertRegex(content, re.compile(r"read-only", re.IGNORECASE))
+        opening = _segment(content, "Antigravity 101")
+        self.assertIn("Guardrail Moment", opening)
+        self.assertIn("raw.hospital_flu_feeds", opening)
+        self.assertIn("ops.pipeline_run_log", opening)
+        self.assertIn(".agents/plugins/ds-command-center/bin/guardrail-hook", opening)
+        self.assertRegex(opening, re.compile(r"read-only", re.IGNORECASE))
         self.assertRegex(
             content, re.compile(r"stay(?:ing|s) in control", re.IGNORECASE)
         )
@@ -729,8 +705,73 @@ class TestPresenterRunbookAndReuserDocs(unittest.TestCase):
         ]
         for cmd in expected_checkpoints:
             self.assertIn(
-                cmd, content, f"Runbook missing Checkpoint swap command: {cmd}"
+                cmd, content, f"DEMO.md missing Checkpoint swap command: {cmd}"
             )
+
+    def test_demo_is_the_sole_run_through_with_a_section_per_workstream(
+        self,
+    ) -> None:
+        self.assertFalse(
+            RETIRED_RUNBOOK_PATH.exists(),
+            "DEMO.md is the sole run-through; the presenter runbook is retired",
+        )
+        for title in (
+            "Pre-Stage Checklist",
+            "Opening",
+            WS1_SECTION,
+            "Intermission",
+            WS2_SECTION,
+            "Q&A",
+            "Rehears",
+            "Shortened Demo Cuts",
+        ):
+            with self.subTest(section=title):
+                self.assertRegex(self.demo, rf"(?m)^## [^\n]*{re.escape(title)}")
+
+        ws1 = _segment(self.demo, WS1_SECTION)
+        for title in WS1_SEGMENTS:
+            with self.subTest(workstream=1, segment=title):
+                self.assertTrue(_labelled_blocks(_segment(ws1, title), "text"))
+        for command in (
+            "./checkpoint ws1_eda_heatmap",
+            "./checkpoint ws1_attribution",
+            "./checkpoint ws1_staging_clean",
+            "./run-pipeline-clean --sql-fallback",
+            "--verify-equivalence",
+        ):
+            with self.subTest(workstream=1, command=command):
+                self.assertIn(command, ws1)
+
+        ws2 = _segment(self.demo, WS2_SECTION)
+        for title in WS2_SEGMENTS:
+            with self.subTest(workstream=2, segment=title):
+                self.assertTrue(_labelled_blocks(_segment(ws2, title), "text"))
+        for script, checkpoints, _ in WS2_FALLBACKS.values():
+            for command in (script, *checkpoints):
+                with self.subTest(workstream=2, command=command):
+                    self.assertIn(command, ws2)
+        self.assertIn("./load-reveal", ws2)
+
+    def test_no_tracked_file_links_the_retired_runbook(self) -> None:
+        tracked = subprocess.run(
+            ["git", "ls-files"],
+            cwd=str(REPO_ROOT),
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.split()
+        # Live links and commands only: Markdown docs (ADRs keep their history),
+        # presenter scripts and the Makefile.
+        for rel in tracked:
+            path = REPO_ROOT / rel
+            is_doc = rel.endswith(".md") and not rel.startswith("docs/adr/")
+            if not (is_doc or rel.startswith("bin/") or rel == "Makefile"):
+                continue
+            if not path.is_file():
+                continue
+            with self.subTest(file=rel):
+                text = path.read_text(encoding="utf-8", errors="ignore")
+                self.assertNotIn("presenter-runbook.md", text)
 
     def test_reuser_guide_covers_env_terraform_dak_skills_java21_quota_and_iam(
         self,
@@ -905,7 +946,7 @@ class TestPresenterRunbookAndReuserDocs(unittest.TestCase):
             self.assertFalse((gemini_dir / ".demo-stage-stash").exists())
 
     def test_company_neutrality_and_glossary_compliance(self) -> None:
-        for path in (RUNBOOK_PATH, REUSER_GUIDE_PATH, README_PATH, DEMO_PATH):
+        for path in (REUSER_GUIDE_PATH, README_PATH, DEMO_PATH):
             content = path.read_text(encoding="utf-8")
             for pat in FORBIDDEN_COMPANY_PATTERNS:
                 self.assertIsNone(
@@ -924,7 +965,6 @@ class TestPresenterRunbookAndReuserDocs(unittest.TestCase):
             [
                 "node",
                 str(REPO_ROOT / "bin" / "check-glossary.js"),
-                str(RUNBOOK_PATH),
                 str(REUSER_GUIDE_PATH),
                 str(README_PATH),
                 str(DEMO_PATH),
