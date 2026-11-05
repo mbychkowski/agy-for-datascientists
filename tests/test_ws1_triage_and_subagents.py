@@ -32,6 +32,10 @@ AGENTS_DIR = PLUGIN_DIR / "agents"
 MOCK_DATASET_DIR = WORKTREE_ROOT / "fixtures" / "mock_dataset"
 MOCK_WITHHELD_DIR = WORKTREE_ROOT / "fixtures" / "mock_withheld"
 MOCK_ANSWER_KEY_PATH = MOCK_WITHHELD_DIR / "answer_key.json"
+MOCK_REVEAL_PATH = (
+    MOCK_WITHHELD_DIR / "reveal" / "hospital_flu_feeds_reveal" / "reveal.csv"
+)
+# The leading wildcard is deliberate: it also catches renamed copies like `ws1_answer_key.json`.
 WITHHELD_FILE_PATTERNS: tuple[str, ...] = ("*answer_key.json", "*reveal.csv")
 MAX_SUBAGENT_LINES = 60
 
@@ -53,6 +57,7 @@ def _git_visible_files(*patterns: str) -> list[Path]:
         [
             "git",
             "ls-files",
+            "-z",
             "--cached",
             "--others",
             "--exclude-standard",
@@ -64,7 +69,7 @@ def _git_visible_files(*patterns: str) -> list[Path]:
         text=True,
         check=True,
     )
-    return sorted({WORKTREE_ROOT / line for line in proc.stdout.splitlines()})
+    return sorted({WORKTREE_ROOT / rel for rel in proc.stdout.split("\0") if rel})
 
 
 def _parse_frontmatter(markdown_text: str) -> tuple[dict[str, str], str]:
@@ -346,6 +351,7 @@ class TestWorkstream1SubagentsAndTriage(unittest.TestCase):
         # ADR 0001: Answer Key and Reveal copies live only under fixtures/mock_withheld/
         withheld_files = _git_visible_files(*WITHHELD_FILE_PATTERNS)
         self.assertIn(MOCK_ANSWER_KEY_PATH, withheld_files)
+        self.assertIn(MOCK_REVEAL_PATH, withheld_files)
         leaked = [p for p in withheld_files if not p.is_relative_to(MOCK_WITHHELD_DIR)]
         self.assertEqual(
             leaked,
