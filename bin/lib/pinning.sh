@@ -167,6 +167,10 @@ pinned_bq_json() {
   esac
 }
 
+# Usage: pinned_has_demo_label "<raw bq show --format=json output>"
+# Returns 0 only when the (possibly noisy) bq show output decodes to table
+# metadata whose labels carry demo:true. Takes captured output, not a table ref,
+# so callers can report "missing table" and "missing label" separately.
 pinned_has_demo_label() {
   local meta_json
   if ! meta_json="$(pinned_bq_json "${1:-}" 2>/dev/null)"; then
