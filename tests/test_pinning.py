@@ -567,13 +567,144 @@ class TestStartPointAndCheckpointScriptsFailFast(unittest.TestCase):
             self.assertNotIn("bq ", calls)
 
 
+class TestPinnedRequireStateBucket(unittest.TestCase):
+    def test_rejects_missing_or_placeholder_bucket_and_accepts_real_bucket(
+        self,
+    ) -> None:
+        """pinned_require_state_bucket must reject unset or 'your-' STATE_BUCKET and pass for a real bucket."""
+        for value in ("", "your-state-bucket"):
+            with self.subTest(value=value):
+                proc = _run_bash(f'STATE_BUCKET="{value}"\npinned_require_state_bucket')
+                self.assertNotEqual(proc.returncode, 0)
+                self.assertIn("[FAIL] STATE_BUCKET is missing", proc.stderr)
+
+        unset = _run_bash("unset STATE_BUCKET\npinned_require_state_bucket")
+        self.assertNotEqual(unset.returncode, 0)
+        self.assertIn("[FAIL] STATE_BUCKET", unset.stderr)
+
+        ok = _run_bash('STATE_BUCKET="real-state-50"\npinned_require_state_bucket')
+        self.assertEqual(ok.returncode, 0, ok.stderr)
+
+
+def _write_logging_stub(
+    bin_dir: Path, name: str, log_file: Path, body: str = ""
+) -> None:
+    """Write an executable stub that logs '<name> <args>' and then runs *body* (default: exit 0)."""
+    stub = bin_dir / name
+    stub.write_text(
+        f'#!/usr/bin/env bash\necho "{name} $*" >> "{log_file}"\n{body}\nexit 0\n',
+        encoding="utf-8",
+    )
+    stub.chmod(0o755)
+
+
+def _read_calls(log_file: Path) -> str:
+    return log_file.read_text(encoding="utf-8") if log_file.exists() else ""
+
+
+class TestLoadersSetupAndBootstrapFailFast(unittest.TestCase):
+    def test_loaders_fail_before_any_bq_call_when_bq_missing(self) -> None:
+        """bin/load-raw-ops and bin/load-reveal must reject a missing bq CLI before issuing any bq call."""
+        with tempfile.TemporaryDirectory() as reveal_dir:
+            invocations = (["load-raw-ops"], ["load-reveal", reveal_dir])
+            for invocation in invocations:
+                with (
+                    self.subTest(script=invocation[0]),
+                    tempfile.TemporaryDirectory() as tmpdir,
+                ):
+                    env_file, env, log_file = setup_preflight_test_env(tmpdir)
+                    bin_dir = Path(tmpdir) / "bin"
+                    (bin_dir / "bq").unlink()
+                    env["PATH"] = _path_without({"bq"}, bin_dir)
+                    proc = _run_start_point_script(
+                        [*invocation, "--env", str(env_file)], env
+                    )
+                    self.assertNotEqual(proc.returncode, 0)
+                    self.assertIn("[FAIL] bq CLI is not installed", proc.stderr)
+                    self.assertNotIn(reveal_dir, proc.stdout + proc.stderr)
+                    self.assertNotIn("bq ", _read_calls(log_file))
+
+    def test_setup_rejects_placeholder_env_before_running_any_step(self) -> None:
+        """bin/setup must reject a placeholder PROJECT_ID before starting Step 1/3."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _, env, log_file = setup_preflight_test_env(tmpdir)
+            env_file = create_demo_env_file(tmpdir, project_id="your-project-id")
+            proc = _run_start_point_script(["setup", "--env", str(env_file)], env)
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertIn("[FAIL] PROJECT_ID", proc.stderr)
+            self.assertNotIn("Step 1/3", proc.stdout)
+            self.assertEqual(_read_calls(log_file), "")
+
+    def test_bootstrap_rejects_placeholder_state_bucket_before_any_gcloud_call(
+        self,
+    ) -> None:
+        """bin/bootstrap-tf-state must reject a placeholder STATE_BUCKET before touching any bucket."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bin_dir = Path(tmpdir) / "bin"
+            bin_dir.mkdir()
+            log_file = Path(tmpdir) / "calls.log"
+            _write_logging_stub(bin_dir, "gcloud", log_file)
+            _write_logging_stub(bin_dir, "terraform", log_file)
+            env_file = create_demo_env_file(tmpdir, state_bucket="your-state-bucket")
+            env = os.environ.copy()
+            env["PATH"] = f"{bin_dir}:{env['PATH']}"
+            proc = _run_start_point_script(
+                ["bootstrap-tf-state", "--env", str(env_file)], env
+            )
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertIn("[FAIL] STATE_BUCKET", proc.stderr)
+            self.assertEqual(_read_calls(log_file), "")
+
+    def test_bootstrap_fails_fast_when_gcloud_missing(self) -> None:
+        """bin/bootstrap-tf-state must report a missing gcloud CLI instead of treating it as a missing bucket."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bin_dir = Path(tmpdir) / "bin"
+            bin_dir.mkdir()
+            log_file = Path(tmpdir) / "calls.log"
+            _write_logging_stub(bin_dir, "terraform", log_file)
+            env_file = create_demo_env_file(tmpdir)
+            env = os.environ.copy()
+            env["PATH"] = _path_without({"gcloud"}, bin_dir)
+            proc = _run_start_point_script(
+                ["bootstrap-tf-state", "--env", str(env_file)], env
+            )
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertIn("[FAIL] gcloud CLI is not installed", proc.stderr)
+            self.assertEqual(_read_calls(log_file), "")
+
+    def test_bootstrap_reports_failed_bucket_update_under_strict_mode(self) -> None:
+        """Under set -euo pipefail, a failed state-bucket update must print [FAIL] and stop before terraform init."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bin_dir = Path(tmpdir) / "bin"
+            bin_dir.mkdir()
+            log_file = Path(tmpdir) / "calls.log"
+            _write_logging_stub(
+                bin_dir,
+                "gcloud",
+                log_file,
+                'if [[ "$*" == *"buckets update"* ]]; then exit 1; fi',
+            )
+            _write_logging_stub(bin_dir, "terraform", log_file)
+            env_file = create_demo_env_file(tmpdir)
+            env = os.environ.copy()
+            env["PATH"] = f"{bin_dir}:{env['PATH']}"
+            proc = _run_start_point_script(
+                ["bootstrap-tf-state", "--env", str(env_file)], env
+            )
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertIn("[FAIL]", proc.stderr)
+            self.assertIn("demo-state-bucket", proc.stderr)
+            calls = _read_calls(log_file)
+            self.assertIn(
+                "gcloud storage buckets update gs://demo-state-bucket --project=demo-proj-123",
+                calls,
+            )
+            self.assertNotIn("terraform", calls)
+
+
 UNMIGRATED_PINNING_ALLOWLIST: frozenset[str] = frozenset(
     {
-        "bin/bootstrap-tf-state",
-        "bin/load-raw-ops",
-        "bin/load-reveal",
         "bin/preflight",
-        "bin/setup",
     }
 )
 

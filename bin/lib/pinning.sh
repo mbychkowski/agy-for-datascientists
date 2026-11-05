@@ -41,6 +41,15 @@ pinned_require_staging_bucket() {
   return 0
 }
 
+pinned_require_state_bucket() {
+  if [[ -z "${STATE_BUCKET:-}" || "${STATE_BUCKET}" == *your-* ]]; then
+    echo "[FAIL] STATE_BUCKET is missing or contains a 'your-' placeholder ('${STATE_BUCKET:-}'). Edit demo.env with your real Terraform state bucket." >&2
+    return 1
+  fi
+
+  return 0
+}
+
 pinned_load_env() {
   REPO_ROOT="${REPO_ROOT:-$(_pinning_resolve_repo_root)}"
   local env_file="${1:-${ENV_FILE:-${REPO_ROOT}/demo.env}}"

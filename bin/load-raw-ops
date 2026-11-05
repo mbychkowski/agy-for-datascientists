@@ -17,7 +17,8 @@ while [[ -h "${SOURCE}" ]]; do
     [[ "${SOURCE}" != /* ]] && SOURCE="${DIR}/${SOURCE}"
 done
 SCRIPT_DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+# shellcheck source=lib/pinning.sh
+source "${SCRIPT_DIR}/lib/pinning.sh"
 
 ENV_FILE="${REPO_ROOT}/demo.env"
 DATASET_DIR="${REPO_ROOT}/fixtures/mock_dataset"
@@ -68,30 +69,13 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-if [[ ! -f "${ENV_FILE}" ]]; then
-    echo "[FAIL] Environment file not found: ${ENV_FILE}" >&2
+# pinned_load_env applies DATASET_LOCATION unless --dataset-dir or a positional
+# dataset location set CLI_DATASET_SET=true.
+if ! pinned_load_env "${ENV_FILE}"; then
     exit 1
 fi
 
-# shellcheck disable=SC1090
-source "${ENV_FILE}"
-
-if [[ "${CLI_DATASET_SET}" == "false" ]] && [[ -n "${DATASET_LOCATION:-}" ]] && [[ "${DATASET_LOCATION}" != *"your-"* ]]; then
-    DATASET_DIR="${DATASET_LOCATION}"
-fi
-
-if [[ -z "${PROJECT_ID:-}" ]] || [[ "${PROJECT_ID}" == *"your-"* ]]; then
-    echo "[FAIL] PROJECT_ID is unset or contains a placeholder value in ${ENV_FILE}" >&2
-    exit 1
-fi
-
-if [[ -z "${REGION:-}" ]] || [[ "${REGION}" == *"your-"* ]]; then
-    echo "[FAIL] REGION is unset or contains a placeholder value in ${ENV_FILE}" >&2
-    exit 1
-fi
-
-if ! command -v bq >/dev/null 2>&1; then
-    echo "[FAIL] bq CLI is not installed or not in PATH." >&2
+if ! pinned_require_cli bq; then
     exit 1
 fi
 
@@ -115,7 +99,7 @@ load_and_label_table() {
     local schema_json="$3"
 
     echo "Loading ${PROJECT_ID}:${dataset_table} from ${source_csv}..."
-    if ! bq --project_id="${PROJECT_ID}" --location="${REGION}" load \
+    if ! pinned_bq load \
         --replace \
         --source_format=CSV \
         --skip_leading_rows=1 \
@@ -127,10 +111,7 @@ load_and_label_table() {
     fi
 
     echo "Applying label demo:true to ${PROJECT_ID}:${dataset_table}..."
-    if ! bq --project_id="${PROJECT_ID}" --location="${REGION}" update \
-        --set_label demo:true \
-        "${PROJECT_ID}:${dataset_table}"; then
-        echo "[FAIL] Failed to apply demo label to ${PROJECT_ID}:${dataset_table}" >&2
+    if ! pinned_label "${PROJECT_ID}:${dataset_table}"; then
         return 1
     fi
 

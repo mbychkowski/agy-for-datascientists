@@ -22,7 +22,8 @@ while [[ -h "${SOURCE}" ]]; do
     [[ "${SOURCE}" != /* ]] && SOURCE="${DIR}/${SOURCE}"
 done
 SCRIPT_DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+# shellcheck source=lib/pinning.sh
+source "${SCRIPT_DIR}/lib/pinning.sh"
 
 ENV_FILE="${REPO_ROOT}/demo.env"
 DATASET_DIR="${REPO_ROOT}/fixtures/mock_dataset"
@@ -111,30 +112,13 @@ if [[ -z "${REVEAL_LOCATION}" ]]; then
     exit 1
 fi
 
-if [[ ! -f "${ENV_FILE}" ]]; then
-    echo "[FAIL] Environment file not found: ${ENV_FILE}" >&2
+# pinned_load_env applies DATASET_LOCATION unless --dataset-dir or a positional
+# dataset location set CLI_DATASET_SET=true.
+if ! pinned_load_env "${ENV_FILE}"; then
     exit 1
 fi
 
-# shellcheck disable=SC1090
-source "${ENV_FILE}"
-
-if [[ "${CLI_DATASET_SET}" == "false" ]] && [[ -n "${DATASET_LOCATION:-}" ]] && [[ "${DATASET_LOCATION}" != *"your-"* ]]; then
-    DATASET_DIR="${DATASET_LOCATION}"
-fi
-
-if [[ -z "${PROJECT_ID:-}" ]] || [[ "${PROJECT_ID}" == *"your-"* ]]; then
-    echo "[FAIL] PROJECT_ID is unset or contains a placeholder value in ${ENV_FILE}" >&2
-    exit 1
-fi
-
-if [[ -z "${REGION:-}" ]] || [[ "${REGION}" == *"your-"* ]]; then
-    echo "[FAIL] REGION is unset or contains a placeholder value in ${ENV_FILE}" >&2
-    exit 1
-fi
-
-if ! command -v bq >/dev/null 2>&1; then
-    echo "[FAIL] bq CLI is not installed or not in PATH." >&2
+if ! pinned_require_cli bq; then
     exit 1
 fi
 
@@ -171,7 +155,7 @@ if [[ ! -f "${SCHEMA_FILE}" ]]; then
 fi
 
 echo "Loading ${PROJECT_ID}:raw.hospital_flu_feeds_reveal from runtime Reveal source..."
-if ! bq --project_id="${PROJECT_ID}" --location="${REGION}" load \
+if ! pinned_bq load \
     --replace \
     --source_format=CSV \
     --skip_leading_rows=1 \
@@ -183,10 +167,7 @@ if ! bq --project_id="${PROJECT_ID}" --location="${REGION}" load \
 fi
 
 echo "Applying label demo:true to ${PROJECT_ID}:raw.hospital_flu_feeds_reveal..."
-if ! bq --project_id="${PROJECT_ID}" --location="${REGION}" update \
-    --set_label demo:true \
-    "${PROJECT_ID}:raw.hospital_flu_feeds_reveal"; then
-    echo "[FAIL] Failed to apply demo:true label to ${PROJECT_ID}:raw.hospital_flu_feeds_reveal" >&2
+if ! pinned_label "${PROJECT_ID}:raw.hospital_flu_feeds_reveal"; then
     exit 1
 fi
 
@@ -197,7 +178,7 @@ if [[ ! -f "${REVEAL_SQL_FILE}" ]]; then
 fi
 
 echo "Materialising ${PROJECT_ID}:staging.reveal_forecast_comparison..."
-if ! bq --project_id="${PROJECT_ID}" --location="${REGION}" query \
+if ! pinned_bq query \
     --quiet \
     --use_legacy_sql=false \
     --destination_table="${PROJECT_ID}:staging.reveal_forecast_comparison" \
@@ -208,10 +189,7 @@ if ! bq --project_id="${PROJECT_ID}" --location="${REGION}" query \
 fi
 
 echo "Applying label demo:true to ${PROJECT_ID}:staging.reveal_forecast_comparison..."
-if ! bq --project_id="${PROJECT_ID}" --location="${REGION}" update \
-    --set_label demo:true \
-    "${PROJECT_ID}:staging.reveal_forecast_comparison"; then
-    echo "[FAIL] Failed to apply demo:true label to ${PROJECT_ID}:staging.reveal_forecast_comparison" >&2
+if ! pinned_label "${PROJECT_ID}:staging.reveal_forecast_comparison"; then
     exit 1
 fi
 
