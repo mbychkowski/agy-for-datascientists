@@ -59,6 +59,10 @@ if ! pinned_load_env "${ENV_FILE}"; then
     exit 1
 fi
 
+if ! pinned_require_cli bq; then
+    exit 1
+fi
+
 FEATURES_SQL_FILE="${REPO_ROOT}/sql/ws2_seasonal_features.sql"
 KMEANS_SQL_FILE="${REPO_ROOT}/sql/ws2_kmeans_cohorts.sql"
 

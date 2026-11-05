@@ -60,6 +60,10 @@ if ! pinned_load_env "${ENV_FILE}"; then
     exit 1
 fi
 
+if ! pinned_require_cli bq; then
+    exit 1
+fi
+
 TRIALS_SQL_FILE="${REPO_ROOT}/sql/ws2_forecasts_and_trials.sql"
 LEADERBOARD_SQL_FILE="${REPO_ROOT}/sql/ws2_leaderboard.sql"
 RUNTIMES_FILE="${RECORDED_RUNTIMES_FILE:-${REPO_ROOT}/docs/recorded_runtimes.json}"
