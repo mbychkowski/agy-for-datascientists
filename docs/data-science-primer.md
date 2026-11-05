@@ -86,7 +86,7 @@ Aggregation weights groups by their total volume. If high-testing hospitals have
 **K-means** is an unsupervised machine learning algorithm that groups observations into $K$ distinct clusters (in our narrative, **Cohorts**) based on how close their feature values are to the centroid (center) of each group.
 
 #### Role in the Demo
-In **Workstream 2**, BQML K-means clusters the 90 hospitals into four distinct seasonal **Cohorts** using per-hospital historical features (peak arrival week, peak volume, curve width, and baseline trend).
+In **Workstream 2**, BQML K-means clusters the 90 hospitals into four distinct seasonal **Cohorts** using per-hospital historical features (peak arrival week, peak volume, curve width, and seasonal trend (`seasonal_trend`)).
 
 #### Why Is That the Right Check?
 Training 90 separate hospital models leads to high variance and overfitting on smaller facilities with noisy feeds. Conversely, training a single aggregate model obscures regional and clinical heterogeneity. Grouping hospitals into four Cohorts strikes the ideal bias-variance balance: facilities with similar seasonal dynamics share statistical strength.

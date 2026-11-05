@@ -72,7 +72,7 @@ The demonstration lands three foundational messages:
       * **Pipeline Defect**: ~15 points
       * **Sampling Artifact**: ~8 points
       * **Outbreak**: ~7 points (3 neighboring hospitals with true Positivity rises)
-      * **Seasonal Ramp**: ~5 points (expected baseline increase across all facilities)
+      * **Seasonal Ramp**: ~5 points (expected seasonal increase across all facilities)
   * **29:00 – 36:00 (Adversarial Challenge: `stats-reviewer` - 7 min)**:
     * Dispatch the custom `stats-reviewer` subagent to audit the Attribution table.
     * The reviewer challenges the team on counts vs rates, small-sample hospitals with erratic swings, and tests for Simpson's Paradox across regional aggregations.
