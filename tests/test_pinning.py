@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tests.helpers import setup_preflight_test_env
+from tests.helpers import create_demo_env_file, setup_preflight_test_env
 
 WORKTREE_ROOT = Path(__file__).resolve().parents[1]
 PINNING_SH = WORKTREE_ROOT / "bin" / "lib" / "pinning.sh"
@@ -461,17 +461,119 @@ class TestWorkstream1RunnersFailFastWithoutBq(unittest.TestCase):
                 self.assertNotIn("dataproc batches submit", calls)
 
 
+class TestPinnedHasDemoLabel(unittest.TestCase):
+    def test_detects_demo_true_label_in_noisy_bq_show_output(self) -> None:
+        """pinned_has_demo_label must succeed only when bq show JSON carries labels.demo == 'true'."""
+        cases = (
+            ('{"id":"t","labels":{"demo":"true"}}', 0),
+            ('Waiting on job [status] DONE\\n{"id":"t","labels":{"demo":"true"}}', 0),
+            ('{"id":"t","labels":{"demo":"false"}}', 1),
+            ('{"id":"t","labels":{}}', 1),
+            ('{"id":"t"}', 1),
+            ('[{"labels":{"demo":"true"}}]', 1),
+            ("not json at all", 1),
+            ("", 1),
+        )
+        for raw, expected_rc in cases:
+            with self.subTest(raw=raw):
+                proc = _run_bash(
+                    f"raw=$'{raw}'\npinned_has_demo_label \"$raw\"",
+                    strict_e=False,
+                )
+                self.assertEqual(proc.returncode, expected_rc, proc.stderr)
+
+
+class TestPinnedRequireStagingBucket(unittest.TestCase):
+    def test_rejects_missing_or_placeholder_bucket_and_accepts_real_bucket(
+        self,
+    ) -> None:
+        """pinned_require_staging_bucket must reject unset or 'your-' STAGING_BUCKET and pass for a real bucket."""
+        for value in ("", "your-staging-bucket"):
+            with self.subTest(value=value):
+                proc = _run_bash(
+                    f'STAGING_BUCKET="{value}"\npinned_require_staging_bucket'
+                )
+                self.assertNotEqual(proc.returncode, 0)
+                self.assertIn("[FAIL] STAGING_BUCKET is missing", proc.stderr)
+
+        unset = _run_bash("unset STAGING_BUCKET\npinned_require_staging_bucket")
+        self.assertNotEqual(unset.returncode, 0)
+        self.assertIn("[FAIL] STAGING_BUCKET", unset.stderr)
+
+        ok = _run_bash('STAGING_BUCKET="real-bucket-49"\npinned_require_staging_bucket')
+        self.assertEqual(ok.returncode, 0, ok.stderr)
+
+
+def _run_start_point_script(
+    args: list[str], env: dict[str, str]
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [str(WORKTREE_ROOT / "bin" / args[0]), *args[1:]],
+        cwd=WORKTREE_ROOT,
+        env=env,
+        input="",
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+class TestStartPointAndCheckpointScriptsFailFast(unittest.TestCase):
+    def test_scripts_fail_before_any_bq_call_when_bq_missing(self) -> None:
+        """Start Point and Checkpoint scripts must reject a missing bq CLI before issuing any bq call."""
+        with tempfile.TemporaryDirectory() as withheld:
+            invocations = (
+                ["reset", "ws1", "--yes"],
+                ["verify-start-point", "ws1"],
+                ["verify-main-end-state", "--withheld-dir", withheld],
+                ["checkpoint", "ws1_pipeline_v1"],
+            )
+            for invocation in invocations:
+                with (
+                    self.subTest(script=invocation[0]),
+                    tempfile.TemporaryDirectory() as tmpdir,
+                ):
+                    env_file, env, log_file = setup_preflight_test_env(tmpdir)
+                    bin_dir = Path(tmpdir) / "bin"
+                    (bin_dir / "bq").unlink()
+                    env["PATH"] = _path_without({"bq"}, bin_dir)
+                    proc = _run_start_point_script(
+                        [*invocation, "--env", str(env_file)], env
+                    )
+                    self.assertNotEqual(proc.returncode, 0)
+                    self.assertIn("[FAIL] bq CLI is not installed", proc.stderr)
+                    calls = (
+                        log_file.read_text(encoding="utf-8")
+                        if log_file.exists()
+                        else ""
+                    )
+                    self.assertNotIn("bq ", calls)
+
+    def test_reset_rejects_placeholder_staging_bucket_before_any_bq_call(
+        self,
+    ) -> None:
+        """bin/reset must reject a placeholder STAGING_BUCKET before listing or dropping any table."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _, env, log_file = setup_preflight_test_env(tmpdir)
+            env_file = create_demo_env_file(
+                tmpdir, staging_bucket="your-staging-bucket"
+            )
+            proc = _run_start_point_script(
+                ["reset", "ws1", "--yes", "--env", str(env_file)], env
+            )
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertIn("[FAIL] STAGING_BUCKET", proc.stderr)
+            calls = log_file.read_text(encoding="utf-8") if log_file.exists() else ""
+            self.assertNotIn("bq ", calls)
+
+
 UNMIGRATED_PINNING_ALLOWLIST: frozenset[str] = frozenset(
     {
         "bin/bootstrap-tf-state",
-        "bin/checkpoint",
         "bin/load-raw-ops",
         "bin/load-reveal",
         "bin/preflight",
-        "bin/reset",
         "bin/setup",
-        "bin/verify-main-end-state",
-        "bin/verify-start-point",
     }
 )
 
@@ -495,6 +597,10 @@ _FORBIDDEN_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "inline 'your-' placeholder check or missing env message",
         re.compile(r"\*\s*[\"']?your-|Environment file not found:"),
+    ),
+    (
+        "inline JSON-parsing copy (use pinned_bq_json / lib/bq_json.py)",
+        re.compile(r"\braw_decode\b|JSONDecoder\(\)"),
     ),
 )
 

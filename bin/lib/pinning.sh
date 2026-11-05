@@ -32,6 +32,15 @@ pinned_require_project_region() {
   return 0
 }
 
+pinned_require_staging_bucket() {
+  if [[ -z "${STAGING_BUCKET:-}" || "${STAGING_BUCKET}" == *your-* ]]; then
+    echo "[FAIL] STAGING_BUCKET is missing or contains a 'your-' placeholder ('${STAGING_BUCKET:-}'). Edit demo.env with your real staging bucket." >&2
+    return 1
+  fi
+
+  return 0
+}
+
 pinned_load_env() {
   REPO_ROOT="${REPO_ROOT:-$(_pinning_resolve_repo_root)}"
   local env_file="${1:-${ENV_FILE:-${REPO_ROOT}/demo.env}}"
@@ -158,6 +167,20 @@ pinned_bq_json() {
   esac
 }
 
+pinned_has_demo_label() {
+  local meta_json
+  if ! meta_json="$(pinned_bq_json "${1:-}" 2>/dev/null)"; then
+    return 1
+  fi
+
+  python3 -c '
+import json, sys
+meta = json.loads(sys.argv[1])
+labels = meta.get("labels") if isinstance(meta, dict) else None
+sys.exit(0 if isinstance(labels, dict) and labels.get("demo") == "true" else 1)
+' "${meta_json}"
+}
+
 pinned_storage() {
   if ! command -v gcloud >/dev/null 2>&1; then
     echo "[FAIL] gcloud CLI is not installed or not on PATH" >&2
@@ -196,8 +219,7 @@ pinned_dataproc_submit() {
     return 1
   fi
 
-  if [[ -z "${STAGING_BUCKET:-}" || "${STAGING_BUCKET}" == *your-* ]]; then
-    echo "[FAIL] STAGING_BUCKET is missing or contains a 'your-' placeholder ('${STAGING_BUCKET:-}'). Edit demo.env with your real staging bucket." >&2
+  if ! pinned_require_staging_bucket; then
     return 1
   fi
 

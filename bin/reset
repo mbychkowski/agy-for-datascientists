@@ -26,6 +26,9 @@ done
 SCRIPT_DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
+# shellcheck source=lib/pinning.sh
+source "${SCRIPT_DIR}/lib/pinning.sh"
+
 ENV_FILE="${REPO_ROOT}/demo.env"
 DATASET_DIR="${REPO_ROOT}/fixtures/mock_dataset"
 TARGET=""
@@ -119,35 +122,15 @@ case "${TARGET}" in
         ;;
 esac
 
-if [[ ! -f "${ENV_FILE}" ]]; then
-    echo "[FAIL] Environment file not found: ${ENV_FILE}" >&2
+if ! pinned_load_env "${ENV_FILE}"; then
     exit 1
 fi
 
-# shellcheck disable=SC1090
-source "${ENV_FILE}"
-
-if [[ "${CLI_DATASET_SET}" == "false" ]] && [[ -n "${DATASET_LOCATION:-}" ]] && [[ "${DATASET_LOCATION}" != *"your-"* ]]; then
-    DATASET_DIR="${DATASET_LOCATION}"
-fi
-
-if [[ -z "${PROJECT_ID:-}" ]] || [[ "${PROJECT_ID}" == *"your-"* ]]; then
-    echo "[FAIL] PROJECT_ID is unset or contains a placeholder value in ${ENV_FILE}" >&2
+if ! pinned_require_staging_bucket; then
     exit 1
 fi
 
-if [[ -z "${REGION:-}" ]] || [[ "${REGION}" == *"your-"* ]]; then
-    echo "[FAIL] REGION is unset or contains a placeholder value in ${ENV_FILE}" >&2
-    exit 1
-fi
-
-if [[ -z "${STAGING_BUCKET:-}" ]] || [[ "${STAGING_BUCKET}" == *"your-"* ]]; then
-    echo "[FAIL] STAGING_BUCKET is unset or contains a placeholder value in ${ENV_FILE}" >&2
-    exit 1
-fi
-
-if ! command -v bq >/dev/null 2>&1; then
-    echo "[FAIL] bq CLI is not installed or not in PATH." >&2
+if ! pinned_require_cli bq; then
     exit 1
 fi
 
@@ -189,20 +172,13 @@ is_core_table() {
 }
 
 parse_bq_ls_tables() {
+    local ls_json
+    if ! ls_json="$(pinned_bq_json "$1" 2>/dev/null)"; then
+        return 0
+    fi
     python3 -c '
 import json, sys
-raw = sys.argv[1]
-decoder = json.JSONDecoder()
-items = None
-for idx, ch in enumerate(raw):
-    if ch == "[":
-        try:
-            candidate, _ = decoder.raw_decode(raw[idx:])
-            if isinstance(candidate, list):
-                items = candidate
-                break
-        except Exception:
-            continue
+items = json.loads(sys.argv[1])
 if not isinstance(items, list):
     sys.exit(0)
 for item in items:
@@ -218,37 +194,14 @@ for item in items:
         tid = str(item["id"]).split(".")[-1].strip()
     if tid:
         print(tid)
-' "$1"
-}
-
-has_demo_true_label() {
-    python3 -c '
-import json, sys
-raw = sys.argv[1]
-decoder = json.JSONDecoder()
-meta = None
-for idx, ch in enumerate(raw):
-    if ch == "{":
-        try:
-            candidate, _ = decoder.raw_decode(raw[idx:])
-            if isinstance(candidate, dict):
-                meta = candidate
-                break
-        except Exception:
-            continue
-if not isinstance(meta, dict):
-    sys.exit(1)
-labels = meta.get("labels")
-if not isinstance(labels, dict) or labels.get("demo") != "true":
-    sys.exit(1)
-' "$1"
+' "${ls_json}"
 }
 
 TABLES_TO_DROP=()
 TABLES_PRESERVED=()
 
 for ds in "${DEMO_WORKING_DATASETS[@]}"; do
-    if ! ls_out=$(bq ls --project_id="${PROJECT_ID}" --location="${REGION}" --format=json "${PROJECT_ID}:${ds}" 2>&1); then
+    if ! ls_out=$(pinned_bq ls --format=json "${PROJECT_ID}:${ds}" 2>&1); then
         echo "[FAIL] Failed to list tables in demo dataset ${PROJECT_ID}:${ds}: ${ls_out}" >&2
         exit 1
     fi
@@ -258,12 +211,12 @@ for ds in "${DEMO_WORKING_DATASETS[@]}"; do
         [[ -z "${tbl}" ]] && continue
         ds_tbl="${ds}.${tbl}"
 
-        if ! show_out=$(bq show --project_id="${PROJECT_ID}" --location="${REGION}" --format=json "${PROJECT_ID}:${ds_tbl}" 2>&1); then
+        if ! show_out=$(pinned_bq show --format=json "${PROJECT_ID}:${ds_tbl}" 2>&1); then
             echo "[FAIL] Failed to inspect table metadata for ${PROJECT_ID}:${ds_tbl}: ${show_out}" >&2
             exit 1
         fi
 
-        if has_demo_true_label "${show_out}"; then
+        if pinned_has_demo_label "${show_out}"; then
             if ! is_core_table "${ds_tbl}"; then
                 TABLES_TO_DROP+=("${ds_tbl}")
             fi
@@ -318,7 +271,7 @@ if [[ ${#TABLES_TO_DROP[@]} -gt 0 ]]; then
     echo "==> Dropping demo:true live-created and Reveal tables..."
     for ds_tbl in "${TABLES_TO_DROP[@]}"; do
         echo "Dropping ${PROJECT_ID}:${ds_tbl}..."
-        if ! bq --project_id="${PROJECT_ID}" --location="${REGION}" rm -f -t "${PROJECT_ID}:${ds_tbl}"; then
+        if ! pinned_bq rm -f -t "${PROJECT_ID}:${ds_tbl}"; then
             echo "[FAIL] Failed to drop table ${PROJECT_ID}:${ds_tbl}" >&2
             exit 1
         fi
@@ -333,7 +286,7 @@ if [[ "${TARGET}" == "ws1" ]]; then
     fi
 
     echo "==> Step 2/3: Restoring defective staging.hospital_flu..."
-    if bq show --project_id="${PROJECT_ID}" --location="${REGION}" --format=json "${PROJECT_ID}:checkpoint.ws1_staging_hospital_flu" >/dev/null 2>&1; then
+    if pinned_bq show --format=json "${PROJECT_ID}:checkpoint.ws1_staging_hospital_flu" >/dev/null 2>&1; then
         echo "Restoring staging.hospital_flu from Checkpoint ws1_pipeline_v1..."
         if ! "${REPO_ROOT}/bin/checkpoint" ws1_pipeline_v1 --env "${ENV_FILE}"; then
             echo "[FAIL] Step 2/3 (bin/checkpoint ws1_pipeline_v1) failed." >&2
@@ -364,7 +317,7 @@ if ! "${REPO_ROOT}/bin/load-raw-ops" --env "${ENV_FILE}" --dataset-dir "${DATASE
 fi
 
 echo "==> Step 2/4: Restoring defective staging.hospital_flu..."
-if bq show --project_id="${PROJECT_ID}" --location="${REGION}" --format=json "${PROJECT_ID}:checkpoint.ws1_staging_hospital_flu" >/dev/null 2>&1; then
+if pinned_bq show --format=json "${PROJECT_ID}:checkpoint.ws1_staging_hospital_flu" >/dev/null 2>&1; then
     echo "Restoring staging.hospital_flu from Checkpoint ws1_pipeline_v1..."
     if ! "${REPO_ROOT}/bin/checkpoint" ws1_pipeline_v1 --env "${ENV_FILE}"; then
         echo "[FAIL] Step 2/4 (bin/checkpoint ws1_pipeline_v1) failed." >&2
@@ -379,7 +332,7 @@ else
 fi
 
 echo "==> Step 3/4: Restoring clean staging.hospital_flu_clean..."
-if bq show --project_id="${PROJECT_ID}" --location="${REGION}" --format=json "${PROJECT_ID}:checkpoint.ws1_staging_hospital_flu_clean" >/dev/null 2>&1; then
+if pinned_bq show --format=json "${PROJECT_ID}:checkpoint.ws1_staging_hospital_flu_clean" >/dev/null 2>&1; then
     echo "Restoring staging.hospital_flu_clean from Checkpoint ws1_staging_clean..."
     if ! "${REPO_ROOT}/bin/checkpoint" ws1_staging_clean --env "${ENV_FILE}"; then
         echo "[FAIL] Step 3/4 (bin/checkpoint ws1_staging_clean) failed." >&2

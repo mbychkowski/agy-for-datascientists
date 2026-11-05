@@ -33,6 +33,9 @@ done
 SCRIPT_DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
+# shellcheck source=lib/pinning.sh
+source "${SCRIPT_DIR}/lib/pinning.sh"
+
 ENV_FILE="${REPO_ROOT}/demo.env"
 TARGET=""
 ORIG_ARGS=("$@")
@@ -126,26 +129,11 @@ case "${TARGET}" in
         ;;
 esac
 
-if [[ ! -f "${ENV_FILE}" ]]; then
-    echo "[FAIL] Environment file not found: ${ENV_FILE}" >&2
+if ! pinned_load_env "${ENV_FILE}"; then
     exit 1
 fi
 
-# shellcheck disable=SC1090
-source "${ENV_FILE}"
-
-if [[ -z "${PROJECT_ID:-}" ]] || [[ "${PROJECT_ID}" == *"your-"* ]]; then
-    echo "[FAIL] PROJECT_ID is unset or contains a placeholder value in ${ENV_FILE}" >&2
-    exit 1
-fi
-
-if [[ -z "${REGION:-}" ]] || [[ "${REGION}" == *"your-"* ]]; then
-    echo "[FAIL] REGION is unset or contains a placeholder value in ${ENV_FILE}" >&2
-    exit 1
-fi
-
-if ! command -v bq >/dev/null 2>&1; then
-    echo "[FAIL] bq CLI is not installed or not in PATH." >&2
+if ! pinned_require_cli bq; then
     exit 1
 fi
 
@@ -161,31 +149,12 @@ if [[ "${TARGET}" == "ws2" ]]; then
 fi
 
 for tbl in "${REQUIRED_TABLES[@]}"; do
-    if ! table_meta=$(bq show --project_id="${PROJECT_ID}" --location="${REGION}" --format=json "${PROJECT_ID}:${tbl}" 2>&1); then
+    if ! table_meta=$(pinned_bq show --format=json "${PROJECT_ID}:${tbl}" 2>&1); then
         echo "[FAIL] Required ${WORKSTREAM_LABEL} table missing: ${PROJECT_ID}:${tbl}" >&2
         exit 1
     fi
 
-    if ! python3 -c '
-import json, sys
-raw = sys.argv[1]
-decoder = json.JSONDecoder()
-meta = None
-for idx, ch in enumerate(raw):
-    if ch == "{":
-        try:
-            candidate, _ = decoder.raw_decode(raw[idx:])
-            if isinstance(candidate, dict):
-                meta = candidate
-                break
-        except Exception:
-            continue
-if not isinstance(meta, dict):
-    sys.exit(1)
-labels = meta.get("labels")
-if not isinstance(labels, dict) or labels.get("demo") != "true":
-    sys.exit(1)
-' "${table_meta}"; then
+    if ! pinned_has_demo_label "${table_meta}"; then
         echo "[FAIL] Table ${PROJECT_ID}:${tbl} is missing required label demo:true" >&2
         exit 1
     fi
@@ -288,33 +257,20 @@ CROSS JOIN ne_weekly AS n
 EOF
 fi
 
-if ! query_out=$(bq query \
+if ! query_json=$(pinned_bq_json query \
     --quiet \
     --use_legacy_sql=false \
-    --project_id="${PROJECT_ID}" \
-    --location="${REGION}" \
     --format=json \
     "${VERIFY_SQL}" 2>&1); then
-    echo "[FAIL] Read-only verification query failed on ${PROJECT_ID}: ${query_out}" >&2
+    echo "[FAIL] Read-only verification query failed on ${PROJECT_ID}: ${query_json}" >&2
     exit 1
 fi
 
 if ! check_msg=$(python3 -c '
 import json, sys
 
-raw = sys.argv[1]
+rows = json.loads(sys.argv[1])
 target = sys.argv[2]
-decoder = json.JSONDecoder()
-rows = None
-for idx, ch in enumerate(raw):
-    if ch == "[":
-        try:
-            candidate, _ = decoder.raw_decode(raw[idx:])
-            if isinstance(candidate, list):
-                rows = candidate
-                break
-        except Exception:
-            continue
 
 if not isinstance(rows, list) or len(rows) == 0 or not isinstance(rows[0], dict):
     print("[FAIL] Verification query returned no rows or invalid JSON.")
@@ -363,7 +319,7 @@ if target == "ws2":
             f"(clean_positivity_populated_rows={clean_pos_populated}, clean_missing_positivity_rows={clean_missing_pos})."
         )
         sys.exit(1)
-' "${query_out}" "${TARGET}" 2>&1); then
+' "${query_json}" "${TARGET}" 2>&1); then
     echo "${check_msg}" >&2
     exit 1
 fi
