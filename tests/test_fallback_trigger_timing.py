@@ -3,8 +3,9 @@
 Each trigger is computed from docs/recorded_runtimes.json: the step's start
 time plus its recorded (or estimated) runtime plus 60 seconds, rounded up to
 the next whole minute. The test then checks that DEMO.md states the computed
-times, so editing a runtime or a start time without the other fails. A slower live run recorded by bin/run-ws2-forecasts or
-bin/run-pipeline-clean fails it too, on purpose: move the triggers in the docs.
+times, so editing a runtime or a start time without the other fails. A slower
+live run recorded by bin/run-ws2-forecasts or bin/run-pipeline-clean fails it
+too, on purpose: move the triggers in the docs.
 """
 
 from __future__ import annotations

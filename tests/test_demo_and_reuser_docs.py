@@ -140,9 +140,8 @@ def _table_rows(section: str, first_cell: str) -> list[str]:
 
 
 # Opening guardrail and Workstream 1 segment titles in DEMO.md.
-WS1_SEGMENTS = {
-    "DEMO.md": ("Live Guardrail Moment", "Segment 1A", "Segment 1B", "Segment 1C"),
-}
+GUARDRAIL_MOMENT = "Live Guardrail Moment"
+WS1_SEGMENTS = ("Segment 1A", "Segment 1B", "Segment 1C")
 
 # Top-level DEMO.md sections for each Workstream and the handoff between them.
 WS1_SECTION = 'Workstream 1: "Is the Data Good to Use?"'
@@ -348,7 +347,7 @@ class TestDemoAndReuserDocs(unittest.TestCase):
 
     def test_stage_prompts_are_typed_into_window_1(self) -> None:
         for name, doc in self._docs():
-            for title in (*WS1_SEGMENTS[name], *WS2_SEGMENTS):
+            for title in (GUARDRAIL_MOMENT, *WS1_SEGMENTS, *WS2_SEGMENTS):
                 prompts = _labelled_blocks(_segment(doc, title), "text")
                 with self.subTest(doc=name, segment=title):
                     self.assertTrue(prompts, "segment has no prompt to type")
@@ -357,7 +356,7 @@ class TestDemoAndReuserDocs(unittest.TestCase):
 
     def test_stage_presenter_commands_run_from_window_2(self) -> None:
         for name, doc in self._docs():
-            for title in (*WS1_SEGMENTS[name][1:], *WS2_SEGMENTS):
+            for title in (*WS1_SEGMENTS, *WS2_SEGMENTS):
                 for label, body in _labelled_blocks(_segment(doc, title), "bash"):
                     if "./" not in body:
                         continue
@@ -644,7 +643,7 @@ class TestDemoAndReuserDocs(unittest.TestCase):
             "Part A",
             "Part B",
             "Part C",
-            *WS1_SEGMENTS["DEMO.md"][1:],
+            *WS1_SEGMENTS,
             *WS2_SEGMENTS,
         ):
             with self.subTest(segment=title):
@@ -730,7 +729,7 @@ class TestDemoAndReuserDocs(unittest.TestCase):
                 self.assertRegex(self.demo, rf"(?m)^## [^\n]*{re.escape(title)}")
 
         ws1 = _segment(self.demo, WS1_SECTION)
-        for title in WS1_SEGMENTS["DEMO.md"][1:]:
+        for title in WS1_SEGMENTS:
             with self.subTest(workstream=1, segment=title):
                 self.assertTrue(_labelled_blocks(_segment(ws1, title), "text"))
         for command in (
@@ -753,6 +752,7 @@ class TestDemoAndReuserDocs(unittest.TestCase):
                     self.assertIn(command, ws2)
         self.assertIn("./load-reveal", ws2)
 
+    def test_no_tracked_file_links_the_retired_runbook(self) -> None:
         tracked = subprocess.run(
             ["git", "ls-files"],
             cwd=str(REPO_ROOT),
@@ -760,9 +760,12 @@ class TestDemoAndReuserDocs(unittest.TestCase):
             text=True,
             check=True,
         ).stdout.split()
+        # Live links and commands only: Markdown docs (ADRs keep their history),
+        # presenter scripts and the Makefile.
         for rel in tracked:
             path = REPO_ROOT / rel
-            if rel.startswith("graphify-out/") or path == Path(__file__).resolve():
+            is_doc = rel.endswith(".md") and not rel.startswith("docs/adr/")
+            if not (is_doc or rel.startswith("bin/") or rel == "Makefile"):
                 continue
             if not path.is_file():
                 continue
