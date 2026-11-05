@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from typing import NamedTuple
 
 from tests.helpers import create_demo_env_file, setup_preflight_test_env
 
@@ -461,6 +462,162 @@ class TestWorkstream1RunnersFailFastWithoutBq(unittest.TestCase):
                 self.assertNotIn("dataproc batches submit", calls)
 
 
+class TestWorkstream2RunnersFailFastWithoutBq(unittest.TestCase):
+    def test_runners_fail_before_any_work_when_bq_missing(self) -> None:
+        """WS2 runners must reject a missing bq CLI right after loading demo.env, before any bq call or local refresh output."""
+        for runner, extra in (
+            ("run-ws2-cohorts", []),
+            ("run-ws2-forecasts", []),
+            ("run-cohort-forecast-refresh", ["--output-json", "{tmp}/refresh.json"]),
+        ):
+            with self.subTest(runner=runner), tempfile.TemporaryDirectory() as tmpdir:
+                env_file, env, log_file = setup_preflight_test_env(tmpdir)
+                bin_dir = Path(tmpdir) / "bin"
+                (bin_dir / "bq").unlink()
+                env["PATH"] = _path_without({"bq"}, bin_dir)
+                env["RECORDED_RUNTIMES_FILE"] = str(Path(tmpdir) / "runtimes.json")
+                env["COHORT_REFRESH_STATE_FILE"] = str(Path(tmpdir) / "state.json")
+                proc = subprocess.run(
+                    [
+                        str(WORKTREE_ROOT / "bin" / runner),
+                        "--env",
+                        str(env_file),
+                        *(arg.format(tmp=tmpdir) for arg in extra),
+                    ],
+                    cwd=WORKTREE_ROOT,
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertNotEqual(proc.returncode, 0)
+                self.assertIn("[FAIL] bq CLI is not installed", proc.stderr)
+                self.assertNotIn("bq ", _read_calls(log_file))
+                for artefact in ("runtimes.json", "state.json", "refresh.json"):
+                    self.assertFalse((Path(tmpdir) / artefact).exists(), artefact)
+
+
+class TestPinnedGcloudProfileProbes(unittest.TestCase):
+    """Module wrappers for preflight's read-only gcloud profile and ADC probes."""
+
+    def _stub_env(self, tmpdir: str, body: str = "") -> tuple[dict[str, str], Path]:
+        bin_dir = Path(tmpdir) / "bin"
+        bin_dir.mkdir()
+        log_file = Path(tmpdir) / "calls.log"
+        _write_logging_stub(
+            bin_dir,
+            "gcloud",
+            log_file,
+            'echo "env CORE_PROJECT=${CLOUDSDK_CORE_PROJECT-<unset>}'
+            " CORE_ACCOUNT=${CLOUDSDK_CORE_ACCOUNT-<unset>}"
+            f' COMPUTE_REGION=${{CLOUDSDK_COMPUTE_REGION-<unset>}}" >> "{log_file}"\n'
+            + body,
+        )
+        env = os.environ.copy()
+        env.update(
+            {
+                "PATH": f"{bin_dir}{os.pathsep}{env['PATH']}",
+                "PROJECT_ID": "demo-proj-52",
+                "REGION": "us-east4",
+                "CLOUDSDK_CORE_PROJECT": "shadow-proj",
+                "CLOUDSDK_CORE_ACCOUNT": "shadow@example.com",
+                "CLOUDSDK_COMPUTE_REGION": "shadow-region",
+            }
+        )
+        return env, log_file
+
+    def test_profile_reads_active_configuration_with_overrides_unset(self) -> None:
+        """pinned_gcloud_profile must read the active configuration's property with CLOUDSDK_* overrides unset."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env, log_file = self._stub_env(tmpdir, 'echo "real-value"')
+            for prop, field in (
+                ("core/project", "properties.core.project"),
+                ("compute/region", "properties.compute.region"),
+                ("core/account", "properties.core.account"),
+            ):
+                with self.subTest(prop=prop):
+                    log_file.unlink(missing_ok=True)
+                    proc = _run_bash(f"pinned_gcloud_profile {prop}", env=env)
+                    self.assertEqual(proc.returncode, 0, proc.stderr)
+                    self.assertEqual(proc.stdout.strip(), "real-value")
+                    calls = _read_calls(log_file)
+                    self.assertIn(
+                        "gcloud config configurations list --filter=is_active=true"
+                        f" --format=value({field})",
+                        calls,
+                    )
+                    self.assertIn(
+                        "env CORE_PROJECT=<unset> CORE_ACCOUNT=<unset>"
+                        " COMPUTE_REGION=<unset>",
+                        calls,
+                    )
+
+    def test_profile_rejects_malformed_property_and_missing_gcloud(self) -> None:
+        """pinned_gcloud_profile must fail with [FAIL] on a malformed property or a missing gcloud CLI."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env, log_file = self._stub_env(tmpdir)
+            for bad in ("", "project", "core/project;rm"):
+                with self.subTest(bad=bad):
+                    proc = _run_bash(f'pinned_gcloud_profile "{bad}"', env=env)
+                    self.assertNotEqual(proc.returncode, 0)
+                    self.assertIn("[FAIL] pinned_gcloud_profile", proc.stderr)
+            self.assertEqual(_read_calls(log_file), "")
+
+            env["PATH"] = _path_without({"gcloud"}, Path(tmpdir) / "empty")
+            missing = _run_bash("pinned_gcloud_profile core/project", env=env)
+            self.assertNotEqual(missing.returncode, 0)
+            self.assertIn("[FAIL] gcloud CLI is not installed", missing.stderr)
+
+    def test_project_lifecycle_state_is_pinned_to_project_id(self) -> None:
+        """pinned_project_lifecycle_state must describe the target project billed to PROJECT_ID and forward failures."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env, log_file = self._stub_env(
+                tmpdir,
+                'if [[ "$2" == "describe" && "$3" == "gone" ]]; then exit 1; fi\necho ACTIVE',
+            )
+            ok = _run_bash("pinned_project_lifecycle_state quota-proj", env=env)
+            self.assertEqual(ok.returncode, 0, ok.stderr)
+            self.assertEqual(ok.stdout.strip(), "ACTIVE")
+            self.assertIn(
+                "gcloud projects describe quota-proj --project=demo-proj-52"
+                " --format=value(lifecycleState)",
+                _read_calls(log_file),
+            )
+
+            gone = _run_bash(
+                "pinned_project_lifecycle_state gone", env=env, strict_e=False
+            )
+            self.assertNotEqual(gone.returncode, 0)
+
+            env["PROJECT_ID"] = "your-project"
+            log_file.unlink()
+            placeholder = _run_bash(
+                "pinned_project_lifecycle_state quota-proj", env=env
+            )
+            self.assertNotEqual(placeholder.returncode, 0)
+            self.assertIn("[FAIL] PROJECT_ID", placeholder.stderr)
+            self.assertEqual(_read_calls(log_file), "")
+
+    def test_adc_token_check_is_silent_and_forwards_exit_code(self) -> None:
+        """pinned_adc_token_ok must run print-access-token silently and return its exit status."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env, log_file = self._stub_env(
+                tmpdir, 'echo "secret-token"\necho "warn" >&2\nexit "${TOKEN_RC:-0}"'
+            )
+            ok = _run_bash("pinned_adc_token_ok", env=env)
+            self.assertEqual(ok.returncode, 0, ok.stderr)
+            self.assertEqual(ok.stdout + ok.stderr, "")
+            self.assertIn(
+                "gcloud auth application-default print-access-token",
+                _read_calls(log_file),
+            )
+
+            env["TOKEN_RC"] = "1"
+            bad = _run_bash("pinned_adc_token_ok", env=env, strict_e=False)
+            self.assertNotEqual(bad.returncode, 0)
+            self.assertNotIn("secret-token", bad.stdout + bad.stderr)
+
+
 class TestPinnedHasDemoLabel(unittest.TestCase):
     def test_detects_demo_true_label_in_noisy_bq_show_output(self) -> None:
         """pinned_has_demo_label must succeed only when bq show JSON carries labels.demo == 'true'."""
@@ -693,36 +850,67 @@ class TestLoadersSetupAndBootstrapFailFast(unittest.TestCase):
             self.assertNotIn("terraform", calls)
 
 
-_FORBIDDEN_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
-    (
-        "direct bq CLI invocation",
+_DIRECT_CALL_PREFIX = (
+    r"(?:^|[;&|(\[`{!]|\b(?:then|do|else|elif|if|while|until|exec|time|nohup|xargs)\b"
+    r"|\benv(?:\s+-u\s+\w+|\s+-\w+|\s+\w+=\S*)*)"
+)
+
+
+class _ForbiddenPattern(NamedTuple):
+    label: str
+    pattern: re.Pattern[str]
+    marker_exempts: bool  # may the per-line allow marker exempt a match?
+
+
+_FORBIDDEN_PATTERNS: tuple[_ForbiddenPattern, ...] = (
+    _ForbiddenPattern(
+        "direct bq/gcloud invocation (use the pinned_* wrappers in bin/lib/pinning.sh)",
         re.compile(
-            r"(?<![\w-])(?:bq\s+(?:--project_id|--location|--format|query|show|ls|rm|cp|load|update|mk|head)\b|command\s+-v\s+bq\b)"
+            _DIRECT_CALL_PREFIX
+            + r"\s*(?:[\"'](?:bq|gcloud)[\"']|(?:bq|gcloud)(?=$|[\s;|&)]))"
+            + r"|\bcommand\s+(?:-\w+\s+)*(?:bq|gcloud)\b"
+            + r"|\b(?:os\.system|os\.popen|subprocess\.\w+|Popen)\(\s*\[?\s*[\"'](?:bq|gcloud)\b"
         ),
+        False,
     ),
-    (
-        "direct gcloud CLI invocation",
+    _ForbiddenPattern(
+        "bq/gcloud command text",
         re.compile(
-            r"(?<![\w-])(?:gcloud\s+(?:storage|dataproc)\b|command\s+-v\s+gcloud\b)"
+            r"(?<![\w-])(?:bq\s+(?:--project_id|--location|--format|query|show|ls|rm|cp|load|update|mk|head)\b"
+            r"|gcloud\s+(?:storage|dataproc)\b)"
         ),
+        True,
     ),
-    (
-        "direct source of ENV_FILE or demo.env",
-        re.compile(r"(?:^|[;\s])(?:source|\.)\s+[\"']?\$\{?ENV_FILE\}?"),
+    _ForbiddenPattern(
+        "self-sourcing of ENV_FILE or demo.env (use pinned_load_env)",
+        re.compile(
+            r"(?:^|[;&|(\s])(?:source|\.)\s+[\"']?[^\s;]*(?:ENV_FILE|demo\.env)"
+            r"|<\s*[\"']?[^\s;]*(?:ENV_FILE|demo\.env)"
+            r"|\b(?:eval|cat|grep|sed|awk|xargs)\b[^|;]*(?:ENV_FILE|demo\.env)"
+            r"|\bopen\([^)]*(?:ENV_FILE|env_file|demo\.env)"
+        ),
+        False,
     ),
-    (
-        "inline 'your-' placeholder check or missing env message",
-        re.compile(r"\*\s*[\"']?your-|Environment file not found:"),
+    _ForbiddenPattern(
+        "inline 'your-' placeholder check or missing env message (use pinned_require_*)",
+        re.compile(r"\byour-|Environment file not found:"),
+        False,
     ),
-    (
+    _ForbiddenPattern(
         "inline JSON-parsing copy (use pinned_bq_json / lib/bq_json.py)",
-        re.compile(r"\braw_decode\b|JSONDecoder\(\)"),
+        re.compile(
+            r"\braw_decode\b|JSONDecoder\(|JSONDecodeError"
+            r"|\bin\s+[\"']\[\{[\"']|\.(?:find|index)\(\s*[\"'][\[{][\"']\s*\)"
+        ),
+        False,
     ),
 )
 
 
-# Explicit per-line escape hatch for text that matches a pattern but is data, not
-# an invocation (e.g. preflight's guardrail-hook probe payloads). State the reason.
+# Explicit per-line escape hatch for text that matches the bq/gcloud command-text
+# pattern but is data, not an invocation (e.g. preflight's guardrail-hook probe
+# payloads). State the reason. It never exempts a real invocation, an env-file
+# source, a placeholder check, or an inline JSON parser.
 _ALLOW_MARKER = re.compile(r"# pinning-guard: allow \(.+\)")
 
 
@@ -732,11 +920,14 @@ def _scan_script_violations(script_path: Path) -> list[str]:
         script_path.read_text(encoding="utf-8").splitlines(), start=1
     ):
         stripped = raw_line.strip()
-        if not stripped or stripped.startswith("#") or _ALLOW_MARKER.search(stripped):
+        if not stripped or stripped.startswith("#"):
             continue
-        for label, pattern in _FORBIDDEN_PATTERNS:
-            if pattern.search(stripped):
-                violations.append(f"L{lineno} ({label}): {stripped}")
+        allowed = bool(_ALLOW_MARKER.search(stripped))
+        for rule in _FORBIDDEN_PATTERNS:
+            if (allowed and rule.marker_exempts) or not rule.pattern.search(stripped):
+                continue
+            violations.append(f"L{lineno} ({rule.label}): {stripped}")
+            break  # one violation per line keeps the report readable
     return violations
 
 
@@ -758,15 +949,67 @@ class TestPinningSourceScanGuard(unittest.TestCase):
         self.assertTrue(violations[0].startswith("L1 "), violations)
         self.assertTrue(violations[1].startswith("L3 "), violations)
 
+    def test_scanner_is_strict_for_every_direct_call_env_source_placeholder_and_parser(
+        self,
+    ) -> None:
+        """Any direct bq/gcloud call, env-file self-source, placeholder check or inline JSON parser is flagged, even with an allow marker."""
+        flagged = (
+            'active=$(env -u CLOUDSDK_CORE_PROJECT gcloud config configurations list --format="value(x)")',
+            "if ! gcloud auth application-default print-access-token >/dev/null 2>&1; then",
+            'state=$(gcloud projects describe "${p}" --format="value(lifecycleState)")',
+            "gcloud compute instances list",
+            "bq version",
+            'if ! bq --headless query "SELECT 1"; then',
+            "cmd=(gcloud dataproc batches submit pyspark x)",
+            'subprocess.run(["bq", "show", ref], check=True)',
+            "command -v gcloud >/dev/null",
+            "x=1; bq ls  # pinning-guard: allow (not really data)",
+            'source "${ENV_FILE}"',
+            '. "${REPO_ROOT}/demo.env"',
+            "set -a && source ./demo.env && set +a",
+            'while IFS== read -r k v; do :; done < "${ENV_FILE}"',
+            'eval "$(cat "${ENV_FILE}")"',
+            "source <(grep -v '^#' \"${ENV_FILE}\")",
+            "with open(env_file) as fh:",
+            'os.system("bq ls")  # pinning-guard: allow (sneaky)',
+            'subprocess.check_output(["gcloud", "config", "list"])',
+            'if [[ "${PROJECT_ID}" == your-* ]]; then',
+            'if value.startswith("your-"):',
+            "decoder = json.JSONDecoder()",
+            "obj, _ = decoder.raw_decode(raw[idx:])",
+            "except json.JSONDecodeError:",
+            'if ch in "[{":',
+            "start = raw.find('{')",
+        )
+        clean = (
+            'echo "Run: gcloud config set project ${PROJECT_ID}"',
+            'echo "No active gcloud account configured."',
+            'echo "BigQuery MCP must authenticate as the presenter. Run: gcloud auth login"',
+            'source "${SCRIPT_DIR}/lib/pinning.sh"',
+            "if ! pinned_require_cli gcloud bq; then",
+            "active=$(pinned_gcloud_profile core/project 2>/dev/null || true)",
+            'if ! pinned_bq query --use_legacy_sql=false "${SQL}"; then',
+            'if ! pinned_load_env "${ENV_FILE}"; then',
+            'ENV_FILE="${REPO_ROOT}/demo.env"',
+            'echo "  -e, --env <path>  Path to environment file (default: demo.env)"',
+            "rows = json.loads(sys.argv[1])",
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            script = Path(tmpdir) / "script"
+            script.write_text("\n".join(flagged + clean) + "\n", encoding="utf-8")
+            violations = _scan_script_violations(script)
+        flagged_lines = {int(v.split(" ", 1)[0][1:]) for v in violations}
+        self.assertEqual(
+            flagged_lines, set(range(1, len(flagged) + 1)), "\n".join(violations)
+        )
+
     def test_bin_scripts_use_pinning_module(self) -> None:
-        """Every bin/* script must use bin/lib/pinning.sh instead of direct bq/gcloud or inline env checks."""
+        """Every bin/* file (shell, Python, JS) must use bin/lib/pinning.sh instead of direct bq/gcloud or inline env checks."""
         bin_dir = WORKTREE_ROOT / "bin"
         unexpected: dict[str, list[str]] = {}
 
         for path in sorted(bin_dir.iterdir()):
             if not path.is_file():
-                continue
-            if path.suffix in {".js", ".py"}:
                 continue
             violations = _scan_script_violations(path)
             if violations:

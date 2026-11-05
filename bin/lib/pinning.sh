@@ -217,6 +217,53 @@ pinned_storage() {
   fi
 }
 
+# Usage: pinned_gcloud_profile <section/property>   (e.g. core/project, compute/region, core/account)
+# Prints the property from the active gcloud configuration with the CLOUDSDK_*
+# overrides that demo.env (or the presenter's shell) may export unset (CLI Profile
+# Unshadowing), so preflight sees the real underlying profile, not the overrides.
+pinned_gcloud_profile() {
+  local property="${1:-}"
+  if [[ ! "${property}" =~ ^[a-z_]+/[a-z_]+$ ]]; then
+    echo "[FAIL] pinned_gcloud_profile requires a <section/property> such as core/project (got '${property}')" >&2
+    return 1
+  fi
+
+  pinned_require_cli gcloud || return 1
+
+  env -u CLOUDSDK_CORE_ACCOUNT -u CLOUDSDK_CORE_PROJECT -u CLOUDSDK_COMPUTE_REGION \
+    gcloud config configurations list \
+    --filter=is_active=true \
+    --format="value(properties.${property%%/*}.${property#*/})"
+}
+
+# Usage: pinned_project_lifecycle_state <project_id>
+# Prints the lifecycleState (e.g. ACTIVE) of <project_id>, billed to PROJECT_ID.
+# Returns gcloud's non-zero status (with its error on stderr) when the project is
+# inaccessible, stale, or deleted.
+pinned_project_lifecycle_state() {
+  local target="${1:-}"
+  if [[ -z "${target}" ]]; then
+    echo "[FAIL] pinned_project_lifecycle_state requires a project ID" >&2
+    return 1
+  fi
+
+  pinned_require_cli gcloud || return 1
+  pinned_require_project_region || return 1
+
+  gcloud projects describe "${target}" \
+    --project="${PROJECT_ID}" \
+    --format="value(lifecycleState)"
+}
+
+# Usage: pinned_adc_token_ok
+# Returns 0 when Application Default Credentials can mint a live access token.
+# The token and any gcloud output are discarded, never printed.
+pinned_adc_token_ok() {
+  pinned_require_cli gcloud || return 1
+
+  gcloud auth application-default print-access-token >/dev/null 2>&1
+}
+
 pinned_dataproc_submit() {
   if ! command -v gcloud >/dev/null 2>&1; then
     echo "[FAIL] gcloud CLI is not installed or not on PATH" >&2

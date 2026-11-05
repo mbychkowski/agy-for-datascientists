@@ -86,6 +86,10 @@ if ! pinned_load_env "${ENV_FILE}"; then
     exit 1
 fi
 
+if ! pinned_require_cli bq; then
+    exit 1
+fi
+
 if [[ ! -d "${DATASET_DIR}" ]]; then
     echo "[FAIL] Dataset directory not found: ${DATASET_DIR}" >&2
     exit 1
