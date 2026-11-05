@@ -240,6 +240,7 @@ class TestDataprocPreflightSeam(unittest.TestCase):
 
             calls = log_file.read_text()
             self.assertIn("--version=3.0", calls)
+            self.assertIn("--dataset staging", calls)
             self.assertIn(
                 "--subnet=projects/demo-proj-123/regions/us-central1/subnetworks/custom-sub",
                 calls,
@@ -248,11 +249,11 @@ class TestDataprocPreflightSeam(unittest.TestCase):
             self.assertNotIn("ShieldedVm", calls)
             self.assertNotIn("--service-account", calls)
             self.assertIn(
-                "bq show --project_id=demo-proj-123 --location=us-central1 demo-proj-123:ops._preflight_hello_test",
+                "bq show --project_id=demo-proj-123 --location=us-central1 demo-proj-123:staging._preflight_hello_test",
                 calls,
             )
             self.assertIn(
-                "bq rm -f -t --project_id=demo-proj-123 --location=us-central1 demo-proj-123:ops._preflight_hello_test",
+                "bq rm -f -t --project_id=demo-proj-123 --location=us-central1 demo-proj-123:staging._preflight_hello_test",
                 calls,
             )
             self.assertIn(

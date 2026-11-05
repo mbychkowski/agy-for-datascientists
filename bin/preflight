@@ -311,14 +311,14 @@ check_dataproc_hello_world_batch() {
     local temp_table="${PREFLIGHT_HELLO_TABLE:-_preflight_hello_$$}"
 
     cleanup_hello_world() {
-        pinned_bq rm -f -t "${PROJECT_ID}:ops.${temp_table}" >/dev/null 2>&1 || true
+        pinned_bq rm -f -t "${PROJECT_ID}:staging.${temp_table}" >/dev/null 2>&1 || true
         pinned_dataproc_delete "${batch_id}" >/dev/null 2>&1 || true
     }
 
     local submit_out
     if ! submit_out=$(pinned_dataproc_submit "${hello_script}" "${batch_id}" -- \
         --project-id "${PROJECT_ID}" \
-        --dataset "ops" \
+        --dataset "staging" \
         --table "${temp_table}" \
         --staging-bucket "${STAGING_BUCKET}" 2>&1); then
         echo "Dataproc Serverless runtime 3.0 hello-world batch failed to execute."
@@ -329,8 +329,8 @@ check_dataproc_hello_world_batch() {
     fi
 
     local bq_out
-    if ! bq_out=$(pinned_bq show "${PROJECT_ID}:ops.${temp_table}" 2>&1); then
-        echo "Dataproc hello-world batch completed, but verification table '${PROJECT_ID}:ops.${temp_table}' was not found in BigQuery."
+    if ! bq_out=$(pinned_bq show "${PROJECT_ID}:staging.${temp_table}" 2>&1); then
+        echo "Dataproc hello-world batch completed, but verification table '${PROJECT_ID}:staging.${temp_table}' was not found in BigQuery."
         echo "Error details: ${bq_out}"
         cleanup_hello_world
         return 1
@@ -468,13 +468,13 @@ probes = [
     ),
     (
         'BigQuery MCP execute_sql DML targeting ops',
-        {'toolCall': {'name': 'execute_sql', 'args': {'sql': 'DELETE FROM ops.pipeline_run_log WHERE true'}}},
+        {'toolCall': {'name': 'execute_sql', 'args': {'sql': 'DELETE FROM ops.pipeline_run_log WHERE true'}}},  # dataset-guard: allow (hook probe payload, not a query)
         'deny',
         'read-only',
     ),
     (
         'BigQuery MCP execute_sql read targeting checkpoint',
-        {'toolCall': {'name': 'execute_sql', 'args': {'sql': 'SELECT * FROM checkpoint.clean_feeds'}}},
+        {'toolCall': {'name': 'execute_sql', 'args': {'sql': 'SELECT * FROM checkpoint.clean_feeds'}}},  # dataset-guard: allow (hook probe payload, not a query)
         'deny',
         'read-only',
     ),

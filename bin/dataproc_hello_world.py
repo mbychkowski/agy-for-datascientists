@@ -2,7 +2,7 @@
 """Dataproc Serverless runtime 3.0 hello-world batch script for preflight verification.
 
 Writes a single verification record to a temporary table in the demo BigQuery
-dataset (`ops`) using the presenter's credentials and temporary GCS staging bucket.
+dataset (`staging`) using the presenter's credentials and temporary GCS staging bucket.
 """
 
 import argparse
@@ -15,7 +15,9 @@ def parse_args():
     )
     parser.add_argument("--project-id", required=True, help="Target GCP project ID")
     parser.add_argument(
-        "--dataset", default="ops", help="Target BigQuery dataset (default: ops)"
+        "--dataset",
+        default="staging",
+        help="Target BigQuery dataset (default: staging)",
     )
     parser.add_argument(
         "--table", required=True, help="Temporary BigQuery table name to write"
