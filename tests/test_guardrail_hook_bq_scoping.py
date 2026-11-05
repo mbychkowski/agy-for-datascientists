@@ -1,9 +1,13 @@
-"""Guardrail hook dataset checks stay strict except for text-only commands (#55).
+"""Guardrail hook text checks stay strict except for text-only commands (#55, #67).
 
 The checkpoint and raw/ops checks run on every shell command by default. They are
 skipped only when every command in the line is on a small text-only allowlist
 (git, gh, echo, cat, ...) and nothing in the line can reach BigQuery, so prose in
 commit messages, PR/issue bodies, heredocs into files, and echo/printf is allowed.
+
+The Dataproc --service-account and ShieldedVm checks are skipped for the same
+text-only lines, so prose can name the batch-submit command with those flags; a
+real submit, chained or wrapped, is still denied.
 """
 
 import json
@@ -28,6 +32,17 @@ GUARDRAIL_HOOK = (
 PROSE = "Rebuild the staging tables from the last checkpoint. Then rerun triage."
 PROSE_DML = "Explain why DELETE FROM raw.hospital_flu_feeds is blocked."
 
+# Prose that names the Dataproc batch-submit command next to a flag the ADR 0002
+# and ShieldedVm checks deny, as in the #64-#66 ticket bodies.
+DATAPROC_SA_PROSE = (
+    "The agent runs gcloud dataproc batches submit as the presenter, "
+    "never with --service-account (ADR 0002)."
+)
+DATAPROC_SHIELDED_PROSE = (
+    "gcloud dataproc batches submit rejects spark.dataproc.ShieldedVm.enableSecureBoot, "
+    "so never pass it."
+)
+
 CHECKPOINT_SQL = "SELECT * FROM checkpoint.clean_feeds"
 BQ_PY_CHECKPOINT = f"from google.cloud import bigquery; print(list(bigquery.Client().query('{CHECKPOINT_SQL}').result()))"
 
@@ -48,6 +63,12 @@ class TestGuardrailHookBigQueryScoping(unittest.TestCase):
 
     def _run_command(self, command_line: str) -> dict[str, Any]:
         return self._invoke("run_command", {"CommandLine": command_line})
+
+    def _assert_allowed(self, command_lines: list[str]):
+        for command_line in command_lines:
+            with self.subTest(command_line=command_line):
+                resp = self._run_command(command_line)
+                self.assertEqual(resp.get("decision"), "allow", resp)
 
     def _assert_denied(self, command_lines: list[str], reason_substr: str):
         for command_line in command_lines:
@@ -80,10 +101,7 @@ class TestGuardrailHookBigQueryScoping(unittest.TestCase):
                 f'cd /repo && git commit -m "{prose}" && git push -u origin issue049/x 2>&1 | tail -5',
             ]
 
-        for command_line in allowed:
-            with self.subTest(command_line=command_line):
-                resp = self._run_command(command_line)
-                self.assertEqual(resp.get("decision"), "allow", resp)
+        self._assert_allowed(allowed)
 
     def test_unlisted_or_unparsed_commands_keep_the_strict_check(self):
         """Anything outside the text-only allowlist, or that fails to parse, gets the whole-string check."""
@@ -231,8 +249,57 @@ class TestGuardrailHookBigQueryScoping(unittest.TestCase):
             "read-only",
         )
 
+    def test_allows_dataproc_flags_named_in_text_only_prose(self):
+        """Prose naming the batch-submit command with --service-account or ShieldedVm is allowed (#67)."""
+        allowed = []
+        for prose in (DATAPROC_SA_PROSE, DATAPROC_SHIELDED_PROSE):
+            allowed += [
+                f'gh issue create --title "Two-window demo" --body "## Context\\n{prose}"',
+                f'gh pr create --title "x" --body "Summary:\\n\\n{prose}\\nDone; ok | fine."',
+                f'git commit -m "docs: runbook" -m "{prose}"',
+                f"cat > notes.md <<'EOF'\n# Notes\n{prose}\nEOF",
+                f'echo "{prose}"',
+                f'git add -A && git commit -m "{prose}"',
+            ]
+
+        self._assert_allowed(allowed)
+
+    def test_denies_real_dataproc_submits_with_blocked_flags(self):
+        """Real batch submits with --service-account or ShieldedVm stay denied when chained or wrapped (#67)."""
+        for flag, reason_substr in (
+            ("--service-account=sa@p.iam.gserviceaccount.com", "adr 0002"),
+            (
+                "--properties=spark.dataproc.ShieldedVm.enableSecureBoot=true",
+                "shieldedvm",
+            ),
+        ):
+            submit = f"gcloud dataproc batches submit pyspark job.py {flag}"
+            self._assert_denied(
+                [
+                    submit,
+                    f'git commit -m "x" && {submit}',
+                    f'echo "starting"; {submit}',
+                    f"cd /repo || {submit}",
+                    f"bash -c '{submit}'",
+                    f"echo '{submit}' | bash",
+                    f'echo "$({submit})"',
+                    f"git config alias.x '!{submit}'",
+                    f"echo $'a\\'' ; {submit} #'",
+                    f"git rebase -x'{submit}' HEAD~1",
+                    f"git difftool --extcmd='{submit}' HEAD",
+                    f"git grep -O'{submit}' foo",
+                    f"git ls-remote --upload-pack='{submit}; git-upload-pack' .",
+                    f"gh codespace ssh -- {submit}",
+                    f"cat <<'EOF'\nx\\\nEOF\n{submit}\nEOF",
+                    f"cat <<EOF\nx\\\nEOF\n{submit}\nEOF",
+                    f"echo '{submit}' > .hu\\sky/pre-commit && git commit -m x",
+                    f"cat > .hu''sky/pre-commit <<'EOF'\n{submit}\nEOF\ngit commit -m x",
+                ],
+                reason_substr,
+            )
+
     def test_other_guardrails_still_inspect_the_whole_command(self):
-        """git push to main and Dataproc --service-account/ShieldedVm checks are unchanged."""
+        """git push to main is unchanged, and plain Dataproc submits with blocked flags stay denied."""
         for command_line, reason_substr in (
             (f'git commit -m "{PROSE}" && git push origin main', "Direct push to main"),
             (
