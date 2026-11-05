@@ -87,9 +87,9 @@ A pre-built result of one live step, swapped in if that step fails on stage. A C
 _Avoid_: Backup, cache
 
 **Evidence Board**:
-The audience-facing view beside the Command Center that fills in, step by step across both Workstreams, with the evidence each step produces.
-_Avoid_: Dashboard, sidecar, viz, panel
+The audience-facing view beside the Command Center that shows each live step's evidence, from the Opening through both Workstreams.
+_Avoid_: Dashboard, panel, viz, sidecar (sidecar names the Antigravity mechanism that hosts it, not the concept)
 
 **Tile**:
-One piece of evidence on the Evidence Board, tied to a single demo step, that goes from locked to in progress to landed as that step runs.
-_Avoid_: Panel, card, widget, exhibit
+One piece of evidence on the Evidence Board, tied to a single live step.
+_Avoid_: Card, widget, exhibit
