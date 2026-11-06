@@ -108,6 +108,13 @@ class TestWorktreeDocs(unittest.TestCase):
         self.assertIn("`.worktree/chore-<slug>` on branch `chore/<slug>`", agents_text)
         self.assertIn("npm ci", agents_text)
 
+    def test_agents_md_reuses_native_worktree_in_place(self):
+        # Sessions launched inside ~/.gemini/antigravity/worktrees/... are already
+        # linked worktrees and should switch branches in place instead of nesting .worktree/.
+        agents_text = AGENTS_MD.read_text(encoding="utf-8")
+        self.assertIn(".gemini/antigravity/worktrees/", agents_text)
+        self.assertIn("git checkout -B <branch> origin/main", agents_text)
+
     def test_agents_md_removes_worktree_only_if_still_listed(self):
         # gh pr merge --delete-branch usually removes the worktree already.
         agents_text = AGENTS_MD.read_text(encoding="utf-8")

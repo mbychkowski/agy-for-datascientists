@@ -1,3 +1,4 @@
+import json
 import os
 import subprocess
 import tempfile
@@ -5,6 +6,7 @@ import unittest
 from pathlib import Path
 
 from tests.helpers import (
+    INSTALL_EVIDENCE_BOARD_BIN,
     PREFLIGHT_BIN,
     PREFLIGHT_SYMLINK,
     WORKTREE_ROOT,
@@ -608,8 +610,12 @@ def _tree_state(root: Path) -> list[tuple[str, bytes | None, int]]:
 class TestPreflightEvidenceBoardCheck(unittest.TestCase):
     TITLE = "Evidence Board sidecar is installed, current and enabled"
     FIX = "./install-evidence-board --workspace ~/demo-stage/agy-ws1"
+    # The fixture pins the install to <config dir>/stage-clone; _warn_block
+    # writes the config dir as <config>.
+    PINNED_FIX = "./install-evidence-board --workspace <config>/stage-clone"
 
     def _warn_block(self, state: str) -> str:
+        """The check's [WARN] block, with the temp config dir written as <config>."""
         with tempfile.TemporaryDirectory() as tmpdir:
             env_file, env, _ = setup_preflight_test_env(tmpdir, evidence_board=state)
             config_dir = env["PREFLIGHT_GEMINI_CONFIG_DIR"]
@@ -622,7 +628,8 @@ class TestPreflightEvidenceBoardCheck(unittest.TestCase):
             self.assertIn("0 failed, 1 warning(s)", proc.stdout)
             # Read-only: preflight never installs or enables the board itself.
             self.assertEqual(_tree_state(Path(config_dir)), before)
-            return proc.stdout.split(f"[WARN] {self.TITLE}", 1)[1].split("\n[", 1)[0]
+            block = proc.stdout.split(f"[WARN] {self.TITLE}", 1)[1].split("\n[", 1)[0]
+            return block.replace(config_dir, "<config>")
 
     def test_warns_with_the_install_command_when_the_board_is_missing(self):
         block = self._warn_block("missing")
@@ -633,7 +640,9 @@ class TestPreflightEvidenceBoardCheck(unittest.TestCase):
         block = self._warn_block("stale")
         self.assertIn("out of date", block)
         self.assertIn("tiles.json", block)
-        self.assertIn(self.FIX, block)
+        # A pinned install's fix reuses its recorded workspace, not a guess.
+        self.assertIn(self.PINNED_FIX, block)
+        self.assertNotIn(self.FIX, block)
 
     def test_warns_when_the_install_keeps_a_file_the_repo_dropped(self):
         block = self._warn_block("extra_file")
@@ -643,7 +652,7 @@ class TestPreflightEvidenceBoardCheck(unittest.TestCase):
     def test_warns_when_the_install_has_no_frontend_bundle(self):
         block = self._warn_block("no_dist")
         self.assertIn("frontend/dist/index.html", block)
-        self.assertIn(self.FIX, block)
+        self.assertIn(self.PINNED_FIX, block)
 
     def test_warns_when_the_installed_workspace_has_no_demo_env(self):
         block = self._warn_block("no_workspace")
@@ -654,6 +663,44 @@ class TestPreflightEvidenceBoardCheck(unittest.TestCase):
         block = self._warn_block("disabled")
         self.assertIn('{"sidecars": {"evidence-board": {"enabled": true}}}', block)
         self.assertIn("config.json", block)
+
+    def test_passes_on_a_fresh_install_by_the_real_installer(self):
+        """The installer's copy and the drift check agree on what gets installed."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env_file, env, _ = setup_preflight_test_env(tmpdir)
+            home = Path(tmpdir) / "home"
+            workspace = Path(tmpdir) / "stage-clone"
+            workspace.mkdir()
+            create_demo_env_file(workspace)
+            installed = subprocess.run(
+                [
+                    str(INSTALL_EVIDENCE_BOARD_BIN),
+                    "--home-dir",
+                    str(home),
+                    "--workspace",
+                    str(workspace),
+                    "--no-build",
+                ],
+                cwd=WORKTREE_ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(installed.returncode, 0, installed.stderr)
+            config_dir = home / ".gemini" / "config"
+            # The bundle is git-ignored build output, so CI has none: stand one in.
+            index = config_dir / "sidecars" / "evidence-board" / "frontend" / "dist"
+            index.mkdir(parents=True, exist_ok=True)
+            (index / "index.html").write_text("<!doctype html>\n", encoding="utf-8")
+            (config_dir / "config.json").write_text(
+                json.dumps({"sidecars": {"evidence-board": {"enabled": True}}}),
+                encoding="utf-8",
+            )
+            env["PREFLIGHT_GEMINI_CONFIG_DIR"] = str(config_dir)
+
+            proc = _run_preflight(env_file, env)
+
+            self.assertIn(f"[PASS] {self.TITLE}", proc.stdout, proc.stdout)
 
 
 if __name__ == "__main__":
