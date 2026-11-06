@@ -18,7 +18,10 @@ from typing import Any, Literal, get_args
 from board.events import Event, Phase
 
 WORKING_DATASETS = frozenset({"staging", "features", "ml"})
-READINESS_RULES = frozenset({"non_empty", "deferred"})
+# `non_empty`: every source table exists with rows. `chart_rows`: that, and
+# the chart query also returns at least one row (e.g. 2D, which lands only once
+# trials for the refresh period exist in an already non-empty table).
+READINESS_RULES = frozenset({"non_empty", "chart_rows"})
 MatcherKind = Literal["lane", "blocked", "approval", "timer", "review", "ticker"]
 # Matcher kind -> the event phases it matches.
 MATCHER_PHASES: dict[MatcherKind, frozenset[Phase]] = {

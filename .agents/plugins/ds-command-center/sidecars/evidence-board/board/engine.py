@@ -6,7 +6,8 @@ Pure functions, no I/O. Tile state machine (spec #88):
 - `in_progress`: readiness not met, but matching events since the last
   `reset`; carries the `activity` to display (lanes, approval, timer,
   review, ticker, blocked calls).
-- `landed`: readiness met, with its chart and "what this proves" line. This
+- `landed`: readiness met (for the `chart_rows` rule, the chart query also
+  returned rows), with its chart and "what this proves" line. This
   wins regardless of events, so a Checkpoint swap goes `locked` -> `landed`.
   A landed Tile still carries any `activity`, so the Opening (whose table is
   loaded before the session) can show the guardrail's blocked call.
@@ -30,14 +31,22 @@ MAX_TICKER = 8
 
 
 def awaiting(tile: Tile, snapshot: Snapshot) -> list[str]:
-    """The Tile's source tables that do not yet meet its readiness rule."""
-    if tile.readiness == "deferred":
-        return list(tile.tables)
+    """The Tile's source tables that are missing or empty.
+
+    Both readiness rules gate on this; `chart_rows` adds a check on the chart
+    rows in `tile_states`, since only a chart query can see a period's rows.
+    """
     return [t for t in tile.tables if not _non_empty(snapshot.get(t))]
 
 
 def is_ready(tile: Tile, snapshot: Snapshot) -> bool:
+    """Whether the Tile's tables are ready for its chart query to run."""
     return not awaiting(tile, snapshot)
+
+
+def _lands(tile: Tile, rows: list[dict[str, Any]] | None) -> bool:
+    """Whether a ready Tile with these chart rows (None if not run) lands."""
+    return rows is not None and (tile.readiness != "chart_rows" or bool(rows))
 
 
 def activity(tile: Tile, events: Sequence[Event]) -> dict[str, Any] | None:
@@ -118,7 +127,7 @@ def tile_states(
         }
         pending = awaiting(tile, snapshot)
         found = activity(tile, events)
-        if pending or tile.id not in charts:
+        if pending or not _lands(tile, charts.get(tile.id)):
             state.update(
                 state="in_progress" if found else "locked",
                 awaiting=pending or list(tile.tables),

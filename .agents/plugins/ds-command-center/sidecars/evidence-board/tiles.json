@@ -1,5 +1,5 @@
 {
-  "_comment": "Tile manifest: the single source of truth for every Evidence Board Tile, in demo order. Tables and chart queries may only touch staging, features or ml (board/manifest.py rejects anything else); 'tables' gate readiness, and an optional chart 'reads' lists extra working tables the chart query may read without gating readiness. 2C and 2D use the deferred readiness rule, and their chart queries and 'proves' lines are placeholders, until their ticket (#96) defines them. 'proves' placeholders are filled from the chart's last row. Event matchers map recorded hook events (bin/event_recorder.py) to a Tile's activity: 'lane' (one lane per label), 'blocked' (a guardrail deny), 'approval' (a written file awaiting approval), 'timer' (started by a pre event, stopped by a failed post or a deny), 'review' (a reviewer dispatched) or 'ticker' (one entry per matching pre event, newest last); every kind but 'blocked' needs a label. 'tool' must match the whole tool name and 'summary' is searched.",
+  "_comment": "Tile manifest: the single source of truth for every Evidence Board Tile, in demo order. Tables and chart queries may only touch staging, features or ml (board/manifest.py rejects anything else); 'tables' gate readiness, and an optional chart 'reads' lists extra working tables the chart query may read without gating readiness. Readiness is 'non_empty' (every table exists with rows) or 'chart_rows' (that, and the chart query returns at least one row; 2D uses it to land only once trials for the refresh period exist). 'proves' placeholders are filled from the chart's last row. Event matchers map recorded hook events (bin/event_recorder.py) to a Tile's activity: 'lane' (one lane per label), 'blocked' (a guardrail deny), 'approval' (a written file awaiting approval), 'timer' (started by a pre event, stopped by a failed post or a deny), 'review' (a reviewer dispatched) or 'ticker' (one entry per matching pre event, newest last); every kind but 'blocked' needs a label. 'tool' must match the whole tool name and 'summary' is searched.",
   "tiles": [
     {
       "id": "opening",
@@ -398,17 +398,59 @@
       "step": "Segment 2C",
       "title": "The Reveal",
       "tables": [
-        "ml.reveal_forecast_evaluation"
+        "staging.reveal_forecast_comparison"
       ],
       "readiness": {
-        "rule": "deferred"
+        "rule": "non_empty"
       },
       "chart": {
         "type": "reveal",
-        "query": "SELECT * FROM `ml.reveal_forecast_evaluation` LIMIT 500"
+        "query": [
+          "WITH weeks AS (",
+          "  -- One row per Reveal week: reality against both forecasts.",
+          "  SELECT",
+          "    horizon_week,",
+          "    week_start,",
+          "    week_end,",
+          "    reveal_observed_positives,",
+          "    clean_forecast_positives,",
+          "    uncleaned_forecast_positives",
+          "  FROM `staging.reveal_forecast_comparison`",
+          "),",
+          "totals AS (",
+          "  SELECT",
+          "    COUNT(*) AS reveal_weeks,",
+          "    ROUND(100 * SAFE_DIVIDE(SUM(ABS(clean_forecast_positives - reveal_observed_positives)), SUM(reveal_observed_positives)), 1) AS clean_wape,",
+          "    ROUND(100 * SAFE_DIVIDE(SUM(ABS(uncleaned_forecast_positives - reveal_observed_positives)), SUM(reveal_observed_positives)), 1) AS uncleaned_wape,",
+          "    ROUND(100 * SAFE_DIVIDE(SUM(uncleaned_forecast_positives - reveal_observed_positives), SUM(reveal_observed_positives)), 1) AS uncleaned_overshoot_pct",
+          "  FROM weeks",
+          ")",
+          "SELECT",
+          "  weeks.horizon_week,",
+          "  weeks.week_start,",
+          "  weeks.week_end,",
+          "  weeks.reveal_observed_positives,",
+          "  weeks.clean_forecast_positives,",
+          "  weeks.uncleaned_forecast_positives,",
+          "  totals.reveal_weeks,",
+          "  totals.clean_wape,",
+          "  totals.uncleaned_wape,",
+          "  totals.uncleaned_overshoot_pct",
+          "FROM weeks",
+          "CROSS JOIN totals",
+          "ORDER BY weeks.week_start"
+        ]
       },
-      "proves": "Against the six withheld weeks after the Cutoff, the clean-data forecast tracks the truth more closely.",
-      "matchers": []
+      "proves": "Over the {reveal_weeks} Reveal weeks after the Cutoff, the clean-data forecast tracks reality at {clean_wape:.1f}% WAPE, while the uncleaned forecast overshoots it by {uncleaned_overshoot_pct:.1f}%.",
+      "proves_fallback": "Over the six Reveal weeks after the Cutoff, the clean-data forecast tracks reality while the uncleaned forecast overshoots.",
+      "matchers": [
+        {
+          "kind": "timer",
+          "label": "Loading the Reveal",
+          "tool": "(.*[_.])?(run_command|call_mcp_tool|execute_sql\\w*)",
+          "summary": "(?i)\\bload-reveal\\b|\\bws2_reveal_comparison\\b|\\bstaging\\.reveal_forecast_comparison\\b"
+        }
+      ]
     },
     {
       "id": "2d",
@@ -419,14 +461,77 @@
         "ml.forecast_leaderboard"
       ],
       "readiness": {
-        "rule": "deferred"
+        "rule": "chart_rows"
       },
       "chart": {
         "type": "refresh",
-        "query": "SELECT * FROM `ml.experiment_trials` LIMIT 200"
+        "query": [
+          "WITH refresh AS (",
+          "  -- Trials the cohort-forecast-refresh skill logged for the refresh",
+          "  -- period, 2026-W44: its trial ids, data versions and parameters name it.",
+          "  SELECT cohort_id, model_family, backtest_wape",
+          "  FROM `ml.experiment_trials`",
+          "  WHERE REGEXP_CONTAINS(",
+          "    LOWER(CONCAT(",
+          "      IFNULL(trial_id, ''), ' ',",
+          "      IFNULL(training_data_version, ''), ' ',",
+          "      IFNULL(TO_JSON_STRING(parameters), '')",
+          "    )),",
+          "    r'2026[-_]?w44'",
+          "  )",
+          "),",
+          "cells AS (",
+          "  SELECT cohort_id, model_family, ROUND(AVG(backtest_wape), 4) AS backtest_wape",
+          "  FROM refresh",
+          "  GROUP BY cohort_id, model_family",
+          "),",
+          "totals AS (",
+          "  SELECT COUNT(*) AS new_trials, COUNT(DISTINCT cohort_id) AS cohorts",
+          "  FROM refresh",
+          "),",
+          "best AS (",
+          "  SELECT model_family AS best_family",
+          "  FROM cells",
+          "  GROUP BY model_family",
+          "  ORDER BY AVG(backtest_wape), model_family",
+          "  LIMIT 1",
+          ")",
+          "SELECT",
+          "  '2026-W44' AS period,",
+          "  cells.cohort_id,",
+          "  cells.model_family,",
+          "  cells.backtest_wape,",
+          "  totals.new_trials,",
+          "  totals.cohorts,",
+          "  best.best_family",
+          "FROM cells",
+          "CROSS JOIN totals",
+          "LEFT JOIN best ON TRUE",
+          "ORDER BY cells.cohort_id, cells.model_family"
+        ]
       },
-      "proves": "The team skill reruns the whole forecasting workflow for the next epidemiological period.",
-      "matchers": []
+      "proves": "The cohort-forecast-refresh skill reran the forecasting workflow for {period}: {new_trials} new trials across {cohorts} Cohorts, with {best_family} leading on backtest WAPE.",
+      "proves_fallback": "The team skill reruns the whole forecasting workflow for the next epidemiological period.",
+      "matchers": [
+        {
+          "kind": "lane",
+          "label": "SKILL.md written",
+          "tool": "(?i)(.*[_.])?\\w*(write|edit|replace)\\w*",
+          "summary": "cohort-forecast-refresh/SKILL\\.md"
+        },
+        {
+          "kind": "lane",
+          "label": "Fresh subagent dispatched",
+          "tool": "(.*[_.])?invoke_subagent",
+          "summary": "(?i)refresh|next.?period|2026.?w44"
+        },
+        {
+          "kind": "timer",
+          "label": "Refreshing 2026-W44",
+          "tool": "(.*[_.])?run_command",
+          "summary": "(?i)run-cohort-forecast-refresh|cohort_forecast_refresh"
+        }
+      ]
     }
   ]
 }

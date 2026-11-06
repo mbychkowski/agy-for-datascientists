@@ -71,7 +71,7 @@ class FreshWorkspaceTest(unittest.TestCase):
         self.assertEqual(opening["step"], "Opening")
         self.assertEqual(opening["awaiting"], ["staging.hospital_flu"])
         self.assertEqual(tiles[3]["awaiting"], ["staging.hospital_flu_clean"])
-        self.assertEqual(tiles[6]["awaiting"], ["ml.reveal_forecast_evaluation"])
+        self.assertEqual(tiles[6]["awaiting"], ["staging.reveal_forecast_comparison"])
 
 
 SPIKE_ROWS = [
