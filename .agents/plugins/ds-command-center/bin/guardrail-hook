@@ -19,6 +19,10 @@
 # TEXT_ONLY_COMMANDS (git, gh, echo, cat, ...) and nothing in the line can reach
 # BigQuery. This lets prose in commit messages, gh bodies, and heredocs into
 # files name the `checkpoint` dataset without being read as SQL.
+#
+# Every deny is also appended as a `blocked` event to the Evidence Board event
+# log through bin/event_recorder.py (#92), since a denied call may never reach
+# PostToolUse. Recording failures never change the decision.
 # ==============================================================================
 
 set -uo pipefail
@@ -39,6 +43,7 @@ payload="$(cat)"
 
 python3 -c '
 import json
+import os
 import re
 import shlex
 import sys
@@ -62,7 +67,19 @@ def allow():
     sys.exit(0)
 
 
+def record_blocked(reason: str):
+    """Log the deny for the Evidence Board through the event recorder; never fails the hook."""
+    try:
+        sys.path.insert(0, os.path.join(os.environ["PLUGIN_DIR"], "bin"))
+        import event_recorder
+
+        event_recorder.record(globals().get("data"), "blocked", reason)
+    except Exception:
+        pass
+
+
 def deny(reason: str):
+    record_blocked(reason)
     print(json.dumps({"decision": "deny", "reason": reason}))
     sys.exit(0)
 

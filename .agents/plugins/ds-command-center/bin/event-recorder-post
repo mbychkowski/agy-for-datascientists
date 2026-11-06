@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# Evidence Board event recorder: PostToolUse hook (ds-command-center)
+#
+# Observe-only. Appends one redacted JSON line for the tool call to the
+# workspace event log (.evidence-board/events.jsonl) via event_recorder.py, and
+# always answers {} with exit 0, even if recording fails. The
+# guardrail hook stays the only hook that can deny.
+# ==============================================================================
+
+set -uo pipefail
+
+# Resolve real script directory through any symlinks (CODING_STANDARDS.md §1)
+SOURCE="${BASH_SOURCE[0]}"
+while [[ -h "${SOURCE}" ]]; do
+    DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
+    SOURCE="$(readlink "${SOURCE}")"
+    [[ "${SOURCE}" != /* ]] && SOURCE="${DIR}/${SOURCE}"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
+
+# The response is fixed, so a recorder failure can never change the tool call.
+python3 "${SCRIPT_DIR}/event_recorder.py" post >/dev/null 2>&1
+echo '{}'
+exit 0
