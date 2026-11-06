@@ -159,6 +159,21 @@ fi
 printf 'PYTHON_BIN=%s\nWORKSPACE=%s\n' "${PYTHON_BIN}" "${WORKSPACE}" > "${STAGED_DIR}/install.env"
 chmod 755 "${STAGED_DIR}"
 
+# Antigravity runs the sidecar with the installed folder as its working
+# directory. A process still running there keeps serving the old copy (and the
+# old install.env interpreter) until it restarts, so name it before the swap.
+# Linux /proc only; elsewhere this finds nothing and stays silent.
+RUNNING_PIDS=()
+if [[ -d "${DEST_DIR}" ]]; then
+    DEST_REAL="$(cd -P "${DEST_DIR}" && pwd)"
+    for proc_cwd in /proc/[0-9]*/cwd; do
+        if [[ "$(readlink "${proc_cwd}" 2>/dev/null)" == "${DEST_REAL}" ]]; then
+            pid="${proc_cwd#/proc/}"
+            RUNNING_PIDS+=("${pid%/cwd}")
+        fi
+    done
+fi
+
 if ! rm -rf "${DEST_DIR}" || ! mv "${STAGED_DIR}" "${DEST_DIR}"; then
     echo "[FAIL] Could not replace ${DEST_DIR}" >&2
     exit 1
@@ -176,4 +191,10 @@ echo "  {\"sidecars\": {\"${SIDECAR_ID}\": {\"enabled\": true}}}"
 echo ""
 echo "Logs: ${HOME_DIR}/.gemini/antigravity/sidecar_data/${SIDECAR_ID}/logs/"
 echo "Standalone fallback: ./evidence-board --workspace ${WORKSPACE}"
+if [[ ${#RUNNING_PIDS[@]} -gt 0 ]]; then
+    echo "" >&2
+    echo "[WARN] The Evidence Board sidecar is still running from the old copy (PID ${RUNNING_PIDS[*]})." >&2
+    echo "       It keeps serving the old code until it restarts: restart the Antigravity App," >&2
+    echo "       or run 'kill -9 ${RUNNING_PIDS[*]}' and let restart_policy relaunch it." >&2
+fi
 exit 0
