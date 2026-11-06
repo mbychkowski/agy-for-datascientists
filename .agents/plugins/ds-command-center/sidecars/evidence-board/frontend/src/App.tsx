@@ -43,7 +43,7 @@ function useDarkMode(): [boolean, () => void] {
 }
 
 export function App() {
-  const { tiles, live } = useTiles();
+  const { tiles, live, landedOnLoad } = useTiles();
   const [dark, toggleDark] = useDarkMode();
   const landed = tiles?.filter(isLanded).length ?? 0;
 
@@ -94,8 +94,8 @@ export function App() {
               </h2>
               <ol className="relative space-y-5 border-l-2 border-zinc-200 pl-5 sm:pl-8 dark:border-zinc-800">
                 {section.tiles.map((tile) => (
-                  // Keyed by id + state: a state change remounts the card, which plays the unlock animation;
-                  // unchanged polls keep the same element, so nothing flickers.
+                  // Keyed by id + state: a state change remounts the card, which plays the unlock animation
+                  // (skipped for Tiles already landed on page load); unchanged polls keep the same element.
                   <li key={`${tile.id}:${tile.state}`} className="relative">
                     <span
                       aria-hidden
@@ -103,7 +103,11 @@ export function App() {
                         isLanded(tile) ? "bg-emerald-500" : "bg-zinc-300 dark:bg-zinc-700"
                       }`}
                     />
-                    {isLanded(tile) ? <LandedTileCard tile={tile} dark={dark} /> : <LockedTileCard tile={tile} />}
+                    {isLanded(tile) ? (
+                      <LandedTileCard tile={tile} dark={dark} unlocking={!landedOnLoad.has(tile.id)} />
+                    ) : (
+                      <LockedTileCard tile={tile} />
+                    )}
                   </li>
                 ))}
               </ol>

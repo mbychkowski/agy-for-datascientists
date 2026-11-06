@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { Tile } from "./types";
+import { isLanded, type Tile } from "./types";
 
 /** How often the page asks the backend; the backend itself re-checks tables every 5 s. */
 export const POLL_MS = 2000;
@@ -10,6 +10,8 @@ export interface TilesFeed {
   tiles: Tile[] | null;
   /** false while the backend is unreachable; the last good Tiles stay on screen. */
   live: boolean;
+  /** Tiles already landed in the first response: shown without the unlock animation. */
+  landedOnLoad: ReadonlySet<string>;
 }
 
 /**
@@ -20,6 +22,7 @@ export interface TilesFeed {
 export function useTiles(): TilesFeed {
   const [tiles, setTiles] = useState<Tile[] | null>(null);
   const [live, setLive] = useState(true);
+  const [landedOnLoad, setLandedOnLoad] = useState<ReadonlySet<string>>(() => new Set());
   const lastBody = useRef<string>("");
 
   useEffect(() => {
@@ -37,6 +40,15 @@ export function useTiles(): TilesFeed {
         if (!stopped && body !== lastBody.current) {
           const parsed = JSON.parse(body) as { tiles?: Tile[] };
           if (Array.isArray(parsed.tiles)) {
+            const landedNow = new Set(parsed.tiles.filter(isLanded).map((t) => t.id));
+            if (lastBody.current === "") {
+              setLandedOnLoad(landedNow);
+            } else {
+              // A Tile that drops back to locked animates when it lands again.
+              setLandedOnLoad((prev) =>
+                [...prev].every((id) => landedNow.has(id)) ? prev : new Set([...prev].filter((id) => landedNow.has(id))),
+              );
+            }
             lastBody.current = body;
             setTiles(parsed.tiles);
           }
@@ -56,5 +68,5 @@ export function useTiles(): TilesFeed {
     };
   }, []);
 
-  return { tiles, live };
+  return { tiles, live, landedOnLoad };
 }

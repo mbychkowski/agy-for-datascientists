@@ -16,10 +16,11 @@ export function WeeklyBarChart({ rows, dark }: { rows: Row[]; dark: boolean }) {
 
   const option = useMemo(() => {
     const axis = axisStyle(dark);
+    const base = baseOption(dark);
     return {
-      ...baseOption(dark),
+      ...base,
       tooltip: {
-        ...baseOption(dark).tooltip,
+        ...base.tooltip,
         trigger: "axis",
         axisPointer: { type: "shadow" },
         formatter: (items: { dataIndex: number }[]) => {
@@ -46,17 +47,20 @@ export function WeeklyBarChart({ rows, dark }: { rows: Row[]; dark: boolean }) {
         {
           type: "bar",
           barMaxWidth: 56,
-          data: rows.map((r, i) => ({
-            value: typeof r.positive_flu_tests === "number" ? r.positive_flu_tests : 0,
-            itemStyle: {
-              color: i === rows.length - 1 ? PALETTE.spike : dark ? "#52525b" : "#d4d4d8",
-              borderRadius: [6, 6, 0, 0],
-            },
-            label:
-              i === rows.length - 1 && jump
-                ? { show: true, position: "top", formatter: jump, color: PALETTE.spike, fontSize: 18, fontWeight: 700 }
-                : undefined,
-          })),
+          data: rows.map((r, i) => {
+            const isSpikeWeek = i === rows.length - 1;
+            return {
+              value: typeof r.positive_flu_tests === "number" ? r.positive_flu_tests : 0,
+              itemStyle: {
+                color: isSpikeWeek ? PALETTE.spike : dark ? "#52525b" : "#d4d4d8",
+                borderRadius: [6, 6, 0, 0],
+              },
+              label:
+                isSpikeWeek && jump
+                  ? { show: true, position: "top", formatter: jump, color: PALETTE.spike, fontSize: 18, fontWeight: 700 }
+                  : undefined,
+            };
+          }),
         },
       ],
     };

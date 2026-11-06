@@ -35,18 +35,23 @@ export function LockedTileCard({ tile }: { tile: Tile }) {
   );
 }
 
-/** A landed Tile: unlocks in place (animation on mount), then shows its chart and "what this proves". */
-export function LandedTileCard({ tile, dark }: { tile: LandedTile; dark: boolean }) {
+/**
+ * A landed Tile: shows its chart and "what this proves". With `unlocking`, it
+ * plays the unlock animation and badge on mount (a live lock-to-landed change).
+ */
+export function LandedTileCard({ tile, dark, unlocking }: { tile: LandedTile; dark: boolean; unlocking: boolean }) {
   return (
     <article
       data-tile={tile.id}
       data-state="landed"
-      className="tile-unlock relative rounded-xl border border-zinc-200 bg-white p-5 shadow-sm transition-shadow duration-300 hover:shadow-md sm:p-6 dark:border-zinc-800 dark:bg-[#0c0c0f]"
+      className={`${unlocking ? "tile-unlock " : ""}relative rounded-xl border border-zinc-200 bg-white p-5 shadow-sm transition-shadow duration-300 hover:shadow-md sm:p-6 dark:border-zinc-800 dark:bg-[#0c0c0f]`}
     >
-      <span aria-hidden className="tile-unlock-badge absolute -top-3 right-5 inline-flex items-center gap-1 rounded-full bg-emerald-600 px-3 py-1 text-sm font-semibold text-white shadow">
-        <Sparkles className="size-4" />
-        Unlocked
-      </span>
+      {unlocking ? (
+        <span aria-hidden className="tile-unlock-badge absolute -top-3 right-5 inline-flex items-center gap-1 rounded-full bg-emerald-600 px-3 py-1 text-sm font-semibold text-white shadow">
+          <Sparkles className="size-4" />
+          Unlocked
+        </span>
+      ) : null}
       <div className="flex items-start gap-4">
         <div className="flex size-11 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400">
           <CircleCheck className="size-6" aria-hidden />

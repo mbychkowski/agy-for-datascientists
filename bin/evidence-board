@@ -23,6 +23,10 @@ while [[ -h "${SOURCE}" ]]; do
 done
 SCRIPT_DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+# Sourced per CODING_STANDARDS.md §1; the launcher itself never calls bq or
+# gcloud, and the backend pins PROJECT_ID/REGION from <workspace>/demo.env.
+# shellcheck source=lib/pinning.sh
+source "${SCRIPT_DIR}/lib/pinning.sh"
 
 BOARD_DIR="${REPO_ROOT}/.agents/plugins/ds-command-center/sidecars/evidence-board"
 PYTHON_BIN="${PYTHON:-python3}"

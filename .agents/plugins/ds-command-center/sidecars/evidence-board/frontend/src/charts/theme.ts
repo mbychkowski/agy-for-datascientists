@@ -1,17 +1,15 @@
 import { BarChart } from "echarts/charts";
-import { GridComponent, MarkLineComponent, TooltipComponent } from "echarts/components";
+import { GridComponent, TooltipComponent } from "echarts/components";
 import * as echarts from "echarts/core";
 import { CanvasRenderer } from "echarts/renderers";
 
 // Tree-shaken ECharts: register only what the Tiles use.
-echarts.use([BarChart, GridComponent, TooltipComponent, MarkLineComponent, CanvasRenderer]);
+echarts.use([BarChart, GridComponent, TooltipComponent, CanvasRenderer]);
 
 export { echarts };
 
-/** DAK shared design system: zinc neutrals, blue accent, Tailwind 500-level series colours. */
+/** DAK shared design system: zinc neutrals, a red Spike, Tailwind 500-level series colours. */
 export const PALETTE = {
-  accent: "#2563eb",
-  muted: "#a1a1aa",
   spike: "#e11d48",
   series: ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899", "#06b6d4", "#84cc16", "#f97316", "#6366f1"],
 };

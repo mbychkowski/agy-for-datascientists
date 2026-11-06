@@ -66,14 +66,17 @@ class FakeCatalog:
         if self._source is None:
             return
         mtime = self._source.stat().st_mtime_ns
-        if mtime == self._source_mtime:
-            return
-        tables = json.loads(self._source.read_text(encoding="utf-8")).get("tables", {})
         with self._lock:
-            self._tables = {}
+            if mtime == self._source_mtime:
+                return
+        tables = json.loads(self._source.read_text(encoding="utf-8")).get("tables", {})
+        fresh = FakeCatalog()
         for name, spec in tables.items():
-            self.put_table(name, **{"modified": str(mtime), **spec})
-        self._source_mtime = mtime
+            fresh.put_table(name, **{"modified": str(mtime), **spec})
+        # Swap in one step so a concurrent reader never sees an empty catalog.
+        with self._lock:
+            self._tables = fresh._tables
+            self._source_mtime = mtime
 
     def put_table(
         self,
