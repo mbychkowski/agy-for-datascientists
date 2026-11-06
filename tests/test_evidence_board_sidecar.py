@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -28,6 +29,7 @@ INSTALL_SYMLINK = WORKTREE_ROOT / "install-evidence-board"
 INSTALLED_REL = Path(".gemini", "config", "sidecars", "evidence-board")
 SIDECAR_ID = "evidence-board"
 USER_CONFIG_REL = Path(".gemini", "config", "config.json")
+STILL_RUNNING = "still running from the old Evidence Board copy"
 
 
 class SidecarDescriptorTest(unittest.TestCase):
@@ -152,28 +154,32 @@ class InstallCommandTest(unittest.TestCase):
         siblings = sorted(p.name for p in self.installed.parent.iterdir())
         self.assertEqual(siblings, ["evidence-board"])
 
+    @unittest.skipUnless(sys.platform.startswith("linux"), "the check reads /proc")
     def test_reinstall_warns_when_a_running_sidecar_still_serves_the_old_copy(
         self,
     ) -> None:
         self.assertEqual(self._install().returncode, 0)
         # Antigravity runs the sidecar with the installed folder as its cwd; a
-        # process there keeps serving the old copy until it restarts.
-        running = subprocess.Popen(["sleep", "30"], cwd=self.installed)
-        self.addCleanup(running.wait)
-        self.addCleanup(running.kill)
+        # process there keeps serving the old copy until it restarts. The
+        # second reinstall sees it with a "(deleted)" cwd, as on a real machine.
+        with subprocess.Popen(["sleep", "30"], cwd=self.installed) as running:
+            try:
+                for _ in range(2):
+                    again = self._install()
 
-        again = self._install()
-
-        self.assertEqual(again.returncode, 0, again.stdout + again.stderr)
-        self.assertIn("[WARN]", again.stderr)
-        self.assertIn(str(running.pid), again.stderr)
-        self.assertIn("restart", again.stderr)
+                    self.assertEqual(again.returncode, 0, again.stdout + again.stderr)
+                    self.assertIn(STILL_RUNNING, again.stderr)
+                    self.assertIn(str(running.pid), again.stderr)
+                    self.assertIn("restart", again.stderr)
+                self.assertIsNone(running.poll(), "the installer must not kill it")
+            finally:
+                running.kill()
 
     def test_fresh_install_prints_no_running_sidecar_warning(self) -> None:
         proc = self._install()
 
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
-        self.assertNotIn("still running", proc.stderr)
+        self.assertNotIn(STILL_RUNNING, proc.stderr)
 
     def test_never_touches_the_antigravity_user_config_and_prints_enable_step(
         self,

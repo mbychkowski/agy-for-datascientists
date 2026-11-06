@@ -162,17 +162,19 @@ chmod 755 "${STAGED_DIR}"
 # Antigravity runs the sidecar with the installed folder as its working
 # directory. A process still running there keeps serving the old copy (and the
 # old install.env interpreter) until it restarts, so name it before the swap.
+# A process left over from an earlier reinstall has a "<folder> (deleted)" cwd.
 # Linux /proc only; elsewhere this finds nothing and stays silent.
 RUNNING_PIDS=()
-if [[ -d "${DEST_DIR}" ]]; then
-    DEST_REAL="$(cd -P "${DEST_DIR}" && pwd)"
-    for proc_cwd in /proc/[0-9]*/cwd; do
-        if [[ "$(readlink "${proc_cwd}" 2>/dev/null)" == "${DEST_REAL}" ]]; then
-            pid="${proc_cwd#/proc/}"
-            RUNNING_PIDS+=("${pid%/cwd}")
-        fi
-    done
-fi
+DEST_REAL="$(cd -P "$(dirname "${DEST_DIR}")" && pwd)/$(basename "${DEST_DIR}")"
+for proc_cwd in /proc/[0-9]*/cwd; do
+    cwd="$(readlink "${proc_cwd}" 2>/dev/null)" || continue
+    case "${cwd}" in
+        "${DEST_REAL}" | "${DEST_REAL}/"* | "${DEST_REAL} (deleted)" | "${DEST_REAL}/"*" (deleted)")
+            pid_dir="${proc_cwd%/cwd}"
+            RUNNING_PIDS+=("${pid_dir#/proc/}")
+            ;;
+    esac
+done
 
 if ! rm -rf "${DEST_DIR}" || ! mv "${STAGED_DIR}" "${DEST_DIR}"; then
     echo "[FAIL] Could not replace ${DEST_DIR}" >&2
@@ -193,8 +195,9 @@ echo "Logs: ${HOME_DIR}/.gemini/antigravity/sidecar_data/${SIDECAR_ID}/logs/"
 echo "Standalone fallback: ./evidence-board --workspace ${WORKSPACE}"
 if [[ ${#RUNNING_PIDS[@]} -gt 0 ]]; then
     echo "" >&2
-    echo "[WARN] The Evidence Board sidecar is still running from the old copy (PID ${RUNNING_PIDS[*]})." >&2
-    echo "       It keeps serving the old code until it restarts: restart the Antigravity App," >&2
-    echo "       or run 'kill -9 ${RUNNING_PIDS[*]}' and let restart_policy relaunch it." >&2
+    echo "[WARN] Process(es) still running from the old Evidence Board copy (PID ${RUNNING_PIDS[*]})." >&2
+    echo "       A running sidecar keeps serving the old code until it restarts: restart the" >&2
+    echo "       Antigravity App, or 'kill -9 ${RUNNING_PIDS[*]}' (restart_policy is on-failure," >&2
+    echo "       so only a non-zero exit relaunches it)." >&2
 fi
 exit 0
