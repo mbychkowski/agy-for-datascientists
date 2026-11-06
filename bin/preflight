@@ -326,7 +326,9 @@ check_dataproc_hello_world_batch() {
     # removal. A failed removal prints a "[WARN] " line naming the table but
     # leaves the check result unchanged.
     cleanup_hello_world() {
-        trap - INT TERM HUP
+        # Ignore (not reset) further signals so a second Ctrl-C cannot abort
+        # the cleanup between cancelling the batch and removing the table.
+        trap '' INT TERM HUP
         if [[ "${batch_in_flight}" == "true" ]]; then
             pinned_dataproc_cancel "${batch_id}" >/dev/null 2>&1 || true
         fi
@@ -337,8 +339,9 @@ check_dataproc_hello_world_batch() {
         pinned_dataproc_delete "${batch_id}" >/dev/null 2>&1 || true
     }
     # This check runs in its own subshell, so the traps end with it. On an
-    # interrupt, warnings go to fd 3 (preflight's stderr) because main stops
-    # before printing this check's captured output.
+    # interrupt, warnings go to fd 3, which main opens as preflight's stderr
+    # ('exec 3>&2'), because main stops before printing this check's captured
+    # output.
     trap 'cleanup_hello_world >&3; exit 130' INT
     trap 'cleanup_hello_world >&3; exit 143' TERM
     trap 'cleanup_hello_world >&3; exit 129' HUP
@@ -893,8 +896,12 @@ main() {
     echo ""
 
     # Ctrl-C or a timeout stops preflight rather than moving on to the next
-    # check; the running check's own traps clean up its probes first. fd 3
-    # keeps the terminal's stderr for warnings printed during that cleanup.
+    # check. Only the Dataproc check (5) traps the signal to remove its probe
+    # table and batch first; the ml probes of checks 8 and 9 are not cleaned
+    # up on an interrupt. The check sees the signal only when it reaches the
+    # whole process group (terminal Ctrl-C, or 'timeout' without
+    # --foreground). fd 3 keeps the terminal's stderr for warnings that check
+    # 5 prints while cleaning up.
     exec 3>&2
     trap 'exit 130' INT
     trap 'exit 143' TERM

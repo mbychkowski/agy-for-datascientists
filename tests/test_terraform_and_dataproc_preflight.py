@@ -8,7 +8,15 @@ import time
 import unittest
 from pathlib import Path
 
-from tests.helpers import PREFLIGHT_BIN, WORKTREE_ROOT, setup_preflight_test_env
+from tests.helpers import (
+    PREFLIGHT_BATCH_ID,
+    PREFLIGHT_BIN,
+    WORKTREE_ROOT,
+    preflight_batch_started_file,
+    preflight_probe_table_file,
+    preflight_probe_table_ref,
+    setup_preflight_test_env,
+)
 
 INFRA_DIR = WORKTREE_ROOT / "infra"
 BOOTSTRAP_BIN = WORKTREE_ROOT / "bin" / "bootstrap-tf-state"
@@ -288,70 +296,6 @@ class TestDataprocPreflightSeam(unittest.TestCase):
 HELLO_CHECK_TITLE = (
     "Dataproc Serverless runtime 3.0 hello-world batch writes to BigQuery"
 )
-PROBE_TABLE_REF = "demo-proj-123:staging._preflight_hello_test"
-
-
-def install_probe_table_fakes(
-    tmpdir: str, env: dict[str, str], *, submit: str = "ok", rm_fails: bool = False
-) -> Path:
-    """Shadow the shared gcloud/bq fakes so the probe table is a real file.
-
-    The batch creates the file (as the Spark job creates the table), `bq show`
-    finds it, and `bq rm -f -t` deletes it, so a test can assert the table is
-    gone instead of only that a command was logged. `submit` is "ok", "fail"
-    (the batch writes the table, then gcloud reports failure) or "hang" (the
-    batch writes the table, then gcloud blocks until interrupted). Every other
-    call falls through to the shared fakes. Returns the probe table's path.
-    """
-    tmp_path = Path(tmpdir)
-    probe_dir = tmp_path / "probe_bin"
-    probe_dir.mkdir()
-    probe_table = tmp_path / "probe_tables" / "_preflight_hello_test"
-    probe_table.parent.mkdir()
-    started = tmp_path / "batch_started"
-    real_bin = tmp_path / "bin"
-    submit_tail = {
-        "ok": "exit 0",
-        "fail": "echo 'ERROR: batch execution failed' >&2; exit 1",
-        "hang": f'touch "{started}"; while true; do sleep 0.1; done',
-    }[submit]
-
-    fake_gcloud = probe_dir / "gcloud"
-    fake_gcloud.write_text(
-        f"""#!/usr/bin/env bash
-if [[ "$*" == *"dataproc batches submit"* ]]; then
-    echo "gcloud $*" >> "{tmp_path / "calls.log"}"
-    touch "{probe_table}"
-    {submit_tail}
-fi
-exec "{real_bin / "gcloud"}" "$@"
-""",
-        encoding="utf-8",
-    )
-    fake_bq = probe_dir / "bq"
-    fake_bq.write_text(
-        f"""#!/usr/bin/env bash
-if [[ "$*" == *"{PROBE_TABLE_REF}"* ]]; then
-    echo "bq $*" >> "{tmp_path / "calls.log"}"
-    if [[ "$1" == "show" ]]; then
-        [[ -f "{probe_table}" ]] && exit 0
-        echo "Not found: Table {PROBE_TABLE_REF}" >&2; exit 1
-    fi
-    if [[ "$1" == "rm" ]]; then
-        if [[ "{"true" if rm_fails else "false"}" == "true" ]]; then
-            echo "BigQuery error in rm operation: Access Denied" >&2; exit 1
-        fi
-        rm -f "{probe_table}"; exit 0
-    fi
-fi
-exec "{real_bin / "bq"}" "$@"
-""",
-        encoding="utf-8",
-    )
-    fake_gcloud.chmod(0o755)
-    fake_bq.chmod(0o755)
-    env["PATH"] = f"{probe_dir}:{env['PATH']}"
-    return probe_table
 
 
 class TestDataprocProbeTableCleanup(unittest.TestCase):
@@ -369,26 +313,30 @@ class TestDataprocProbeTableCleanup(unittest.TestCase):
 
     def test_probe_table_is_removed_after_a_passing_check(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            env_file, env, _ = setup_preflight_test_env(tmpdir)
-            probe_table = install_probe_table_fakes(tmpdir, env)
+            env_file, env, _ = setup_preflight_test_env(tmpdir, probe_table_file=True)
             proc = self.run_preflight(env_file, env)
             self.assertIn(f"[PASS] {HELLO_CHECK_TITLE}", proc.stdout)
-            self.assertFalse(probe_table.exists(), proc.stdout)
+            self.assertFalse(preflight_probe_table_file(tmpdir).exists(), proc.stdout)
 
     def test_probe_table_is_removed_after_a_failing_check(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            env_file, env, _ = setup_preflight_test_env(tmpdir)
-            probe_table = install_probe_table_fakes(tmpdir, env, submit="fail")
+            env_file, env, log_file = setup_preflight_test_env(
+                tmpdir, probe_table_file=True, batch_fails=True
+            )
             proc = self.run_preflight(env_file, env)
             self.assertIn(f"[FAIL] {HELLO_CHECK_TITLE}", proc.stdout)
-            self.assertFalse(probe_table.exists(), proc.stdout)
+            self.assertFalse(preflight_probe_table_file(tmpdir).exists(), proc.stdout)
+            # A failed submit may leave the batch running, so it is cancelled.
+            self.assertIn(
+                f"gcloud dataproc batches cancel {PREFLIGHT_BATCH_ID}",
+                log_file.read_text(),
+            )
 
     def test_probe_table_is_removed_when_preflight_is_interrupted(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            env_file, env, log_file = setup_preflight_test_env(tmpdir)
-            probe_table = install_probe_table_fakes(tmpdir, env, submit="hang")
-            started = Path(tmpdir) / "batch_started"
-            proc = subprocess.Popen(
+            env_file, env, log_file = setup_preflight_test_env(tmpdir, batch_hangs=True)
+            started = preflight_batch_started_file(tmpdir)
+            with subprocess.Popen(
                 [str(PREFLIGHT_BIN), "--env", str(env_file)],
                 cwd=WORKTREE_ROOT,
                 env=env,
@@ -396,39 +344,41 @@ class TestDataprocProbeTableCleanup(unittest.TestCase):
                 stderr=subprocess.STDOUT,
                 text=True,
                 start_new_session=True,
-            )
-            try:
-                deadline = time.monotonic() + 60
-                while not started.exists():
-                    if proc.poll() is not None or time.monotonic() > deadline:
-                        self.fail(f"batch never started:\n{proc.communicate()[0]}")
-                    time.sleep(0.05)
-                # Ctrl-C signals the whole foreground process group.
-                os.killpg(proc.pid, signal.SIGINT)
-                stdout, _ = proc.communicate(timeout=60)
-            finally:
-                if proc.poll() is None:
-                    os.killpg(proc.pid, signal.SIGKILL)
-                    proc.communicate()
+            ) as proc:
+                try:
+                    deadline = time.monotonic() + 60
+                    while not started.exists():
+                        if proc.poll() is not None or time.monotonic() > deadline:
+                            os.killpg(proc.pid, signal.SIGKILL)
+                            stdout, _ = proc.communicate(timeout=10)
+                            self.fail(f"batch never started:\n{stdout}")
+                        time.sleep(0.05)
+                    # Ctrl-C signals the whole foreground process group.
+                    os.killpg(proc.pid, signal.SIGINT)
+                    stdout, _ = proc.communicate(timeout=60)
+                finally:
+                    if proc.poll() is None:
+                        os.killpg(proc.pid, signal.SIGKILL)
+                        proc.communicate(timeout=10)
 
-            self.assertFalse(probe_table.exists(), stdout)
+            self.assertFalse(preflight_probe_table_file(tmpdir).exists(), stdout)
             self.assertNotEqual(proc.returncode, 0, stdout)
             # The interrupt stops preflight instead of moving on to check 6.
             self.assertNotIn("BigQuery MCP authenticates as presenter", stdout)
             self.assertIn(
-                "gcloud dataproc batches cancel preflight-hello-test",
+                f"gcloud dataproc batches cancel {PREFLIGHT_BATCH_ID}",
                 log_file.read_text(),
             )
 
     def test_failed_probe_table_removal_warns_without_changing_the_result(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            env_file, env, _ = setup_preflight_test_env(tmpdir)
-            install_probe_table_fakes(tmpdir, env, rm_fails=True)
+            env_file, env, _ = setup_preflight_test_env(tmpdir, probe_rm_fails=True)
             proc = self.run_preflight(env_file, env)
             self.assertIn(f"[PASS] {HELLO_CHECK_TITLE}", proc.stdout)
             self.assertEqual(proc.returncode, 0, proc.stdout)
             self.assertIn(
-                f"[WARN] Could not remove probe table {PROBE_TABLE_REF}", proc.stdout
+                f"[WARN] Could not remove probe table {preflight_probe_table_ref()}",
+                proc.stdout,
             )
             self.assertIn("Access Denied", proc.stdout)
 
