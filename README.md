@@ -134,14 +134,22 @@ flowchart TB
 │           │   ├── sampling-triage.md           #   Detects testing expansion with flat Positivity
 │           │   └── stats-reviewer.md            #   Adversarial statistical peer reviewer
 │           ├── bin/guardrail-hook               # Pre-tool-use dataset boundary enforcement hook
-│           ├── hooks.json                       # Registers bin/guardrail-hook on before_tool_use
+│           ├── bin/event-recorder-{pre,post}    # Record tool calls for the Evidence Board
+│           ├── hooks.json                       # Registers the guardrail and event recorder hooks
 │           ├── rules/AGENTS.md                  # Team rules (project pinning, dataset boundaries)
+│           ├── sidecars/evidence-board/         # Evidence Board sidecar source (installed by copy)
+│           │   ├── sidecar.json                 # Sidecar manifest (side-pane web UI)
+│           │   ├── tiles.json                   # Tile manifest: step, source tables, "what this proves"
+│           │   ├── board/                       # FastAPI backend (table readiness, events, Ask)
+│           │   └── frontend/                    # Board UI, built by make build-frontend
 │           └── skills/cohort-forecast-refresh/  # Repeatable Workstream 2 forecast refresh skill
 ├── bin/                                         # Operator & automation scripts (symlinked at root)
 │   ├── bootstrap-tf-state                       # Creates gs://${STATE_BUCKET} & runs terraform init
 │   ├── check-glossary.js                        # Enforces GLOSSARY.md vocabulary across repo files
 │   ├── checkpoint                               # Lists, builds, and swaps pre-built Checkpoints
+│   ├── evidence-board                           # Runs the Evidence Board standalone in a browser tab
 │   ├── generate-dataset                         # External Data Generator CLI (--scale mock|full)
+│   ├── install-evidence-board                   # Copies the Evidence Board into ~/.gemini/config/sidecars/
 │   ├── load-raw-ops                             # Loads raw.hospital_reference, raw.hospital_flu_feeds, ops
 │   ├── load-reveal                              # Loads post-Cutoff Reveal weeks into staging & ml
 │   ├── preflight                                # 12-point pre-stage readiness verification
@@ -156,7 +164,7 @@ flowchart TB
 │   ├── verify-main-end-state                    # Verifies full post-Reveal end state vs Answer Key
 │   └── verify-start-point                       # Verifies ws1, ws2, or main state & Checkpoint parity
 ├── docs/                                        # Detailed presenter, reuser, and architecture docs
-│   ├── adr/                                     # ADR 0001 (Answer Key isolation) & ADR 0002 (Identity)
+│   ├── adr/                                     # ADRs 0001 (Answer Key), 0002 (Identity), 0003 (Evidence Board)
 │   ├── agents/                                  # Issue tracker, triage labels, and domain conventions
 │   ├── data-science-primer.md                   # Methodological intuitions & Q&A defense playbook
 │   ├── demo-outline.md                          # 90-minute narrative arc & audience tailoring guide
@@ -291,6 +299,20 @@ source demo.env
 ./verify-start-point ws1
 ```
 
+### Step 6: Install the **Evidence Board** (Optional)
+
+The **Evidence Board** is a side pane in the Antigravity App that lands one **Tile** per demo step as its table appears in `staging`, `features` or `ml`. Install its Python dependencies, then copy it into Antigravity's global sidecar directory, pinned to the workspace whose `demo.env` it reads (on stage, the stage clone; see [`DEMO.md` Step 0b](DEMO.md#2-pre-stage-checklist-t-15-minutes)):
+
+```bash
+uv pip install --python python3 -r .agents/plugins/ds-command-center/sidecars/evidence-board/requirements.txt
+./install-evidence-board --workspace <workspace-with-demo.env>
+```
+
+Enable it by merging `{"sidecars": {"evidence-board": {"enabled": true}}}` into `~/.gemini/config/config.json`, then restart the Antigravity App. `./preflight` warns when the install is missing, out of date or not enabled. Without the sidecar, `./evidence-board --workspace <workspace-with-demo.env>` serves the same board at `http://127.0.0.1:8765/`.
+
+> [!WARNING]
+> UI sidecars are an experimental Antigravity feature behind the `enable-ui-sidecars` flag, and their web-UI layer is undocumented, so it may change between releases. Antigravity discovers sidecars only under the global `~/.gemini/config/` directories, never in a workspace, which is why the installer copies the board out of this repo ([ADR 0003](docs/adr/0003-evidence-board-installed-by-copy-and-driven-by-tables.md)). Rehearse on the machine you present from, and keep the standalone launcher as the fallback.
+
 ---
 
 ## 5. Working with the Project (CLI & Lifecycle Guide)
@@ -310,6 +332,8 @@ All primary operator scripts live in `bin/` and have root-level convenience syml
 | `./load-reveal <withheld_dir_or_gs_uri>` | Loads the six post-**Cutoff** **Reveal** weeks (`2026-11-01`..`2026-12-12`) into `staging.hospital_flu_reveal` and computes `ml.reveal_forecast_evaluation`. |
 | `./run-cohort-forecast-refresh --period 2026-W44` | Executes the parameterized `cohort-forecast-refresh` skill workflow (`sql/ws2_cohort_forecast_refresh.sql`) for the specified epidemiological period. |
 | `./checkpoint --list \| --build all \| <id>` | Lists, builds, or swaps any of the 8 pre-built stage **Checkpoints** in ~6 seconds (`ws1_pipeline_v1`, `ws1_eda_heatmap`, `ws1_attribution`, `ws1_staging_clean`, `ws2_seasonal_features`, `ws2_hospital_cohorts`, `ws2_experiment_trials`, `ws2_forecast_leaderboard`). |
+| `./install-evidence-board --workspace <path>` | Builds the **Evidence Board** frontend and copies the sidecar to `~/.gemini/config/sidecars/evidence-board/`, pinned to `<path>/demo.env`. Rerun after pulling **Evidence Board** changes; it never edits `config.json`. |
+| `./evidence-board [--workspace <path>] [--port <port>]` | Serves the **Evidence Board** standalone at `http://127.0.0.1:8765/` (the fallback when the side pane is unavailable). Its Ask button copies the prompt to the clipboard. |
 | `./stage-clean-env --stash \| --status \| --restore` | Temporarily moves personal `~/.gemini` rules and non-DAK skills into `~/.gemini/.demo-stage-stash` before going on stage and restores them afterward. |
 
 ### Start Point Git Branches
@@ -359,3 +383,4 @@ What `make test` runs:
 | **[CODING_STANDARDS.md](CODING_STANDARDS.md)** | Engineering conventions for CLI scripts (`bin/*`), preflight modularity, Python determinism, and `unittest` seams. |
 | **[ADR 0001](docs/adr/0001-answer-key-outside-agent-reach.md)** | Architecture Decision Record: Why the **Answer Key** and post-**Cutoff** **Reveal** data live outside agent reach. |
 | **[ADR 0002](docs/adr/0002-dataproc-runs-as-presenter.md)** | Architecture Decision Record: Why Dataproc Serverless, BigQuery, and BigQuery MCP run under the presenter's user identity. |
+| **[ADR 0003](docs/adr/0003-evidence-board-installed-by-copy-and-driven-by-tables.md)** | Architecture Decision Record: Why the **Evidence Board** is installed by copy into `~/.gemini/config/sidecars/` and lands **Tiles** from working-table readiness, not agent events. |
