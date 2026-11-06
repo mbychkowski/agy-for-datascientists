@@ -1,0 +1,17 @@
+{
+  "display_name": "Evidence Board",
+  "description": "Audience-facing storyline of Tiles that land as each demo step's working table appears in staging, features or ml.",
+  "command": "bash",
+  "args": ["bin/serve"],
+  "restart_policy": "on-failure",
+  "has_web_ui": true,
+  "ui_config": {
+    "views": [
+      {
+        "entrypoint": "SIDECAR_UI_ENTRYPOINT_AUX_PANE",
+        "path": "/",
+        "title": "Evidence Board"
+      }
+    ]
+  }
+}

@@ -72,7 +72,7 @@ cp -R .gemini/skills ~/demo-stage/agy-ws1/.gemini/
 
 `.gemini/skills/` is git-ignored, so the clone starts without the licensed Data Agent Kit skills; the last two lines copy your workspace install across. `./preflight` checks the presenter repo, not the clone, so confirm the copy with `ls ~/demo-stage/agy-ws1/.gemini/skills/bigquery-ai-ml/SKILL.md`.
 
-Complete Steps 1–4 before connecting to the projector or starting your screen share, so only the repository's **Command Center** configuration loads and every Google Cloud dependency is verified.
+Complete Steps 1–5 before connecting to the projector or starting your screen share, so only the repository's **Command Center** configuration loads and every Google Cloud dependency is verified.
 
 ### Step 1: Isolate Personal Rules & Skills (`./stage-clean-env --stash`, Window 2)
 
@@ -116,9 +116,25 @@ git -C ~/demo-stage/agy-ws1 clean -fd
 
 If a rehearsal left a commit in the stage clone, delete the clone and repeat Step 0 instead.
 
-### Step 4: Arrange Your Two Stage Windows
+### Step 4: Install the **Evidence Board** Sidecar (`./install-evidence-board`, Window 2)
 
-1. **Window 1 — Command Center (Antigravity, agent)**: Open Antigravity on the stage clone at `~/demo-stage/agy-ws1` once Steps 1–3 have completed, so the fresh session loads only `.agents/plugins/ds-command-center`, `.agents/plugins/dak-bigquery`, and `.gemini/skills/` from the clone. Every prompt in this guide is typed here.
+Antigravity discovers UI sidecars only under `~/.gemini/config/plugins/`, so from the presenter repo on `main` (Window 2) build the **Evidence Board** frontend and copy the sidecar there, pinned to the stage clone's `demo.env`. Rerun it after pulling `main`; it replaces the earlier install:
+
+```bash
+./install-evidence-board --workspace ~/demo-stage/agy-ws1
+```
+
+The command never edits your Antigravity user config. Once per machine, merge the line it prints into `~/.gemini/config/config.json` and restart the Antigravity App:
+
+```json
+{"sidecars": {"ds-command-center/evidence-board": {"enabled": true}}}
+```
+
+If the side pane stays blank, check `~/.gemini/antigravity/sidecar_data/ds-command-center/evidence-board/logs/`, or open the board in a browser tab with `./evidence-board --workspace ~/demo-stage/agy-ws1`.
+
+### Step 5: Arrange Your Two Stage Windows
+
+1. **Window 1 — Command Center (Antigravity, agent)**: Open Antigravity on the stage clone at `~/demo-stage/agy-ws1` once Steps 1–4 have completed, so the fresh session loads only `.agents/plugins/ds-command-center`, `.agents/plugins/dak-bigquery`, and `.gemini/skills/` from the clone. Every prompt in this guide is typed here.
 2. **Window 2 — Presenter Terminal (`main` repo, Fallback Runner)**: Open at the presenter repo root on `main` with `source demo.env` active. Run `./checkpoint --list` to confirm the available **Checkpoints**, so you can run a fallback or swap a **Checkpoint** in ~6 seconds if needed.
 
 ---

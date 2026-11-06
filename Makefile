@@ -5,7 +5,8 @@
 # `# shellcheck shell=bash`. Every file in bin/lib/ must carry one of these.
 # $(wildcard) drops patterns that match nothing (e.g. a missing bin/lib/).
 SHELLCHECK := uvx --from shellcheck-py==0.11.0.1 shellcheck
-SH_CANDIDATES := $(wildcard bin/* bin/lib/* .agents/plugins/*/bin/* .husky/pre-commit)
+SH_CANDIDATES := $(wildcard bin/* bin/lib/* .agents/plugins/*/bin/* \
+    .agents/plugins/*/sidecars/*/bin/* .husky/pre-commit)
 SH_MARKER := ^(\#!.*[/ ](ba)?sh([[:space:]]|$$)|\# shellcheck shell=bash)
 
 # Ruff from PATH, then uvx, then /opt/uv; py_compile only if neither exists.
