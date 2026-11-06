@@ -26,6 +26,17 @@ export function HeatmapChart({ rows, dark }: { rows: Row[]; dark: boolean }) {
     const base = baseOption(dark);
     const changes = rows.map((r) => num(r.wow_pct)).filter((v): v is number => v !== null);
     const reach = Math.max(25, ...changes.map((v) => Math.abs(v)));
+    const cells = rows.map((r) => ({
+      value: [
+        weeks.indexOf(String(r.week_end ?? "")),
+        hospitals.indexOf(String(r.hospital_id ?? "")),
+        num(r.positive_flu_tests) ?? 0,
+        num(r.wow_pct),
+      ],
+      row: r,
+    }));
+    const changed = cells.filter((c) => c.value[3] !== null);
+    const unchanged = cells.filter((c) => c.value[3] === null);
     return {
       ...base,
       grid: { ...base.grid, top: 8, right: 96 },
@@ -78,32 +89,15 @@ export function HeatmapChart({ rows, dark }: { rows: Row[]; dark: boolean }) {
         text: ["Rising", "Falling"],
         textStyle: { color: dark ? "#a1a1aa" : "#52525b", fontSize: 12 },
         inRange: { color: ["#3b82f6", dark ? "#27272a" : "#f4f4f5", PALETTE.spike] },
-        outOfRange: { color: dark ? "#3f3f46" : "#e4e4e7" },
+        // Only the cells with a week-over-week change are coloured by it.
+        seriesIndex: 0,
       },
       series: [
-        {
-          type: "heatmap",
-          data: rows.map((r) => {
-            const change = num(r.wow_pct);
-            return {
-              // [week, hospital, positives, change]; a null change (first week) sits out of range.
-              value: [
-                weeks.indexOf(String(r.week_end ?? "")),
-                hospitals.indexOf(String(r.hospital_id ?? "")),
-                num(r.positive_flu_tests) ?? 0,
-                change ?? reach * 10,
-              ],
-              row: r,
-            };
-          }),
-          label: {
-            show: true,
-            fontSize: 11,
-            color: dark ? "#fafafa" : "#18181b",
-            formatter: (item: { value: number[] }) => item.value[2].toLocaleString("en-US"),
-          },
-          itemStyle: { borderColor: dark ? "#0c0c0f" : "#ffffff", borderWidth: 2, borderRadius: 3 },
-        },
+        // [week, hospital, positives, change]
+        { ...cellSeries(changed, dark) },
+        // A cell without a change (a hospital's first week) stays neutral grey;
+        // ECharts would clamp an out-of-range value to the end of the scale.
+        { ...cellSeries(unchanged, dark), itemStyle: { ...cellStyle(dark), color: dark ? "#3f3f46" : "#e4e4e7" } },
       ],
     };
   }, [rows, dark, weeks, hospitals]);
@@ -141,6 +135,26 @@ export function HeatmapChart({ rows, dark }: { rows: Row[]; dark: boolean }) {
       />
     </div>
   );
+}
+
+type HeatCell = { value: (number | null)[]; row: Row };
+
+function cellStyle(dark: boolean) {
+  return { borderColor: dark ? "#0c0c0f" : "#ffffff", borderWidth: 2, borderRadius: 3 };
+}
+
+function cellSeries(data: HeatCell[], dark: boolean) {
+  return {
+    type: "heatmap",
+    data,
+    label: {
+      show: true,
+      fontSize: 11,
+      color: dark ? "#fafafa" : "#18181b",
+      formatter: (item: { value: (number | null)[] }) => (item.value[2] ?? 0).toLocaleString("en-US"),
+    },
+    itemStyle: cellStyle(dark),
+  };
 }
 
 function num(value: Cell | undefined): number | null {

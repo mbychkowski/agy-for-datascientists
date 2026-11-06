@@ -349,6 +349,20 @@ class LandingTest(WorkspaceCase):
 
         self.assertEqual(tile["chart"]["rows"], DEDUP_ROWS)
 
+    def test_1c_rereads_its_chart_when_the_before_table_changes(self) -> None:
+        self.catalog.put_table("staging.hospital_flu", modified="1")
+        self.catalog.put_table("staging.hospital_flu_clean", rows=DEDUP_ROWS)
+        board = self.board()
+        self.tiles(board)
+        before = self.catalog.queries_run
+
+        self.catalog.put_table("staging.hospital_flu", modified="2")
+        self.tiles(board)
+
+        # Only 1C reads staging.hospital_flu as a chart read; the Opening Tile
+        # re-runs too because it is that table's own Tile.
+        self.assertEqual(self.catalog.queries_run - before, 2)
+
     def test_one_failing_chart_query_does_not_hold_back_the_others(self) -> None:
         class OneTileFails(FakeCatalog):
             def run_query(self, sql: str) -> list[dict]:

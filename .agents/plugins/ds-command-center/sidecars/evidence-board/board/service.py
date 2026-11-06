@@ -95,14 +95,23 @@ class Board:
             )
 
     def _refresh(self) -> TableView:
-        snapshot = {
-            table: self._catalog.table_info(table) for table in self._manifest.tables
-        }
+        # Chart reads are watched too, so a chart re-runs when its context
+        # table changes; they never gate readiness.
+        watched = dict.fromkeys(
+            [
+                *self._manifest.tables,
+                *(t for tile in self._manifest.tiles for t in tile.chart_reads),
+            ]
+        )
+        snapshot = {table: self._catalog.table_info(table) for table in watched}
         charts: dict[str, list[dict[str, Any]]] = {}
         for tile in self._manifest.tiles:
             if not engine.is_ready(tile, snapshot):
                 continue
-            stamps = tuple(snapshot[t].modified for t in tile.tables)
+            stamps = tuple(
+                info.modified if (info := snapshot[t]) else ""
+                for t in (*tile.tables, *tile.chart_reads)
+            )
             cached = self._charts.get(tile.id)
             if cached is None or cached[0] != stamps:
                 try:
