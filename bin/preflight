@@ -754,6 +754,7 @@ check_evidence_board_sidecar() {
         "${config_dir}/config.json" <<'PY'
 import json
 import os
+import shlex
 import sys
 from fnmatch import fnmatch
 from pathlib import Path
@@ -776,7 +777,7 @@ if install_env.is_file():
 workspace = settings.get("WORKSPACE", "")
 if workspace and (Path(workspace) / "demo.env").is_file():
     # Reinstall against the workspace the install already pins.
-    fix = f"./install-evidence-board --workspace {workspace}"
+    fix = f"./install-evidence-board --workspace {shlex.quote(workspace)}"
 else:
     fix = default_fix
     problems.append(

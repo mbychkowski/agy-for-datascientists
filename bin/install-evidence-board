@@ -142,6 +142,10 @@ trap 'rm -rf "${STAGED_DIR}"' EXIT
 # tar copies regular files (no symlinks into the repo) and skips the build-time
 # and runtime leftovers listed in the sidecar's install-exclude file, which
 # preflight's drift check and the tests read too.
+if [[ ! -f "${BOARD_DIR}/install-exclude" ]]; then
+    echo "[FAIL] ${BOARD_DIR}/install-exclude not found; nothing installed." >&2
+    exit 1
+fi
 EXCLUDES=()
 while IFS= read -r pattern || [[ -n "${pattern}" ]]; do
     [[ -z "${pattern}" || "${pattern}" == \#* ]] && continue
