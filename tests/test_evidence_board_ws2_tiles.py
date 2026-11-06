@@ -166,6 +166,15 @@ class CohortTrainingActivityTest(WorkspaceCase):
 
         self.assert_training()
 
+    def test_piping_the_rendered_kmeans_sql_file_into_bq_starts_2a(self) -> None:
+        command = (
+            f'sed "s/\\${{PROJECT_ID}}/demo-proj/g" {KMEANS_FILE}'
+            " | bq query --project_id=demo-proj --use_legacy_sql=false"
+        )
+        self.hook(RECORDER_PRE, _payload("run_command", {"CommandLine": command}))
+
+        self.assert_training()
+
     def test_writing_reading_or_featurizing_leaves_2a_locked(self) -> None:
         self.hook(
             RECORDER_POST,
@@ -217,6 +226,16 @@ class ForecastTrialsActivityTest(WorkspaceCase):
         self.assertEqual(self.tiles()["2b"]["state"], "locked")
 
         command = "bq query --use_legacy_sql=false < sql/ws2_forecasts_and_trials.sql"
+        self.hook(RECORDER_PRE, _payload("run_command", {"CommandLine": command}))
+
+        [entry] = self.tiles()["2b"]["activity"]["ticker"]
+        self.assertEqual(entry["label"], "ARIMA_PLUS + TimesFM")
+
+    def test_piping_the_rendered_forecast_sql_file_into_bq_ticks_2b(self) -> None:
+        command = (
+            "envsubst < sql/ws2_forecasts_and_trials.sql"
+            " | bq query --project_id=demo-proj --use_legacy_sql=false"
+        )
         self.hook(RECORDER_PRE, _payload("run_command", {"CommandLine": command}))
 
         [entry] = self.tiles()["2b"]["activity"]["ticker"]

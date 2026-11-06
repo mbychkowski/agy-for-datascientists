@@ -45,3 +45,13 @@ export function axisStyle(dark: boolean) {
     splitLine: { lineStyle: { color: dark ? "#27272a" : "#f4f4f5" } },
   };
 }
+
+/** Legend pinned top-left, styled like the axis labels. */
+export function legendStyle(dark: boolean) {
+  return { top: 0, left: 0, textStyle: { color: dark ? "#a1a1aa" : "#52525b", fontSize: 14 } };
+}
+
+/** Display name for a Cohort id, e.g. COHORT_3 -> "Cohort 3". */
+export function cohortName(cohortId: string): string {
+  return cohortId.replace(/^COHORT_/i, "Cohort ");
+}

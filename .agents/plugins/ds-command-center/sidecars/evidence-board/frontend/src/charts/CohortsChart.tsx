@@ -3,7 +3,7 @@ import ReactEChartsCore from "echarts-for-react/esm/core";
 import { useMemo } from "react";
 import { num } from "../format";
 import type { Row } from "../types";
-import { axisStyle, baseOption, echarts, PALETTE } from "./theme";
+import { axisStyle, baseOption, cohortName, echarts, legendStyle, PALETTE } from "./theme";
 
 const MUTED = ["#3b82f6", "#10b981", "#f59e0b", "#8b5cf6", "#06b6d4", "#84cc16"];
 
@@ -40,7 +40,7 @@ export function CohortsChart({ rows, dark }: { rows: Row[]; dark: boolean }) {
       ...base,
       // containLabel ignores axis names, so reserve room for the x-axis name.
       grid: { ...base.grid, top: 48, bottom: 32 },
-      legend: { top: 0, left: 0, textStyle: { color: dark ? "#a1a1aa" : "#52525b", fontSize: 14 } },
+      legend: legendStyle(dark),
       tooltip: {
         ...base.tooltip,
         trigger: "item",
@@ -93,7 +93,7 @@ export function CohortsChart({ rows, dark }: { rows: Row[]; dark: boolean }) {
 }
 
 function cohortLabel(cohort: string, breakout: boolean): string {
-  const name = cohort.replace(/^COHORT_/, "Cohort ");
+  const name = cohortName(cohort);
   return breakout ? `${name} (breakout)` : name;
 }
 

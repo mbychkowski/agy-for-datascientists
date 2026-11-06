@@ -3,7 +3,7 @@ import ReactEChartsCore from "echarts-for-react/esm/core";
 import { useMemo } from "react";
 import { num } from "../format";
 import type { Row } from "../types";
-import { axisStyle, baseOption, echarts } from "./theme";
+import { axisStyle, baseOption, cohortName, echarts, legendStyle } from "./theme";
 
 /** One bar series per (model family, training data); clean is solid, uncleaned pale. */
 const SERIES = [
@@ -33,7 +33,7 @@ export function LeaderboardChart({ rows, dark }: { rows: Row[]; dark: boolean })
     return {
       ...base,
       grid: { ...base.grid, top: 48 },
-      legend: { top: 0, left: 0, textStyle: { color: dark ? "#a1a1aa" : "#52525b", fontSize: 14 } },
+      legend: legendStyle(dark),
       tooltip: {
         ...base.tooltip,
         trigger: "axis",
@@ -42,7 +42,7 @@ export function LeaderboardChart({ rows, dark }: { rows: Row[]; dark: boolean })
       },
       xAxis: {
         type: "category",
-        data: cohorts.map((c) => c.replace(/^COHORT_/, "Cohort ")),
+        data: cohorts.map(cohortName),
         ...axis,
         axisTick: { show: false },
       },

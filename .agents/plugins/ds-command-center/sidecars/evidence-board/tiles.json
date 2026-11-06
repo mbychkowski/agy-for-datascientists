@@ -285,7 +285,7 @@
         ]
       },
       "proves": "K-means sorts {hospitals} hospitals into {cohorts} Cohorts by seasonal shape; the steepest-rising Cohort, {breakout_cohort}, holds just {breakout_size} hospitals ({breakout_hospitals}), isolating the Outbreak in its own Cohort.",
-      "proves_fallback": "K-means groups hospitals into Cohorts by seasonal shape, and the steepest-rising Cohort isolates the Outbreak hospitals.",
+      "proves_fallback": "K-means sorts hospitals into Cohorts by seasonal shape, and the steepest-rising Cohort isolates the Outbreak hospitals.",
       "matchers": [
         {
           "kind": "timer",
@@ -297,7 +297,7 @@
           "kind": "timer",
           "label": "BQML K-means training",
           "tool": "(.*[_.])?run_command",
-          "summary": "(?i)\\bbq\\s.*\\bsql/\\S*k_?means\\S*\\.sql\\b"
+          "summary": "(?i)\\bbq\\s.*\\bsql/\\S*k_?means\\S*\\.sql\\b|\\bsql/\\S*k_?means\\S*\\.sql\\b.*\\|\\s*bq\\s"
         }
       ]
     },
@@ -383,7 +383,7 @@
           "kind": "ticker",
           "label": "ARIMA_PLUS + TimesFM",
           "tool": "(.*[_.])?run_command",
-          "summary": "(?i)\\bbq\\s.*\\bsql/\\S*(forecast|arima|trial)\\S*\\.sql\\b"
+          "summary": "(?i)\\bbq\\s.*\\bsql/\\S*(forecast|arima|trial)\\S*\\.sql\\b|\\bsql/\\S*(forecast|arima|trial)\\S*\\.sql\\b.*\\|\\s*bq\\s"
         },
         {
           "kind": "ticker",
