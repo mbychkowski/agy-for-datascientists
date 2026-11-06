@@ -139,11 +139,19 @@ if ! STAGED_DIR="$(mktemp -d "${SIDECARS_DIR}/.${SIDECAR_NAME}.install.XXXXXX")"
 fi
 trap 'rm -rf "${STAGED_DIR}"' EXIT
 
-# tar copies regular files (no symlinks into the repo) and skips build-time and
-# runtime leftovers: node_modules, Python bytecode and a repo-local install.env.
-if ! tar -C "${BOARD_DIR}" \
-        --exclude=node_modules --exclude=__pycache__ --exclude='*.tsbuildinfo' \
-        --exclude=./install.env \
+# tar copies regular files (no symlinks into the repo) and skips the build-time
+# and runtime leftovers listed in the sidecar's install-exclude file, which
+# preflight's drift check and the tests read too.
+if [[ ! -f "${BOARD_DIR}/install-exclude" ]]; then
+    echo "[FAIL] ${BOARD_DIR}/install-exclude not found; nothing installed." >&2
+    exit 1
+fi
+EXCLUDES=()
+while IFS= read -r pattern || [[ -n "${pattern}" ]]; do
+    [[ -z "${pattern}" || "${pattern}" == \#* ]] && continue
+    EXCLUDES+=("--exclude=${pattern}")
+done < "${BOARD_DIR}/install-exclude"
+if ! tar -C "${BOARD_DIR}" "${EXCLUDES[@]}" \
         -cf - . | tar -C "${STAGED_DIR}" -xf -; then
     echo "[FAIL] Copying ${BOARD_DIR} failed; nothing installed." >&2
     exit 1

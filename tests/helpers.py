@@ -25,6 +25,7 @@ RUN_PIPELINE_CLEAN_SYMLINK = WORKTREE_ROOT / "run-pipeline-clean"
 VENDORED_DAK_DIR = WORKTREE_ROOT / ".agents" / "plugins" / "dak-bigquery"
 PLUGIN_DIR = WORKTREE_ROOT / ".agents" / "plugins" / "ds-command-center"
 EVIDENCE_BOARD_DIR = PLUGIN_DIR / "sidecars" / "evidence-board"
+INSTALL_EVIDENCE_BOARD_BIN = WORKTREE_ROOT / "bin" / "install-evidence-board"
 # Points the Evidence Board event recorder at a workspace (bin/event_recorder.py).
 EVIDENCE_BOARD_WORKSPACE_ENV = "EVIDENCE_BOARD_WORKSPACE"
 
@@ -645,6 +646,12 @@ EVIDENCE_BOARD_STATES = (
 )
 
 
+def evidence_board_install_excludes() -> list[str]:
+    """Globs the installer leaves out of the copy (the sidecar's install-exclude)."""
+    text = (EVIDENCE_BOARD_DIR / "install-exclude").read_text(encoding="utf-8")
+    return [line for line in text.splitlines() if line and not line.startswith("#")]
+
+
 def create_evidence_board_install(config_dir: Path, state: str = "installed") -> Path:
     """Lay out an Antigravity config dir holding the Evidence Board sidecar.
 
@@ -660,9 +667,7 @@ def create_evidence_board_install(config_dir: Path, state: str = "installed") ->
     shutil.copytree(
         EVIDENCE_BOARD_DIR,
         installed,
-        ignore=shutil.ignore_patterns(
-            "node_modules", "__pycache__", "*.tsbuildinfo", "install.env"
-        ),
+        ignore=shutil.ignore_patterns(*evidence_board_install_excludes()),
     )
     # The bundle is git-ignored build output, so CI has none: stand one in.
     index = installed / "frontend" / "dist" / "index.html"

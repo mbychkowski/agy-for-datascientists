@@ -117,7 +117,7 @@ source demo.env
 ./preflight
 ```
 
-Verify that all 12 checks report `[PASS]`: environment variables, active `gcloud` project pinning, Application Default Credentials (ADC) quota project alignment, Dataproc Serverless runtime `3.0` execution, BigQuery MCP presenter authentication, `guardrail-hook` dataset enforcement, BigQuery ML (`AI.FORECAST` and `KMEANS`), subagent dispatch, workspace Data Agent Kit skills visibility, and Java 21 availability. Do not go on stage if any required check reports `[FAIL]`. The warning-only checks that follow (vendored BigQuery MCP proxy drift and the **Evidence Board** install) never fail preflight, so a clean run prints `Summary: 14 passed, 0 failed.`; fix an **Evidence Board** warning with Step 0b, or plan on the browser-tab fallback.
+Verify that all 12 required checks report `[PASS]`: environment variables, active `gcloud` project pinning, Application Default Credentials (ADC) quota project alignment, Dataproc Serverless runtime `3.0` execution, BigQuery MCP presenter authentication, `guardrail-hook` dataset enforcement, BigQuery ML (`AI.FORECAST` and `KMEANS`), subagent dispatch, workspace Data Agent Kit skills visibility, and Java 21 availability. Do not go on stage if any required check reports `[FAIL]`. The warning-only checks that follow (vendored BigQuery MCP proxy drift and the **Evidence Board** install) never fail preflight and are counted in the summary, so a clean run prints `Summary: 14 passed, 0 failed.` (12 required plus 2 warning-only); fix an **Evidence Board** warning with Step 0b, or plan on the browser-tab fallback.
 
 ### Step 3: Reset the Stage Clone's Code & the Workstream 1 Start Point (Window 2)
 
