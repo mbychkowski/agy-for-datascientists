@@ -129,7 +129,8 @@ if ! mkdir -p "${SIDECARS_DIR}"; then
 fi
 
 # Stage the copy beside the destination, then swap it in, so a failed copy never
-# leaves a half-installed sidecar behind.
+# leaves a half-installed sidecar behind. (If the final mv itself fails after the
+# old copy is removed, rerun the installer; both sit on the same filesystem.)
 if ! STAGED_DIR="$(mktemp -d "${SIDECARS_DIR}/.${SIDECAR_NAME}.install.XXXXXX")"; then
     echo "[FAIL] Cannot create a staging folder in ${SIDECARS_DIR}" >&2
     exit 1
@@ -164,5 +165,5 @@ echo ""
 echo "  {\"sidecars\": {\"${SIDECAR_ID}\": {\"enabled\": true}}}"
 echo ""
 echo "Logs: ${HOME_DIR}/.gemini/antigravity/sidecar_data/${SIDECAR_ID}/logs/"
-echo "Standalone fallback: ./evidence-board"
+echo "Standalone fallback: ./evidence-board --workspace ${WORKSPACE}"
 exit 0

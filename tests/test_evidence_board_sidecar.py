@@ -15,12 +15,18 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tests.helpers import WORKTREE_ROOT
+from tests.helpers import WORKTREE_ROOT, create_demo_env_file
 
 PLUGIN_DIR = WORKTREE_ROOT / ".agents" / "plugins" / "ds-command-center"
 SIDECAR_DIR = PLUGIN_DIR / "sidecars" / "evidence-board"
 DESCRIPTOR = SIDECAR_DIR / "sidecar.json"
 AUX_PANE = "SIDECAR_UI_ENTRYPOINT_AUX_PANE"
+INSTALL_BIN = WORKTREE_ROOT / "bin" / "install-evidence-board"
+INSTALL_SYMLINK = WORKTREE_ROOT / "install-evidence-board"
+INSTALLED_REL = Path(
+    ".gemini", "config", "plugins", "ds-command-center", "sidecars", "evidence-board"
+)
+USER_CONFIG_REL = Path(".gemini", "config", "config.json")
 
 
 class SidecarDescriptorTest(unittest.TestCase):
@@ -44,14 +50,6 @@ class SidecarDescriptorTest(unittest.TestCase):
         self.assertTrue(script.is_file(), f"{script} must ship with the sidecar")
 
 
-INSTALL_BIN = WORKTREE_ROOT / "bin" / "install-evidence-board"
-INSTALL_SYMLINK = WORKTREE_ROOT / "install-evidence-board"
-INSTALLED_REL = Path(
-    ".gemini", "config", "plugins", "ds-command-center", "sidecars", "evidence-board"
-)
-USER_CONFIG_REL = Path(".gemini", "config", "config.json")
-
-
 def _tree(root: Path) -> dict[str, bytes]:
     """Relative path -> bytes for every file under `root`."""
     return {
@@ -68,7 +66,7 @@ class InstallCommandTest(unittest.TestCase):
         self.home = Path(tmp.name) / "home"
         self.workspace = Path(tmp.name) / "stage clone"
         self.workspace.mkdir(parents=True)
-        (self.workspace / "demo.env").write_text('PROJECT_ID="p"\n', "utf-8")
+        create_demo_env_file(self.workspace)
         self.user_config = self.home / USER_CONFIG_REL
         self.user_config.parent.mkdir(parents=True)
         self.user_config.write_text('{"plugins": {}}\n', "utf-8")
@@ -197,7 +195,7 @@ class PreStageAndRulesTest(unittest.TestCase):
     def test_rules_name_the_board_the_tile_manifest_and_the_pill(self) -> None:
         rules = (PLUGIN_DIR / "rules" / "AGENTS.md").read_text("utf-8")
         # Glossary terms are bolded in the rules; compare the plain text.
-        section = rules.replace("**", "").split("Evidence Board", 1)[1]
+        section = rules.replace("**", "").split("\n## 6. Evidence Board\n", 1)[1]
 
         self.assertIn("sidecars/evidence-board/tiles.json", section)
         self.assertIn("Tile manifest", section)
