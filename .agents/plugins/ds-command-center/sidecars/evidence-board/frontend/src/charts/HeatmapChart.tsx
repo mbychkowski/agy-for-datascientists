@@ -1,8 +1,8 @@
 // The ESM entry: Vite's CJS interop hands back `{ default }` for lib/core.
 import ReactEChartsCore from "echarts-for-react/esm/core";
 import { useMemo } from "react";
-import { formatDate, formatNumber, formatPercentChange, formatShortDate } from "../format";
-import type { Cell, Row } from "../types";
+import { formatDate, formatNumber, formatPercentChange, formatShortDate, num } from "../format";
+import type { Row } from "../types";
 import { axisStyle, baseOption, echarts, PALETTE } from "./theme";
 
 const ROW_HEIGHT = 24;
@@ -155,10 +155,6 @@ function cellSeries(data: HeatCell[], dark: boolean) {
     },
     itemStyle: cellStyle(dark),
   };
-}
-
-function num(value: Cell | undefined): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 function unique(values: string[]): string[] {

@@ -214,6 +214,28 @@ class ProfilingActivityTest(WorkspaceCase):
 
         self.assertEqual(self.tiles()["1a"]["state"], "locked")
 
+    def test_opening_guardrail_moment_leaves_1a_locked(self) -> None:
+        # DEMO.md Opening: the agent's delete against raw.hospital_flu_feeds is
+        # denied; it names a raw table, not staging.hospital_flu.
+        self.hook(
+            GUARDRAIL,
+            _payload(
+                "call_mcp_tool",
+                {
+                    "ServerName": "dak-bigquery",
+                    "ToolName": "execute_sql",
+                    "Arguments": {
+                        "sql": "DELETE FROM raw.hospital_flu_feeds WHERE ingested_at > '2026-10-31'"
+                    },
+                },
+            ),
+        )
+
+        tiles = self.tiles()
+
+        self.assertTrue(tiles["opening"]["activity"]["blocked"])
+        self.assertEqual(tiles["1a"]["state"], "locked")
+
 
 class TriageAndReviewActivityTest(WorkspaceCase):
     """1B shows the three triage lanes, then the stats-reviewer."""

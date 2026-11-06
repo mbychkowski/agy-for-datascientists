@@ -21,6 +21,11 @@ export function formatShortDate(value: Cell | undefined): string {
   return full.replace(/,\s*\d{4}$/, "");
 }
 
+/** A finite number cell, or null for anything else (null, text, NaN). */
+export function num(value: Cell | undefined): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
 export function formatNumber(value: Cell | undefined): string {
   return typeof value === "number" ? value.toLocaleString("en-US") : String(value ?? "—");
 }

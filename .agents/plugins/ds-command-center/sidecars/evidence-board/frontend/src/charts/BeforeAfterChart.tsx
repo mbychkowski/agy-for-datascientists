@@ -1,6 +1,6 @@
 import { ArrowRight } from "lucide-react";
-import { formatNumber } from "../format";
-import type { Cell, Row } from "../types";
+import { formatNumber, num } from "../format";
+import type { Row } from "../types";
 
 /**
  * Segment 1C: Hospital Feed rows and duplicate (hospital, feed date) keys,
@@ -58,8 +58,4 @@ function Bar({ label, value, scale, className }: { label: string; value: number 
       </div>
     </div>
   );
-}
-
-function num(value: Cell | undefined): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
