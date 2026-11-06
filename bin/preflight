@@ -779,23 +779,42 @@ if not workspace or not (Path(workspace) / "demo.env").is_file():
         f" reinstall with: {fix}"
     )
 
-# Compare the files the installer copies; build output and leftovers are skipped.
+# Compare the files the installer copies, both ways (a module the repo dropped
+# but the install kept stays importable). Build output and leftovers are skipped;
+# the frontend bundle is checked for presence instead.
 skipped_dirs = {"node_modules", "__pycache__", "dist"}
-differing = []
-for root, dirs, files in os.walk(source):
-    dirs[:] = sorted(d for d in dirs if d not in skipped_dirs)
-    for name in sorted(files):
-        path = Path(root) / name
-        rel = path.relative_to(source)
-        if name.endswith(".tsbuildinfo") or rel.as_posix() == "install.env":
-            continue
-        copy = installed / rel
-        if not copy.is_file() or copy.read_bytes() != path.read_bytes():
-            differing.append(rel.as_posix())
+
+
+def tracked_files(top):
+    found = {}
+    for root, dirs, files in os.walk(top):
+        dirs[:] = sorted(d for d in dirs if d not in skipped_dirs)
+        for name in files:
+            path = Path(root) / name
+            rel = path.relative_to(top).as_posix()
+            if not name.endswith(".tsbuildinfo") and rel != "install.env":
+                found[rel] = path
+    return found
+
+
+repo_files, installed_files = tracked_files(source), tracked_files(installed)
+differing = sorted(
+    rel
+    for rel in repo_files.keys() | installed_files.keys()
+    if rel not in repo_files
+    or rel not in installed_files
+    or repo_files[rel].read_bytes() != installed_files[rel].read_bytes()
+)
 if differing:
     problems.append(
         f"The installed board is out of date with the repo ({len(differing)} file(s)"
         f" differ, first: {differing[0]}); rerun: {fix}"
+    )
+
+if not (installed / "frontend" / "dist" / "index.html").is_file():
+    problems.append(
+        "The installed board has no frontend bundle (frontend/dist/index.html);"
+        f" rerun without --no-build: {fix}"
     )
 
 try:
@@ -805,7 +824,7 @@ except (OSError, ValueError, KeyError, TypeError, AttributeError):
     enabled = False
 if not enabled:
     problems.append(
-        f"The sidecar is not enabled. Merge"
+        "The sidecar is not enabled. Merge"
         ' {"sidecars": {"evidence-board": {"enabled": true}}}'
         f" into {config}, then restart the Antigravity App."
     )

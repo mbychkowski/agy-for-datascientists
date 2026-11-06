@@ -617,11 +617,23 @@ exit 0
     return env_file, env, log_file
 
 
+EVIDENCE_BOARD_STATES = (
+    "installed",
+    "missing",
+    "stale",
+    "extra_file",
+    "no_dist",
+    "disabled",
+    "no_workspace",
+)
+
+
 def create_evidence_board_install(config_dir: Path, state: str = "installed") -> Path:
     """Lay out an Antigravity config dir holding the Evidence Board sidecar.
 
-    `state` is one of: installed, missing, stale, disabled, no_workspace.
+    `state` is one of the EVIDENCE_BOARD_STATES.
     """
+    assert state in EVIDENCE_BOARD_STATES, state
     # Rebuilt from scratch: some tests call setup_preflight_test_env twice per tmpdir.
     shutil.rmtree(config_dir, ignore_errors=True)
     config_dir.mkdir(parents=True)
@@ -635,6 +647,15 @@ def create_evidence_board_install(config_dir: Path, state: str = "installed") ->
             "node_modules", "__pycache__", "*.tsbuildinfo", "install.env"
         ),
     )
+    # The bundle is git-ignored build output, so CI has none: stand one in.
+    index = installed / "frontend" / "dist" / "index.html"
+    if state == "no_dist":
+        shutil.rmtree(installed / "frontend" / "dist", ignore_errors=True)
+    else:
+        index.parent.mkdir(parents=True, exist_ok=True)
+        index.write_text("<!doctype html>\n", encoding="utf-8")
+    if state == "extra_file":
+        (installed / "board" / "obsolete.py").write_text("\n", encoding="utf-8")
     workspace = config_dir / "stage-clone"
     workspace.mkdir()
     if state != "no_workspace":

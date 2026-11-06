@@ -41,6 +41,6 @@ These team-owned rules govern every agent and subagent operating inside the Anti
 
 ## 6. Evidence Board
 
-- The **Evidence Board** is the audience-facing sidecar (ID `evidence-board`, installed globally by `./install-evidence-board`) beside the **Command Center**. It shows one **Tile** per demo step, and a **Tile** lands by itself when its source table appears in `staging`, `features` or `ml`; nothing in your workflow changes for it.
+- The **Evidence Board** is the audience-facing sidecar (ID `evidence-board`) beside the **Command Center**. It shows one **Tile** per demo step, and a **Tile** lands by itself when its source table appears in `staging`, `features` or `ml`; nothing in your workflow changes for it.
 - **Tile** names the presenter uses in chat ("the Opening Tile", "the 1B Tile", "the Cohort Tile") refer to entries in the **Tile** manifest, `.agents/plugins/ds-command-center/sidecars/evidence-board/tiles.json`. Read it to map a **Tile** to its step, source table(s) and "what this proves" line before reasoning about it.
 - When the presenter asks to open or look at the board, you may surface the pill `[Evidence Board](sidecar://evidence-board/)` in your reply, but only when the sidecar is enabled and running.

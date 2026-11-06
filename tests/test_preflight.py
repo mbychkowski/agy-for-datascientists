@@ -597,6 +597,14 @@ class TestPreflightEnvironmentLoading(unittest.TestCase):
             self.assertNotIn("dataproc batches submit", calls)
 
 
+def _tree_state(root: Path) -> list[tuple[str, bytes | None, int]]:
+    """Every path under `root` with its bytes (files) and mtime, to prove no writes."""
+    return [
+        (str(p), p.read_bytes() if p.is_file() else None, p.stat().st_mtime_ns)
+        for p in sorted(root.rglob("*"))
+    ]
+
+
 class TestPreflightEvidenceBoardCheck(unittest.TestCase):
     TITLE = "Evidence Board sidecar is installed, current and enabled"
     FIX = "./install-evidence-board --workspace ~/demo-stage/agy-ws1"
@@ -605,7 +613,7 @@ class TestPreflightEvidenceBoardCheck(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             env_file, env, _ = setup_preflight_test_env(tmpdir, evidence_board=state)
             config_dir = env["PREFLIGHT_GEMINI_CONFIG_DIR"]
-            before = sorted(str(p) for p in Path(config_dir).rglob("*"))
+            before = _tree_state(Path(config_dir))
 
             proc = _run_preflight(env_file, env)
 
@@ -613,8 +621,7 @@ class TestPreflightEvidenceBoardCheck(unittest.TestCase):
             self.assertIn(f"[WARN] {self.TITLE}", proc.stdout)
             self.assertIn("0 failed, 1 warning(s)", proc.stdout)
             # Read-only: preflight never installs or enables the board itself.
-            after = sorted(str(p) for p in Path(config_dir).rglob("*"))
-            self.assertEqual(before, after)
+            self.assertEqual(_tree_state(Path(config_dir)), before)
             return proc.stdout.split(f"[WARN] {self.TITLE}", 1)[1].split("\n[", 1)[0]
 
     def test_warns_with_the_install_command_when_the_board_is_missing(self):
@@ -626,6 +633,16 @@ class TestPreflightEvidenceBoardCheck(unittest.TestCase):
         block = self._warn_block("stale")
         self.assertIn("out of date", block)
         self.assertIn("tiles.json", block)
+        self.assertIn(self.FIX, block)
+
+    def test_warns_when_the_install_keeps_a_file_the_repo_dropped(self):
+        block = self._warn_block("extra_file")
+        self.assertIn("out of date", block)
+        self.assertIn("board/obsolete.py", block)
+
+    def test_warns_when_the_install_has_no_frontend_bundle(self):
+        block = self._warn_block("no_dist")
+        self.assertIn("frontend/dist/index.html", block)
         self.assertIn(self.FIX, block)
 
     def test_warns_when_the_installed_workspace_has_no_demo_env(self):

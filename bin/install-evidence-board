@@ -45,7 +45,7 @@ BUILD=true
 usage() {
     echo "Usage: ./install-evidence-board [OPTIONS]"
     echo ""
-    echo "Copy the Evidence Board sidecar into the global Antigravity plugin directory."
+    echo "Copy the Evidence Board sidecar into ~/.gemini/config/sidecars/ (standalone global sidecar)."
     echo ""
     echo "Options:"
     echo "  -w, --workspace <path>  Folder holding demo.env the board pins to (default: this repo)"
