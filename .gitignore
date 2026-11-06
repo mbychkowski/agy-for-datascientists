@@ -19,6 +19,9 @@ skills-lock.json
 # Node
 node_modules/
 
+# Evidence Board event log, appended by the ds-command-center event recorder hook
+.evidence-board/
+
 # Terraform local state and caches
 .terraform/
 *.tfstate

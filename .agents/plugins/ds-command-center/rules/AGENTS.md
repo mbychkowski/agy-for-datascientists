@@ -38,3 +38,9 @@ These team-owned rules govern every agent and subagent operating inside the Anti
   - `sampling-triage` (`agents/sampling-triage.md`): Identifies hospitals experiencing a **Sampling Artifact** (`total_flu_tests` expansion with flat **Positivity**).
   - `pipeline-triage` (`agents/pipeline-triage.md`): Correlates duplicate **Hospital Feed** rows in `staging.hospital_flu` with `ops.pipeline_run_log` backfill runs to quantify the **Pipeline Defect**.
 - Before presenting the reconciled **Attribution** table for human sign-off, run `stats-reviewer` (`agents/stats-reviewer.md`) to challenge raw counts vs **Positivity**, small-sample hospitals, and Simpson's paradox across regions.
+
+## 6. Evidence Board
+
+- The **Evidence Board** is the audience-facing sidecar (ID `evidence-board`) beside the **Command Center**. It shows one **Tile** per demo step, and a **Tile** lands by itself when its source table appears in `staging`, `features` or `ml`; nothing in your workflow changes for it.
+- **Tile** names the presenter uses in chat ("the Opening Tile", "the 1B Tile", "the Cohort Tile") refer to entries in the **Tile** manifest, `.agents/plugins/ds-command-center/sidecars/evidence-board/tiles.json`. Read it to map a **Tile** to its step, source table(s) and "what this proves" line before reasoning about it.
+- When the presenter asks to open or look at the board, you may surface the pill `[Evidence Board](sidecar://evidence-board/)` in your reply, but only when the sidecar is enabled and running.
