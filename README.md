@@ -332,6 +332,8 @@ The repository enforces strict formatting, linting, glossary compliance, and her
 uvx ruff check . && uvx ruff format --check . && make test
 ```
 
+The Evidence Board backend tests need its Python dependencies (FastAPI, Uvicorn, httpx, google-cloud-bigquery) in the interpreter that runs `make test`; CI installs them with `uv pip install --system -r .agents/plugins/ds-command-center/sidecars/evidence-board/requirements.txt`. Locally, install them the same way into a virtualenv you activate before committing.
+
 What `make test` runs:
 1. **Glossary Check (`make check-glossary` / `node bin/check-glossary.js`)**: Scans all git-tracked files against [GLOSSARY.md](GLOSSARY.md) to ensure canonical terms are used and prohibited synonyms are absent.
 2. **Script & Syntax Validation (`make check`)**: Validates bash syntax (`bash -n`), Node syntax (`node --check`), Python compilation (`py_compile`), and Ruff linting/formatting (`ruff check . && ruff format --check .`).

@@ -2,8 +2,8 @@
 
 Rule 3 of `.agents/plugins/ds-command-center/rules/AGENTS.md` makes the `raw`
 and `ops` datasets read-only, and rule 4 puts `checkpoint` off-limits. This
-module scans repo code (`bin/*`, `bin/lib/*`, `sql/**`, `lib/**`, `jobs/**`)
-and fails on mutating SQL or bq invocations that target `raw`/`ops`, and on
+module scans repo code (`bin/*`, `bin/lib/*`, `sql/**`, `lib/**`, `jobs/**`,
+the `ds-command-center` sidecars) and fails on mutating SQL or bq invocations that target `raw`/`ops`, and on
 any reference to the `checkpoint` dataset. Presenter-owned provisioning scripts
 are exempt through `_PROVISIONING_ALLOWLIST`; data-only lines (such as
 preflight's guardrail-hook probe payloads) are exempt only through a per-line
@@ -30,7 +30,12 @@ from tests.helpers import WORKTREE_ROOT
 # Top-level files in these directories are scanned.
 _SCAN_FILE_DIRS: tuple[str, ...] = ("bin", "bin/lib")
 # Every file under these directories is scanned recursively.
-_SCAN_TREE_DIRS: tuple[str, ...] = ("sql", "lib", "jobs")
+_SCAN_TREE_DIRS: tuple[str, ...] = (
+    "sql",
+    "lib",
+    "jobs",
+    ".agents/plugins/ds-command-center/sidecars",
+)
 
 _READ_ONLY_DATASETS = ("raw", "ops")
 _OFF_LIMITS_DATASET = "checkpoint"
@@ -252,7 +257,7 @@ def _scanned_files() -> list[Path]:
             files.extend(
                 p
                 for p in sorted(directory.rglob("*"))
-                if p.is_file() and "__pycache__" not in p.parts
+                if p.is_file() and not {"__pycache__", "node_modules"} & set(p.parts)
             )
     return files
 
