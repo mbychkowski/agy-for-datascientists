@@ -87,7 +87,7 @@ The command never edits your Antigravity user config. Merge the line it prints i
 {"sidecars": {"evidence-board": {"enabled": true}}}
 ```
 
-Rerun the command after pulling **Evidence Board** changes on `main`; it replaces the earlier install. `./preflight` (Step 2) warns when the install is missing, out of date with the repo, or not enabled. If the side pane stays blank, check `~/.gemini/antigravity/sidecar_data/evidence-board/logs/`, or open the board in a browser tab with `./evidence-board --workspace ~/demo-stage/agy-ws1`.
+Rerun the command after pulling **Evidence Board** changes on `main`; it replaces the earlier install. A sidecar that is already running keeps serving the old copy until it restarts, so the command warns with the PIDs still running from the old copy; restart the Antigravity App (or `kill -9` those PIDs: the sidecar's `restart_policy` is `on-failure`, so only a non-zero exit relaunches it). `./preflight` (Step 2) warns when the install is missing, out of date with the repo, or not enabled. If the side pane stays blank, check `~/.gemini/antigravity/sidecar_data/evidence-board/logs/`, or open the board in a browser tab with `./evidence-board --workspace ~/demo-stage/agy-ws1`.
 
 **At T-15:** complete Steps 1–4 before connecting to the projector or starting your screen share, so only the repository's **Command Center** configuration loads and every Google Cloud dependency is verified.
 
