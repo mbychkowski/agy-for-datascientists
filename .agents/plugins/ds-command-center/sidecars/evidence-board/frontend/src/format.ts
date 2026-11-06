@@ -26,6 +26,12 @@ export function num(value: Cell | undefined): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
+/** 12.5 -> "12.5%"; "—" for anything but a finite number. */
+export function percent(value: Cell | undefined): string {
+  const n = num(value);
+  return n === null ? "—" : `${n.toFixed(1)}%`;
+}
+
 export function formatNumber(value: Cell | undefined): string {
   return typeof value === "number" ? value.toLocaleString("en-US") : String(value ?? "—");
 }

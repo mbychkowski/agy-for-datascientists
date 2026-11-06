@@ -3,6 +3,8 @@ import { BeforeAfterChart } from "./BeforeAfterChart";
 import { CohortsChart } from "./CohortsChart";
 import { HeatmapChart } from "./HeatmapChart";
 import { LeaderboardChart } from "./LeaderboardChart";
+import { RefreshChart } from "./RefreshChart";
+import { RevealChart } from "./RevealChart";
 import { RowsTable } from "./RowsTable";
 import { WaterfallChart } from "./WaterfallChart";
 import { WeeklyBarChart } from "./WeeklyBarChart";
@@ -22,6 +24,10 @@ export function TileChart({ type, rows, dark }: { type: string; rows: Row[]; dar
       return <CohortsChart rows={rows} dark={dark} />;
     case "leaderboard":
       return <LeaderboardChart rows={rows} dark={dark} />;
+    case "reveal":
+      return <RevealChart rows={rows} dark={dark} />;
+    case "refresh":
+      return <RefreshChart rows={rows} dark={dark} />;
     default:
       return <RowsTable rows={rows} />;
   }
