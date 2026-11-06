@@ -8,7 +8,7 @@ Platform reference for the Evidence Board sidecar, which fills in Tiles beside t
 
 Source of truth: <https://antigravity.google/docs/sidecars> ("Available on: Antigravity App"). Re-read it when a fact below looks wrong; the page wins.
 
-- **Discovery** happens only under `~/.gemini/config/sidecars/<id>/` or `~/.gemini/config/plugins/<plugin>/sidecars/<id>/`; a repo's `.agents/plugins/` is outside discovery. A plugin sidecar's ID is `<plugin>/<id>`, so the Evidence Board is `ds-command-center/evidence-board`. The repo therefore **copies** the sidecar folder into the global plugin directory at install time; the decision is copy, not symlink.
+- **Discovery** happens only under `~/.gemini/config/sidecars/<id>/` or `~/.gemini/config/plugins/<plugin>/sidecars/<id>/`; a repo's `.agents/plugins/` is outside discovery. A plugin sidecar's ID is `<plugin>/<id>`; a standalone sidecar's ID is its folder name. The repo therefore **copies** the sidecar folder at install time (copy, not symlink) to `~/.gemini/config/sidecars/evidence-board/`, so the Evidence Board's ID is `evidence-board`. It deliberately avoids a global `~/.gemini/config/plugins/ds-command-center/` folder: that would share a name with the workspace plugin, and `config.json` keys the plugin enable toggle by folder name. A full global copy of the plugin would also load the rules and hooks twice, since rules dedupe by file path and hooks have no name to dedupe on.
 - **Working directory**: the sidecar's folder is the cwd of its command, so relative paths in `sidecar.json` resolve against the installed copy, not the repo.
 - **`sidecar.json`** fields:
 
@@ -21,7 +21,7 @@ Source of truth: <https://antigravity.google/docs/sidecars> ("Available on: Anti
   | `env` | Map of extra environment variables. |
   | `description`, `display_name` | Shown in the UI. |
 
-- **Enabling** is `{"sidecars": {"ds-command-center/evidence-board": {"enabled": true}}}` in `~/.gemini/config/config.json`. Sidecars are disabled until enabled. This is the presenter's step: install code prints the instruction, and agents never edit that file.
+- **Enabling** is `{"sidecars": {"evidence-board": {"enabled": true}}}` in `~/.gemini/config/config.json`. Sidecars are disabled until enabled. This is the presenter's step: install code prints the instruction, and agents never edit that file.
 - **Runtime data** lives at `~/.gemini/antigravity/sidecar_data/<id>/`:
   - `data/`: persistent storage, also exposed as `ANTIGRAVITY_EXECUTABLE_DATA_DIR`.
   - `logs/`: timestamped stdout and stderr. Check here first when the sidecar won't start or the pane stays blank.
@@ -39,7 +39,7 @@ These facts come from strings in the agy v1.5.1 binary, sit behind the `enable-u
 - **No push channel** exists from the agent to the sidecar, so the UI polls its backend.
 - **`window.sidecar` bridge** (preload): `agent.sendMessage(message, conversationId?)`, `ui.toggleAuxPane`, `getWorkspaceUris`, and `fetch` (adds the sidecar token as `X-Sidecar-Token`). The view's URL query carries `token` and `conversationId`; the expected token is in `ANTIGRAVITY_SIDECAR_UI_TOKEN`.
   - Gotcha: in the reference Node backend found in the binary, `agent.sendMessage` POSTs to the sidecar's **own** `/_sidecar/send-message` route, which shells out to `agentapi send-message`, and that backend serves `/preload.js` itself. A non-reference backend (FastAPI) must provide equivalent routes, and whether the host injects the preload for it is unconfirmed. Hence the Ask button checks for `window.sidecar` and falls back to the clipboard.
-- **Chat pill**: the agent opens the pane with a markdown link `[Evidence Board](sidecar://ds-command-center/evidence-board/)` (`sidecar://<sidecar-id>/<view-path>`); the label prefers the view `title`, then `display_name`. Emit it only when the sidecar is enabled and running.
+- **Chat pill**: the agent opens the pane with a markdown link `[Evidence Board](sidecar://evidence-board/)` (`sidecar://<sidecar-id>/<view-path>`); the label prefers the view `title`, then `display_name`. Emit it only when the sidecar is enabled and running.
 
 ## Hooks
 

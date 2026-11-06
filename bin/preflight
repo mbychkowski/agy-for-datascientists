@@ -740,6 +740,102 @@ if v_hash != i_hash:
 }
 
 # ------------------------------------------------------------------------------
+# Check 14 (Warning): Evidence Board Sidecar Installed, Current and Enabled
+# ------------------------------------------------------------------------------
+# Read-only: confirms the once-per-machine install (DEMO.md Step 0b) landed at
+# ~/.gemini/config/sidecars/evidence-board/, still matches the repo source, is
+# pinned to a workspace holding demo.env, and is enabled in config.json. It never
+# installs or enables anything; the standalone ./evidence-board stays the fallback.
+check_evidence_board_sidecar() {
+    local config_dir="${PREFLIGHT_GEMINI_CONFIG_DIR:-${HOME}/.gemini/config}"
+    python3 - \
+        "${REPO_ROOT}/.agents/plugins/ds-command-center/sidecars/evidence-board" \
+        "${config_dir}/sidecars/evidence-board" \
+        "${config_dir}/config.json" <<'PY'
+import json
+import os
+import sys
+from pathlib import Path
+
+source, installed, config = (Path(arg) for arg in sys.argv[1:4])
+fix = "./install-evidence-board --workspace ~/demo-stage/agy-ws1"
+if not (installed / "sidecar.json").is_file():
+    print(f"Evidence Board sidecar is not installed at {installed}.")
+    print(f"Install it once per machine (DEMO.md Step 0b): {fix}")
+    sys.exit(1)
+
+problems = []
+settings = {}
+install_env = installed / "install.env"
+if install_env.is_file():
+    for line in install_env.read_text(encoding="utf-8").splitlines():
+        key, sep, value = line.partition("=")
+        if sep:
+            settings[key] = value
+workspace = settings.get("WORKSPACE", "")
+if not workspace or not (Path(workspace) / "demo.env").is_file():
+    problems.append(
+        f"The installed board's workspace ({workspace or 'unset'}) has no demo.env;"
+        f" reinstall with: {fix}"
+    )
+
+# Compare the files the installer copies, both ways (a module the repo dropped
+# but the install kept stays importable). Build output and leftovers are skipped;
+# the frontend bundle is checked for presence instead.
+skipped_dirs = {"node_modules", "__pycache__", "dist"}
+
+
+def tracked_files(top):
+    found = {}
+    for root, dirs, files in os.walk(top):
+        dirs[:] = sorted(d for d in dirs if d not in skipped_dirs)
+        for name in files:
+            path = Path(root) / name
+            rel = path.relative_to(top).as_posix()
+            if not name.endswith(".tsbuildinfo") and rel != "install.env":
+                found[rel] = path
+    return found
+
+
+repo_files, installed_files = tracked_files(source), tracked_files(installed)
+differing = sorted(
+    rel
+    for rel in repo_files.keys() | installed_files.keys()
+    if rel not in repo_files
+    or rel not in installed_files
+    or repo_files[rel].read_bytes() != installed_files[rel].read_bytes()
+)
+if differing:
+    problems.append(
+        f"The installed board is out of date with the repo ({len(differing)} file(s)"
+        f" differ, first: {differing[0]}); rerun: {fix}"
+    )
+
+if not (installed / "frontend" / "dist" / "index.html").is_file():
+    problems.append(
+        "The installed board has no frontend bundle (frontend/dist/index.html);"
+        f" rerun without --no-build: {fix}"
+    )
+
+try:
+    entry = json.loads(config.read_text(encoding="utf-8"))["sidecars"]["evidence-board"]
+    enabled = entry.get("enabled") is True
+except (OSError, ValueError, KeyError, TypeError, AttributeError):
+    enabled = False
+if not enabled:
+    problems.append(
+        "The sidecar is not enabled. Merge"
+        ' {"sidecars": {"evidence-board": {"enabled": true}}}'
+        f" into {config}, then restart the Antigravity App."
+    )
+
+for problem in problems:
+    print(problem)
+sys.exit(1 if problems else 0)
+PY
+}
+
+# ------------------------------------------------------------------------------
 # Main Preflight Runner
 # ------------------------------------------------------------------------------
 main() {
@@ -791,6 +887,9 @@ main() {
 
     # Check 13 (Warning): Vendored BigQuery MCP proxy matches installed Data Agent Kit
     run_warn_check "Vendored BigQuery MCP proxy matches installed Data Agent Kit" check_vendored_proxy_drift
+
+    # Check 14 (Warning): Evidence Board sidecar is installed, current and enabled
+    run_warn_check "Evidence Board sidecar is installed, current and enabled" check_evidence_board_sidecar
 
     echo ""
     echo "Manual Verification Steps (Not Scriptable by CLI Harness):"

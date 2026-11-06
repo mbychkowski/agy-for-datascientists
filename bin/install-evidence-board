@@ -1,0 +1,171 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# Evidence Board: install the Antigravity UI sidecar (once per machine, Window 2)
+#
+# Antigravity discovers sidecars only under its global directories, never in a
+# repo's .agents/plugins/, so this copies (not symlinks) the repo-owned sidecar
+# into ~/.gemini/config/sidecars/evidence-board/ as the standalone sidecar
+# `evidence-board`. It never creates a global ds-command-center plugin folder,
+# which would share its name (and the plugins enable toggle keyed by folder
+# name) with the workspace plugin of the same name:
+#   - Builds the frontend bundle first (make build-frontend: npm ci + vite build;
+#     skip with --no-build).
+#   - Records the Python interpreter (${PYTHON:-python3}) and the workspace
+#     holding demo.env in install.env, read by the sidecar's bin/serve, because
+#     the installed copy lives outside the repo.
+#   - Replaces any earlier install, so rerunning it is safe.
+# Enabling the sidecar in ~/.gemini/config/config.json stays a presenter step:
+# this prints the instruction and never reads or edits that file.
+# ==============================================================================
+
+set -uo pipefail
+
+# Resolve real script directory through any symlinks (CODING_STANDARDS.md §1)
+SOURCE="${BASH_SOURCE[0]}"
+while [[ -h "${SOURCE}" ]]; do
+    DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
+    SOURCE="$(readlink "${SOURCE}")"
+    [[ "${SOURCE}" != /* ]] && SOURCE="${DIR}/${SOURCE}"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+# Sourced per CODING_STANDARDS.md §1; the installer never calls bq or gcloud,
+# and the installed backend pins PROJECT_ID/REGION from <workspace>/demo.env.
+# shellcheck source=lib/pinning.sh
+source "${SCRIPT_DIR}/lib/pinning.sh"
+
+SIDECAR_NAME="evidence-board"
+SIDECAR_ID="${SIDECAR_NAME}"
+BOARD_DIR="${REPO_ROOT}/.agents/plugins/ds-command-center/sidecars/${SIDECAR_NAME}"
+
+HOME_DIR="${HOME}"
+WORKSPACE="${REPO_ROOT}"
+BUILD=true
+
+usage() {
+    echo "Usage: ./install-evidence-board [OPTIONS]"
+    echo ""
+    echo "Copy the Evidence Board sidecar into ~/.gemini/config/sidecars/ (standalone global sidecar)."
+    echo ""
+    echo "Options:"
+    echo "  -w, --workspace <path>  Folder holding demo.env the board pins to (default: this repo)"
+    echo "      --home-dir <path>   Override home directory (default: \$HOME)"
+    echo "      --no-build          Do not build the frontend bundle first"
+    echo "  -h, --help              Show this help message"
+}
+
+need_value() {
+    if [[ $# -lt 2 || -z "$2" ]]; then
+        echo "[FAIL] Missing value for $1" >&2
+        usage >&2
+        exit 1
+    fi
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --workspace|-w)
+            need_value "$@"
+            WORKSPACE="$2"
+            shift 2
+            ;;
+        --home-dir)
+            need_value "$@"
+            HOME_DIR="$2"
+            shift 2
+            ;;
+        --no-build)
+            BUILD=false
+            shift
+            ;;
+        --help|-h)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "[FAIL] Unknown argument: $1" >&2
+            usage >&2
+            exit 1
+            ;;
+    esac
+done
+
+if ! WORKSPACE="$(cd "${WORKSPACE}" 2>/dev/null && pwd)"; then
+    echo "[FAIL] --workspace is not a directory" >&2
+    exit 1
+fi
+if [[ ! -f "${WORKSPACE}/demo.env" ]]; then
+    echo "[FAIL] ${WORKSPACE}/demo.env not found; the board pins PROJECT_ID and REGION from it." >&2
+    echo "       Pass --workspace <folder holding demo.env>." >&2
+    exit 1
+fi
+
+PYTHON_NAME="${PYTHON:-python3}"
+if ! PYTHON_BIN="$(command -v "${PYTHON_NAME}")"; then
+    echo "[FAIL] Python interpreter not found: ${PYTHON_NAME}" >&2
+    exit 1
+fi
+if ! "${PYTHON_BIN}" -c 'import fastapi, uvicorn, google.cloud.bigquery' >/dev/null 2>&1; then
+    echo "[WARN] ${PYTHON_BIN} lacks the board's Python packages; the sidecar will not start until you run:" >&2
+    echo "       uv pip install --python ${PYTHON_BIN} -r ${BOARD_DIR}/requirements.txt" >&2
+fi
+
+if [[ "${BUILD}" == true ]]; then
+    echo "==> Building the Evidence Board frontend (make build-frontend)..."
+    if ! make -C "${REPO_ROOT}" --no-print-directory build-frontend; then
+        echo "[FAIL] Frontend build failed; nothing installed." >&2
+        exit 1
+    fi
+fi
+if [[ ! -f "${BOARD_DIR}/frontend/dist/index.html" ]]; then
+    echo "[WARN] Frontend bundle not built; the side pane will show only a build hint." >&2
+fi
+
+GEMINI_CONFIG_DIR="${HOME_DIR}/.gemini/config"
+SIDECARS_DIR="${GEMINI_CONFIG_DIR}/sidecars"
+DEST_DIR="${SIDECARS_DIR}/${SIDECAR_NAME}"
+
+if ! mkdir -p "${SIDECARS_DIR}"; then
+    echo "[FAIL] Cannot create ${SIDECARS_DIR}" >&2
+    exit 1
+fi
+
+# Stage the copy beside the destination, then swap it in, so a failed copy never
+# leaves a half-installed sidecar behind. (If the final mv itself fails after the
+# old copy is removed, rerun the installer; both sit on the same filesystem.)
+if ! STAGED_DIR="$(mktemp -d "${SIDECARS_DIR}/.${SIDECAR_NAME}.install.XXXXXX")"; then
+    echo "[FAIL] Cannot create a staging folder in ${SIDECARS_DIR}" >&2
+    exit 1
+fi
+trap 'rm -rf "${STAGED_DIR}"' EXIT
+
+# tar copies regular files (no symlinks into the repo) and skips build-time and
+# runtime leftovers: node_modules, Python bytecode and a repo-local install.env.
+if ! tar -C "${BOARD_DIR}" \
+        --exclude=node_modules --exclude=__pycache__ --exclude='*.tsbuildinfo' \
+        --exclude=./install.env \
+        -cf - . | tar -C "${STAGED_DIR}" -xf -; then
+    echo "[FAIL] Copying ${BOARD_DIR} failed; nothing installed." >&2
+    exit 1
+fi
+printf 'PYTHON_BIN=%s\nWORKSPACE=%s\n' "${PYTHON_BIN}" "${WORKSPACE}" > "${STAGED_DIR}/install.env"
+chmod 755 "${STAGED_DIR}"
+
+if ! rm -rf "${DEST_DIR}" || ! mv "${STAGED_DIR}" "${DEST_DIR}"; then
+    echo "[FAIL] Could not replace ${DEST_DIR}" >&2
+    exit 1
+fi
+trap - EXIT
+
+echo "[PASS] Installed the Evidence Board sidecar (${SIDECAR_ID}) at ${DEST_DIR}"
+echo "       Workspace: ${WORKSPACE}"
+echo "       Python:    ${PYTHON_BIN}"
+echo ""
+echo "Presenter step (once per machine): enable the sidecar by merging this into"
+echo "${GEMINI_CONFIG_DIR}/config.json, then restart the Antigravity App:"
+echo ""
+echo "  {\"sidecars\": {\"${SIDECAR_ID}\": {\"enabled\": true}}}"
+echo ""
+echo "Logs: ${HOME_DIR}/.gemini/antigravity/sidecar_data/${SIDECAR_ID}/logs/"
+echo "Standalone fallback: ./evidence-board --workspace ${WORKSPACE}"
+exit 0

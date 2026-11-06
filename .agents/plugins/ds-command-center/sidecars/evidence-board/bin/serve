@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# Evidence Board: sidecar entrypoint (sidecar.json runs `bash bin/serve`)
+#
+# Antigravity starts this from the installed copy under
+# ~/.gemini/config/sidecars/evidence-board/, with that folder as the working
+# directory and ANTIGRAVITY_SIDECAR_WEB_PORT set. The
+# installed copy lives outside the repo, so bin/install-evidence-board records
+# the Python interpreter and the workspace (the folder holding demo.env) in
+# install.env next to sidecar.json. Without install.env (running from the repo)
+# it falls back to python3 and the backend's default workspace.
+# ==============================================================================
+
+set -uo pipefail
+
+# Resolve real script directory through any symlinks (CODING_STANDARDS.md §1)
+SOURCE="${BASH_SOURCE[0]}"
+while [[ -h "${SOURCE}" ]]; do
+    DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
+    SOURCE="$(readlink "${SOURCE}")"
+    [[ "${SOURCE}" != /* ]] && SOURCE="${DIR}/${SOURCE}"
+done
+SIDECAR_DIR="$(cd -P "$(dirname "${SOURCE}")/.." && pwd)"
+
+PYTHON_BIN="python3"
+WORKSPACE=""
+
+# install.env holds KEY=VALUE lines written by bin/install-evidence-board. It is
+# parsed, never sourced, so a value is only ever data.
+INSTALL_ENV="${SIDECAR_DIR}/install.env"
+if [[ -f "${INSTALL_ENV}" ]]; then
+    while IFS='=' read -r key value; do
+        case "${key}" in
+            PYTHON_BIN) PYTHON_BIN="${value}" ;;
+            WORKSPACE) WORKSPACE="${value}" ;;
+        esac
+    done < "${INSTALL_ENV}"
+fi
+
+BACKEND_ARGS=()
+if [[ -n "${WORKSPACE}" ]]; then
+    BACKEND_ARGS+=(--workspace "${WORKSPACE}")
+fi
+
+cd "${SIDECAR_DIR}" || exit 1
+exec "${PYTHON_BIN}" -m board ${BACKEND_ARGS[@]+"${BACKEND_ARGS[@]}"}

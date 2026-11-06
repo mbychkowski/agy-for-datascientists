@@ -68,6 +68,7 @@ MAIN_ONLY_SCRIPTS = (
     "run-ws2-forecasts",
     "run-cohort-forecast-refresh",
     "load-reveal",
+    "install-evidence-board",
 )
 
 

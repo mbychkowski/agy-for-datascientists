@@ -72,7 +72,23 @@ cp -R .gemini/skills ~/demo-stage/agy-ws1/.gemini/
 
 `.gemini/skills/` is git-ignored, so the clone starts without the licensed Data Agent Kit skills; the last two lines copy your workspace install across. `./preflight` checks the presenter repo, not the clone, so confirm the copy with `ls ~/demo-stage/agy-ws1/.gemini/skills/bigquery-ai-ml/SKILL.md`.
 
-Complete Steps 1–4 before connecting to the projector or starting your screen share, so only the repository's **Command Center** configuration loads and every Google Cloud dependency is verified.
+### Step 0b: Install the **Evidence Board** Sidecar (Window 2, Once per Machine)
+
+Antigravity discovers UI sidecars only under `~/.gemini/config/`, never in a workspace, so from the presenter repo on `main` build the **Evidence Board** frontend and copy it to `~/.gemini/config/sidecars/evidence-board/` as a standalone sidecar, pinned to the stage clone's `demo.env`. It is not a global copy of the **Command Center** plugin, so the stage clone stays the only source of the plugin's rules, skills and hooks:
+
+```bash
+./install-evidence-board --workspace ~/demo-stage/agy-ws1
+```
+
+The command never edits your Antigravity user config. Merge the line it prints into `~/.gemini/config/config.json`, then restart the Antigravity App. Do this during machine setup, never in the T-15 window:
+
+```json
+{"sidecars": {"evidence-board": {"enabled": true}}}
+```
+
+Rerun the command after pulling **Evidence Board** changes on `main`; it replaces the earlier install. `./preflight` (Step 2) warns when the install is missing, out of date with the repo, or not enabled. If the side pane stays blank, check `~/.gemini/antigravity/sidecar_data/evidence-board/logs/`, or open the board in a browser tab with `./evidence-board --workspace ~/demo-stage/agy-ws1`.
+
+**At T-15:** complete Steps 1–4 before connecting to the projector or starting your screen share, so only the repository's **Command Center** configuration loads and every Google Cloud dependency is verified.
 
 ### Step 1: Isolate Personal Rules & Skills (`./stage-clean-env --stash`, Window 2)
 
@@ -101,7 +117,7 @@ source demo.env
 ./preflight
 ```
 
-Verify that all 12 checks report `[PASS]`: environment variables, active `gcloud` project pinning, Application Default Credentials (ADC) quota project alignment, Dataproc Serverless runtime `3.0` execution, BigQuery MCP presenter authentication, `guardrail-hook` dataset enforcement, BigQuery ML (`AI.FORECAST` and `KMEANS`), subagent dispatch, workspace Data Agent Kit skills visibility, and Java 21 availability. Do not go on stage if any required check reports `[FAIL]`.
+Verify that all 12 checks report `[PASS]`: environment variables, active `gcloud` project pinning, Application Default Credentials (ADC) quota project alignment, Dataproc Serverless runtime `3.0` execution, BigQuery MCP presenter authentication, `guardrail-hook` dataset enforcement, BigQuery ML (`AI.FORECAST` and `KMEANS`), subagent dispatch, workspace Data Agent Kit skills visibility, and Java 21 availability. Do not go on stage if any required check reports `[FAIL]`. The warning-only checks that follow (vendored BigQuery MCP proxy drift and the **Evidence Board** install) never fail preflight, so a clean run prints `Summary: 14 passed, 0 failed.`; fix an **Evidence Board** warning with Step 0b, or plan on the browser-tab fallback.
 
 ### Step 3: Reset the Stage Clone's Code & the Workstream 1 Start Point (Window 2)
 

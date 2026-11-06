@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -23,6 +24,7 @@ RUN_PIPELINE_CLEAN_BIN = WORKTREE_ROOT / "bin" / "run-pipeline-clean"
 RUN_PIPELINE_CLEAN_SYMLINK = WORKTREE_ROOT / "run-pipeline-clean"
 VENDORED_DAK_DIR = WORKTREE_ROOT / ".agents" / "plugins" / "dak-bigquery"
 PLUGIN_DIR = WORKTREE_ROOT / ".agents" / "plugins" / "ds-command-center"
+EVIDENCE_BOARD_DIR = PLUGIN_DIR / "sidecars" / "evidence-board"
 # Points the Evidence Board event recorder at a workspace (bin/event_recorder.py).
 EVIDENCE_BOARD_WORKSPACE_ENV = "EVIDENCE_BOARD_WORKSPACE"
 
@@ -147,6 +149,7 @@ def setup_preflight_test_env(
     clean_equiv_diff_ba: int = 0,
     clean_equiv_dup_keys: int = 0,
     clean_equiv_status_preamble: bool = False,
+    evidence_board: str = "installed",
 ) -> tuple[Path, dict[str, str], Path]:
     """Build a complete mock CLI and ADC environment for testing bin/preflight and CLIs."""
     tmp_path = Path(tmpdir)
@@ -621,7 +624,67 @@ exit 0
     else:
         env["DAK_PLUGIN_DIR"] = str(VENDORED_DAK_DIR)
 
+    env["PREFLIGHT_GEMINI_CONFIG_DIR"] = str(
+        create_evidence_board_install(tmp_path / "gemini-config", evidence_board)
+    )
+
     return env_file, env, log_file
+
+
+EVIDENCE_BOARD_STATES = (
+    "installed",
+    "missing",
+    "stale",
+    "extra_file",
+    "no_dist",
+    "disabled",
+    "no_workspace",
+)
+
+
+def create_evidence_board_install(config_dir: Path, state: str = "installed") -> Path:
+    """Lay out an Antigravity config dir holding the Evidence Board sidecar.
+
+    `state` is one of the EVIDENCE_BOARD_STATES.
+    """
+    assert state in EVIDENCE_BOARD_STATES, state
+    # Rebuilt from scratch: some tests call setup_preflight_test_env twice per tmpdir.
+    shutil.rmtree(config_dir, ignore_errors=True)
+    config_dir.mkdir(parents=True)
+    if state == "missing":
+        return config_dir
+    installed = config_dir / "sidecars" / "evidence-board"
+    shutil.copytree(
+        EVIDENCE_BOARD_DIR,
+        installed,
+        ignore=shutil.ignore_patterns(
+            "node_modules", "__pycache__", "*.tsbuildinfo", "install.env"
+        ),
+    )
+    # The bundle is git-ignored build output, so CI has none: stand one in.
+    index = installed / "frontend" / "dist" / "index.html"
+    if state == "no_dist":
+        shutil.rmtree(installed / "frontend" / "dist", ignore_errors=True)
+    else:
+        index.parent.mkdir(parents=True, exist_ok=True)
+        index.write_text("<!doctype html>\n", encoding="utf-8")
+    if state == "extra_file":
+        (installed / "board" / "obsolete.py").write_text("\n", encoding="utf-8")
+    workspace = config_dir / "stage-clone"
+    workspace.mkdir()
+    if state != "no_workspace":
+        create_demo_env_file(workspace)
+    (installed / "install.env").write_text(
+        f"PYTHON_BIN=python3\nWORKSPACE={workspace}\n", encoding="utf-8"
+    )
+    if state == "stale":
+        (installed / "tiles.json").write_text("[]\n", encoding="utf-8")
+    enabled = state != "disabled"
+    (config_dir / "config.json").write_text(
+        json.dumps({"sidecars": {"evidence-board": {"enabled": enabled}}}),
+        encoding="utf-8",
+    )
+    return config_dir
 
 
 def write_noop_stubs(bin_dir: Path, *names: str) -> None:
