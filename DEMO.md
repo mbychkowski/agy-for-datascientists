@@ -74,9 +74,10 @@ cp -R .gemini/skills ~/demo-stage/agy-ws1/.gemini/
 
 ### Step 0b: Install the **Evidence Board** Sidecar (Window 2, Once per Machine)
 
-Antigravity discovers UI sidecars only under `~/.gemini/config/`, never in a workspace, so from the presenter repo on `main` build the **Evidence Board** frontend and copy it to `~/.gemini/config/sidecars/evidence-board/` as a standalone sidecar, pinned to the stage clone's `demo.env`. It is not a global copy of the **Command Center** plugin, so the stage clone stays the only source of the plugin's rules, skills and hooks:
+Antigravity discovers UI sidecars only under `~/.gemini/config/`, never in a workspace, so from the presenter repo on `main` build the **Evidence Board** frontend and copy it to `~/.gemini/config/sidecars/evidence-board/` as a standalone sidecar, pinned to the stage clone's `demo.env`. It is not a global copy of the **Command Center** plugin, so the stage clone stays the only source of the plugin's rules, skills and hooks. First install the board's Python requirements into the interpreter the sidecar will run (`${PYTHON:-python3}`, which the installer records):
 
 ```bash
+uv pip install --python "${PYTHON:-python3}" -r .agents/plugins/ds-command-center/sidecars/evidence-board/requirements.txt
 ./install-evidence-board --workspace ~/demo-stage/agy-ws1
 ```
 
@@ -132,7 +133,7 @@ git -C ~/demo-stage/agy-ws1 clean -fd
 
 If a rehearsal left a commit in the stage clone, delete the clone and repeat Step 0 instead.
 
-`./reset ws1` also returns every **Evidence Board** **Tile** except the Opening **Tile** to locked: it drops the live-created tables those **Tiles** read and appends a `reset` marker to the stage clone's `.evidence-board/events.jsonl`.
+`./reset ws1` also returns the **Evidence Board** to its **Start Point** view, with only the Opening **Tile** landed: it drops the working tables labelled `demo:true` and appends a `reset` marker to the stage clone's `.evidence-board/events.jsonl`. It preserves tables without that label, so if the agent created a **Tile**'s table without `demo:true`, that **Tile** stays landed until you drop the table.
 
 ### Step 4: Arrange Your Two Stage Windows
 
@@ -141,7 +142,7 @@ If a rehearsal left a commit in the stage clone, delete the clone and repeat Ste
 
 The **Evidence Board** sits in Window 1's side pane, beside the **Command Center** chat. Before you share your screen, ask the agent to reply with the `[Evidence Board](sidecar://evidence-board/)` pill, then click it. Only the Opening **Tile** should show as landed. If the pane is blank or the sidecar never starts, use the standalone fallback in a browser tab next to Window 1, launched from Window 2:
 
-* **Window 2 — Standalone Evidence Board (Fallback)**:
+* **Window 2 — launch the standalone Evidence Board (Fallback), then open it in a browser tab beside Window 1**:
 
   ```bash
   ./evidence-board --workspace ~/demo-stage/agy-ws1
@@ -192,12 +193,12 @@ Each **Tile** lands by itself as soon as its source table has rows in `staging`,
 | **1B** (**Attribution** of the **Spike**) | `staging.ws1_attribution` | After `stats-reviewer` reports, before your sign-off. |
 | **1C** (The **Pipeline Defect** removed) | `staging.hospital_flu_clean` | After the batch or its fallback lands, to close **Workstream** 1. |
 | **2A** (Hospital **Cohorts**) | `features.hospital_cohorts` | After the 3 **Outbreak** hospitals show as their own **Cohort**. |
-| **2B** (**WAPE** leaderboard) | `ml.forecast_leaderboard` | After `ml.forecast_leaderboard` is ranked. |
+| **2B** (**WAPE** leaderboard) | `ml.forecast_leaderboard` | When clean-data models top the leaderboard, before you hand off to the **Reveal**. |
 | **2C** (The **Reveal**) | `staging.reveal_forecast_comparison` (written by `./load-reveal` in Window 2) | The finale: ask before you narrate the punchline. |
 | **2D** (Next-period refresh) | `ml.experiment_trials` and `ml.forecast_leaderboard`, once `2026-W44` trials exist | After the subagent's `2026-W44` run, to close the demo. |
 
 * **Ask button**: only landed **Tiles** have one, and only click it while the agent is idle. It opens a dialog showing the exact prompt (step, title, source tables, the "what this proves" line and up to 12 chart rows); nothing is sent until you click **Send to Command Center**. The side pane delivers the prompt straight into the **Command Center** chat; if that fails it falls back to `agentapi`, then to the clipboard ("Copied to clipboard"), and you paste it into the Window 1 chat. The standalone browser tab always copies to the clipboard.
-* **Activity lanes**: the in-progress view of a **Tile** comes from the agent's tool calls, recorded by the **Command Center** hooks into the stage clone's `.evidence-board/events.jsonl`. The `workstream-1-start` branch does not yet carry the event recorder hook, so expect **Tiles** to go straight from locked to landed on stage; landing never depends on events.
+* **Activity lanes**: the in-progress view of a **Tile** comes from the agent's tool calls, recorded by the **Command Center** hooks into the stage clone's `.evidence-board/events.jsonl`. If the stage branch's `hooks.json` lacks the event recorder hook, **Tiles** go straight from locked to landed on stage; landing never depends on events.
 
 ---
 
@@ -386,7 +387,7 @@ Window 1 is still on the **Workstream** 1 stage clone. Recovery only: if the age
   Compare our Cohort forecasts trained on uncleaned staging.hospital_flu versus cleaned staging.hospital_flu_clean against the six withheld post-Cutoff Reveal weeks, and display the Reveal comparison chart and post-Cutoff WAPE by model and data cleanliness.
   ```
 * **Say to the Audience (The Finale Punchline)**:
-  > "Until this moment, no agent or table in the workspace had access to what happened after Saturday, October 31, 2026: the six post-**Cutoff** **Reveal** weeks lived in a separate bucket outside the repository. Look at the **Reveal** chart and `ml.reveal_forecast_evaluation`: the red curve, trained on uncleaned `staging.hospital_flu`, dramatically overshoots the six **Reveal** weeks because it mistook the +15-point **Pipeline Defect** and +8-point **Sampling Artifact** for exponential disease spread. The green curve, trained on `staging.hospital_flu_clean` after our **Workstream** 1 triage and deduplication fix, tracks reality tightly (`WAPE ~0.075` vs `~0.165` on uncleaned data). That is why **Workstream** 1 and **Workstream** 2 belong in the same **Command Center**: forecasting at scale only works when your agents first verify whether the data is good to use."
+  > "Until this moment, no agent or table in the workspace had access to what happened after Saturday, October 31, 2026: the six post-**Cutoff** **Reveal** weeks lived in a separate bucket outside the repository. Look at the **Reveal** chart and `staging.reveal_forecast_comparison`: the red curve, trained on uncleaned `staging.hospital_flu`, dramatically overshoots the six **Reveal** weeks because it mistook the +15-point **Pipeline Defect** and +8-point **Sampling Artifact** for exponential disease spread. The green curve, trained on `staging.hospital_flu_clean` after our **Workstream** 1 triage and deduplication fix, tracks reality tightly (`WAPE ~0.075` vs `~0.165` on uncleaned data). That is why **Workstream** 1 and **Workstream** 2 belong in the same **Command Center**: forecasting at scale only works when your agents first verify whether the data is good to use."
 
 ### Segment 2D: The Agent Creates & Runs the `cohort-forecast-refresh` Skill (`4 min`, `01:11–01:15`)
 * **Type This Prompt into Window 1 (Command Center, `01:11`)**:

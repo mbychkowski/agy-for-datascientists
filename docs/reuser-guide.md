@@ -268,11 +268,11 @@ Before every rehearsal and on Demo Day, the T-15 checklist resets the clone's co
 The **Evidence Board** is an Antigravity UI sidecar that shows one **Tile** per demo step beside the **Command Center** chat. A **Tile** lands when its source table has rows in `staging`, `features` or `ml`, so it works the same whether the agent, a Window 2 fallback or a **Checkpoint** swap wrote the table. The **Tile** manifest is [`tiles.json`](../.agents/plugins/ds-command-center/sidecars/evidence-board/tiles.json).
 
 > [!WARNING]
-> **Experimental Antigravity feature.** UI sidecars sit behind the `enable-ui-sidecars` experiment flag, and their web-UI layer is undocumented, so it may change between Antigravity releases. Antigravity also discovers sidecars only under the global `~/.gemini/config/` directories, never in a workspace, so the board's source lives in this repo and an installer copies it out ([ADR 0003](adr/0003-evidence-board-installed-by-copy-and-driven-by-tables.md)). Rehearse on the machine you present from, and keep the standalone launcher ready.
+> **Experimental Antigravity feature.** UI sidecars sit behind the `enable-ui-sidecars` experiment flag, and their web-UI layer is undocumented, so it may change between Antigravity releases. Antigravity also discovers sidecars only under the global `~/.gemini/config/` directories, never in a workspace, so the board's source lives in this repo and an installer copies it out ([ADR 0003](adr/0003-evidence-board-installed-by-copy-and-driven-by-tables.md)). Rehearse on the machine you present from, and keep the standalone launcher ready. A blank or empty **Evidence Board** pane most likely means `enable-ui-sidecars` is off or the sidecar isn't enabled in `config.json`; use the standalone `./evidence-board` fallback.
 
-1. **Install the board's Python dependencies** into the interpreter the sidecar will run (`python3`, or set `PYTHON` before installing). Building the frontend also needs Node.js and `npm`:
+1. **Install the board's Python dependencies** into the interpreter the sidecar will run (`${PYTHON:-python3}`, which the installer records). Building the frontend also needs Node.js and `npm`:
    ```bash
-   uv pip install --python python3 -r .agents/plugins/ds-command-center/sidecars/evidence-board/requirements.txt
+   uv pip install --python "${PYTHON:-python3}" -r .agents/plugins/ds-command-center/sidecars/evidence-board/requirements.txt
    ```
 2. **Copy the board into Antigravity**, pinned to the workspace whose `demo.env` it reads (for the two-repository setup, the stage clone):
    ```bash
