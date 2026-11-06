@@ -3,14 +3,12 @@ import os
 import subprocess
 import tempfile
 import unittest
-from pathlib import Path
 from typing import Any
 
 from tests.helpers import PREFLIGHT_BIN, WORKTREE_ROOT, setup_preflight_test_env
 
 PLUGIN_DIR = WORKTREE_ROOT / ".agents" / "plugins" / "ds-command-center"
 GUARDRAIL_HOOK = PLUGIN_DIR / "bin" / "guardrail-hook"
-PRE_COMMAND_HOOK = WORKTREE_ROOT / "bin" / "agent-pre-command-hook"
 
 
 class TestDsCommandCenterPlugin(unittest.TestCase):
@@ -18,7 +16,6 @@ class TestDsCommandCenterPlugin(unittest.TestCase):
         self,
         tool_name: str,
         args: dict[str, Any],
-        hook_bin: Path = GUARDRAIL_HOOK,
     ) -> dict[str, Any]:
         payload = {
             "toolCall": {
@@ -28,7 +25,7 @@ class TestDsCommandCenterPlugin(unittest.TestCase):
             "stepIdx": 1,
         }
         proc = subprocess.run(
-            [str(hook_bin)],
+            [str(GUARDRAIL_HOOK)],
             cwd=WORKTREE_ROOT,
             input=json.dumps(payload),
             capture_output=True,
@@ -38,7 +35,7 @@ class TestDsCommandCenterPlugin(unittest.TestCase):
         self.assertEqual(
             proc.returncode,
             0,
-            f"Hook {hook_bin} exited with {proc.returncode}: {proc.stderr}",
+            f"Hook {GUARDRAIL_HOOK} exited with {proc.returncode}: {proc.stderr}",
         )
         return json.loads(proc.stdout)
 
@@ -83,13 +80,6 @@ class TestDsCommandCenterPlugin(unittest.TestCase):
         self.assertTrue(
             os.access(GUARDRAIL_HOOK, os.X_OK),
             "bin/guardrail-hook must be executable",
-        )
-        self.assertTrue(
-            PRE_COMMAND_HOOK.exists(), "bin/agent-pre-command-hook must exist"
-        )
-        self.assertTrue(
-            os.access(PRE_COMMAND_HOOK, os.X_OK),
-            "bin/agent-pre-command-hook must be executable",
         )
 
     def test_plugin_rules_cover_project_region_skills_and_readonly_datasets(self):
@@ -202,14 +192,13 @@ class TestDsCommandCenterPlugin(unittest.TestCase):
             ),
         ]
 
-        for hook_bin in (GUARDRAIL_HOOK, PRE_COMMAND_HOOK):
-            for tool_name, args in blocked_cases:
-                with self.subTest(hook=hook_bin.name, tool=tool_name, args=args):
-                    resp = self._invoke_hook(tool_name, args, hook_bin=hook_bin)
-                    self.assertEqual(resp.get("decision"), "deny")
-                    reason = resp.get("reason", "")
-                    self.assertIn("read-only", reason.lower())
-                    self.assertIn("select", reason.lower())
+        for tool_name, args in blocked_cases:
+            with self.subTest(tool=tool_name, args=args):
+                resp = self._invoke_hook(tool_name, args)
+                self.assertEqual(resp.get("decision"), "deny")
+                reason = resp.get("reason", "")
+                self.assertIn("read-only", reason.lower())
+                self.assertIn("select", reason.lower())
 
     def test_hook_allows_read_queries_on_raw_and_ops_and_writes_to_working_datasets(
         self,
@@ -256,11 +245,10 @@ class TestDsCommandCenterPlugin(unittest.TestCase):
             ),
         ]
 
-        for hook_bin in (GUARDRAIL_HOOK, PRE_COMMAND_HOOK):
-            for tool_name, args in allowed_cases:
-                with self.subTest(hook=hook_bin.name, tool=tool_name, args=args):
-                    resp = self._invoke_hook(tool_name, args, hook_bin=hook_bin)
-                    self.assertEqual(resp.get("decision"), "allow")
+        for tool_name, args in allowed_cases:
+            with self.subTest(tool=tool_name, args=args):
+                resp = self._invoke_hook(tool_name, args)
+                self.assertEqual(resp.get("decision"), "allow")
 
     def test_hook_blocks_agent_reads_of_checkpoint_dataset_across_mcp_and_bq(self):
         """Guardrail hook must block any agent access to the checkpoint dataset across MCP and bq CLI."""
@@ -319,14 +307,13 @@ class TestDsCommandCenterPlugin(unittest.TestCase):
             ),
         ]
 
-        for hook_bin in (GUARDRAIL_HOOK, PRE_COMMAND_HOOK):
-            for tool_name, args in checkpoint_cases:
-                with self.subTest(hook=hook_bin.name, tool=tool_name, args=args):
-                    resp = self._invoke_hook(tool_name, args, hook_bin=hook_bin)
-                    self.assertEqual(resp.get("decision"), "deny")
-                    reason = resp.get("reason", "")
-                    self.assertIn("checkpoint", reason.lower())
-                    self.assertIn("read-only", reason.lower())
+        for tool_name, args in checkpoint_cases:
+            with self.subTest(tool=tool_name, args=args):
+                resp = self._invoke_hook(tool_name, args)
+                self.assertEqual(resp.get("decision"), "deny")
+                reason = resp.get("reason", "")
+                self.assertIn("checkpoint", reason.lower())
+                self.assertIn("read-only", reason.lower())
 
     def test_preflight_verifies_ds_command_center_guardrails_and_fails_if_broken(self):
         """preflight must verify ds-command-center plugin rules and guardrail hook enforce dataset boundaries."""

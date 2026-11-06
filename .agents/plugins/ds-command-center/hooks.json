@@ -12,5 +12,31 @@
         ]
       }
     ]
+  },
+  "ds-command-center-evidence-board": {
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "./bin/event-recorder-pre",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "./bin/event-recorder-post",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
   }
 }
