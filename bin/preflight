@@ -755,13 +755,14 @@ check_evidence_board_sidecar() {
 import json
 import os
 import sys
+from fnmatch import fnmatch
 from pathlib import Path
 
 source, installed, config = (Path(arg) for arg in sys.argv[1:4])
-fix = "./install-evidence-board --workspace ~/demo-stage/agy-ws1"
+default_fix = "./install-evidence-board --workspace ~/demo-stage/agy-ws1"
 if not (installed / "sidecar.json").is_file():
     print(f"Evidence Board sidecar is not installed at {installed}.")
-    print(f"Install it once per machine (DEMO.md Step 0b): {fix}")
+    print(f"Install it once per machine (DEMO.md Step 0b): {default_fix}")
     sys.exit(1)
 
 problems = []
@@ -773,27 +774,40 @@ if install_env.is_file():
         if sep:
             settings[key] = value
 workspace = settings.get("WORKSPACE", "")
-if not workspace or not (Path(workspace) / "demo.env").is_file():
+if workspace and (Path(workspace) / "demo.env").is_file():
+    # Reinstall against the workspace the install already pins.
+    fix = f"./install-evidence-board --workspace {workspace}"
+else:
+    fix = default_fix
     problems.append(
         f"The installed board's workspace ({workspace or 'unset'}) has no demo.env;"
         f" reinstall with: {fix}"
     )
 
 # Compare the files the installer copies, both ways (a module the repo dropped
-# but the install kept stays importable). Build output and leftovers are skipped;
-# the frontend bundle is checked for presence instead.
-skipped_dirs = {"node_modules", "__pycache__", "dist"}
+# but the install kept stays importable). The installer's install-exclude globs
+# are skipped, and so is the frontend bundle, which is checked for presence.
+excluded = [
+    line
+    for line in (source / "install-exclude").read_text(encoding="utf-8").splitlines()
+    if line and not line.startswith("#")
+]
 
 
 def tracked_files(top):
     found = {}
     for root, dirs, files in os.walk(top):
-        dirs[:] = sorted(d for d in dirs if d not in skipped_dirs)
+        rel_root = Path(root).relative_to(top)
+        dirs[:] = sorted(
+            d
+            for d in dirs
+            if not any(fnmatch(d, p) for p in excluded)
+            and (rel_root / d).as_posix() != "frontend/dist"
+        )
         for name in files:
-            path = Path(root) / name
-            rel = path.relative_to(top).as_posix()
-            if not name.endswith(".tsbuildinfo") and rel != "install.env":
-                found[rel] = path
+            if not any(fnmatch(name, p) for p in excluded):
+                path = Path(root) / name
+                found[path.relative_to(top).as_posix()] = path
     return found
 
 

@@ -1,0 +1,9 @@
+# Paths ./install-evidence-board leaves out of the installed copy: build-time and
+# runtime leftovers. One glob per line, matched against every path component
+# (file or folder name) at any depth. Single source for the installer
+# (bin/install-evidence-board), preflight's drift check (bin/preflight Check 14)
+# and the test fixture (tests/helpers.py create_evidence_board_install).
+node_modules
+__pycache__
+*.tsbuildinfo
+install.env
