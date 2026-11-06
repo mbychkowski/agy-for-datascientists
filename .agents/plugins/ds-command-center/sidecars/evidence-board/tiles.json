@@ -1,12 +1,16 @@
 {
-  "_comment": "Tile manifest: the single source of truth for every Evidence Board Tile, in demo order. Tables and chart queries may only touch staging, features or ml (board/manifest.py rejects anything else). Only the Opening can land in this slice: 1A-2D use the deferred readiness rule, and their chart queries and 'proves' lines are placeholders, until their tickets (#94-#96) define them. Event matchers map recorded hook events (bin/event_recorder.py) to a Tile's activity: 'lane' (one lane per label) or 'blocked' (a guardrail deny); 'tool' must match the whole tool name and 'summary' is searched.",
+  "_comment": "Tile manifest: the single source of truth for every Evidence Board Tile, in demo order. Tables and chart queries may only touch staging, features or ml (board/manifest.py rejects anything else); 'tables' gate readiness, and an optional chart 'reads' lists extra working tables the chart query may read without gating readiness. 2A-2D use the deferred readiness rule, and their chart queries and 'proves' lines are placeholders, until their tickets (#95-#96) define them. 'proves' placeholders are filled from the chart's last row. Event matchers map recorded hook events (bin/event_recorder.py) to a Tile's activity: 'lane' (one lane per label), 'blocked' (a guardrail deny), 'approval' (a written file awaiting approval), 'timer' (started by a pre event, stopped by a failed post or a deny) or 'review' (a reviewer dispatched); every kind but 'blocked' needs a label. 'tool' must match the whole tool name and 'summary' is searched.",
   "tiles": [
     {
       "id": "opening",
       "step": "Opening",
       "title": "The Northeast Spike",
-      "tables": ["staging.hospital_flu"],
-      "readiness": {"rule": "non_empty"},
+      "tables": [
+        "staging.hospital_flu"
+      ],
+      "readiness": {
+        "rule": "non_empty"
+      },
       "chart": {
         "type": "weekly_bar",
         "query": [
@@ -36,58 +40,203 @@
       "proves": "Northeast flu-positive counts rose {wow_pct:+.0f}% in the week ending on the Cutoff, in raw counts: the Spike the agents must explain.",
       "proves_fallback": "Northeast flu-positive counts jumped in the week ending on the Cutoff, in raw counts: the Spike the agents must explain.",
       "matchers": [
-        {"kind": "blocked", "tool": ".*"}
+        {
+          "kind": "blocked",
+          "tool": ".*"
+        }
       ]
     },
     {
       "id": "1a",
       "step": "Segment 1A",
       "title": "Where the Spike lives",
-      "tables": ["staging.ws1_eda_heatmap"],
-      "readiness": {"rule": "deferred"},
+      "tables": [
+        "staging.ws1_eda_heatmap"
+      ],
+      "readiness": {
+        "rule": "non_empty"
+      },
       "chart": {
         "type": "heatmap",
-        "query": "SELECT * FROM `staging.ws1_eda_heatmap` LIMIT 500"
+        "query": [
+          "WITH ne AS (",
+          "  SELECT hospital_id, week_end, positive_flu_tests, positivity, share_of_ne_spike_pct",
+          "  FROM `staging.ws1_eda_heatmap`",
+          "  WHERE region = 'Northeast'",
+          "),",
+          "hospitals AS (",
+          "  SELECT",
+          "    hospital_id,",
+          "    ANY_VALUE(share_of_ne_spike_pct) AS share,",
+          "    COUNT(*) OVER () AS ne_hospitals",
+          "  FROM ne",
+          "  GROUP BY hospital_id",
+          "),",
+          "totals AS (",
+          "  -- A Spike hospital carries at least half of an even share of the Spike.",
+          "  SELECT",
+          "    ANY_VALUE(ne_hospitals) AS ne_hospitals,",
+          "    COUNTIF(share >= 50.0 / ne_hospitals) AS spike_hospitals,",
+          "    ROUND(SUM(IF(share >= 50.0 / ne_hospitals, share, 0)), 1) AS spike_share_pct",
+          "  FROM hospitals",
+          ")",
+          "SELECT",
+          "  ne.hospital_id,",
+          "  ne.week_end,",
+          "  ne.positive_flu_tests,",
+          "  ne.positivity,",
+          "  ROUND(",
+          "    SAFE_DIVIDE(",
+          "      ne.positive_flu_tests - LAG(ne.positive_flu_tests) OVER w,",
+          "      LAG(ne.positive_flu_tests) OVER w",
+          "    ) * 100.0,",
+          "    1",
+          "  ) AS wow_pct,",
+          "  ne.share_of_ne_spike_pct,",
+          "  totals.ne_hospitals,",
+          "  totals.spike_hospitals,",
+          "  totals.ne_hospitals - totals.spike_hospitals AS other_hospitals,",
+          "  totals.spike_share_pct",
+          "FROM ne",
+          "CROSS JOIN totals",
+          "WINDOW w AS (PARTITION BY ne.hospital_id ORDER BY ne.week_end)",
+          "ORDER BY ne.share_of_ne_spike_pct DESC, ne.hospital_id, ne.week_end"
+        ]
       },
-      "proves": "The Spike is concentrated in specific Northeast hospitals in the week ending on the Cutoff, not spread evenly across the region.",
-      "matchers": []
+      "proves": "{spike_hospitals} of {ne_hospitals} Northeast hospitals carry {spike_share_pct:.0f}% of the Spike in the week ending on the Cutoff; the other {other_hospitals} barely moved.",
+      "matchers": [
+        {
+          "kind": "lane",
+          "label": "Profiling staging.hospital_flu",
+          "tool": ".*",
+          "summary": "\\bstaging\\.hospital_flu\\b"
+        }
+      ],
+      "proves_fallback": "The Spike is concentrated in specific Northeast hospitals in the week ending on the Cutoff, not spread evenly across the region."
     },
     {
       "id": "1b",
       "step": "Segment 1B",
       "title": "Attribution of the Spike",
-      "tables": ["staging.ws1_attribution"],
-      "readiness": {"rule": "deferred"},
+      "tables": [
+        "staging.ws1_attribution"
+      ],
+      "readiness": {
+        "rule": "non_empty"
+      },
       "chart": {
         "type": "waterfall",
-        "query": "SELECT * FROM `staging.ws1_attribution` LIMIT 50"
+        "query": [
+          "SELECT",
+          "  cause,",
+          "  contributed_points,",
+          "  affected_hospitals,",
+          "  evidence,",
+          "  ROUND(SUM(contributed_points) OVER (), 1) AS spike_points,",
+          "  ROUND(",
+          "    SUM(IF(cause IN ('outbreak', 'seasonal_ramp'), contributed_points, 0)) OVER (),",
+          "    1",
+          "  ) AS real_points",
+          "FROM `staging.ws1_attribution`",
+          "ORDER BY sort_order"
+        ]
       },
-      "proves": "Four causes (Pipeline Defect, Sampling Artifact, Outbreak and Seasonal Ramp) sum to the Spike, and the stats-reviewer challenged the Attribution.",
+      "proves": "The four causes add up to the {spike_points:+.0f}% Spike; only {real_points:.0f} of those points are real disease (Outbreak plus Seasonal Ramp), the rest is the Pipeline Defect and the Sampling Artifact.",
       "matchers": [
-        {"kind": "lane", "label": "distribution-triage", "tool": "(.*[_.])?invoke_subagent", "summary": "^distribution-triage\\b"},
-        {"kind": "lane", "label": "sampling-triage", "tool": "(.*[_.])?invoke_subagent", "summary": "^sampling-triage\\b"},
-        {"kind": "lane", "label": "pipeline-triage", "tool": "(.*[_.])?invoke_subagent", "summary": "^pipeline-triage\\b"}
-      ]
+        {
+          "kind": "lane",
+          "label": "distribution-triage",
+          "tool": "(.*[_.])?invoke_subagent",
+          "summary": "^distribution-triage\\b"
+        },
+        {
+          "kind": "lane",
+          "label": "sampling-triage",
+          "tool": "(.*[_.])?invoke_subagent",
+          "summary": "^sampling-triage\\b"
+        },
+        {
+          "kind": "lane",
+          "label": "pipeline-triage",
+          "tool": "(.*[_.])?invoke_subagent",
+          "summary": "^pipeline-triage\\b"
+        },
+        {
+          "kind": "review",
+          "label": "stats-reviewer",
+          "tool": "(.*[_.])?invoke_subagent",
+          "summary": "^stats-reviewer\\b"
+        }
+      ],
+      "proves_fallback": "Four causes (Pipeline Defect, Sampling Artifact, Outbreak and Seasonal Ramp) add up to the Spike, and only the Outbreak and Seasonal Ramp are real disease."
     },
     {
       "id": "1c",
       "step": "Segment 1C",
       "title": "The Pipeline Defect removed",
-      "tables": ["staging.hospital_flu_clean"],
-      "readiness": {"rule": "deferred"},
+      "tables": [
+        "staging.hospital_flu_clean"
+      ],
+      "readiness": {
+        "rule": "non_empty"
+      },
       "chart": {
         "type": "before_after",
-        "query": "SELECT * FROM `staging.hospital_flu_clean` LIMIT 500"
+        "reads": [
+          "staging.hospital_flu"
+        ],
+        "query": [
+          "WITH after_keys AS (",
+          "  SELECT hospital_id, feed_date, COUNT(*) AS n",
+          "  FROM `staging.hospital_flu_clean`",
+          "  GROUP BY hospital_id, feed_date",
+          "),",
+          "before_keys AS (",
+          "  SELECT hospital_id, feed_date, COUNT(*) AS n",
+          "  FROM `staging.hospital_flu`",
+          "  GROUP BY hospital_id, feed_date",
+          ")",
+          "SELECT",
+          "  b.before_rows,",
+          "  b.before_duplicate_keys,",
+          "  a.after_rows,",
+          "  a.after_duplicate_keys,",
+          "  b.before_rows - a.after_rows AS rows_removed",
+          "FROM (",
+          "  SELECT SUM(n) AS before_rows, COUNTIF(n > 1) AS before_duplicate_keys FROM before_keys",
+          ") AS b",
+          "CROSS JOIN (",
+          "  SELECT SUM(n) AS after_rows, COUNTIF(n > 1) AS after_duplicate_keys FROM after_keys",
+          ") AS a"
+        ]
       },
-      "proves": "Deduplicating the Hospital Feeds removes the duplicate rows behind the Pipeline Defect.",
-      "matchers": []
+      "proves": "Deduplicating by hospital and feed date removes {rows_removed:,} Hospital Feed rows across {before_duplicate_keys:,} duplicate keys, leaving {after_duplicate_keys:,} duplicate keys in staging.hospital_flu_clean.",
+      "matchers": [
+        {
+          "kind": "timer",
+          "label": "Dataproc Serverless batch",
+          "tool": ".*",
+          "summary": "gcloud\\s+(beta\\s+)?dataproc\\s+batches\\s+submit"
+        },
+        {
+          "kind": "approval",
+          "label": "pipelines/pipeline_clean.py",
+          "tool": "(?i)(.*[_.])?\\w*(write|edit|replace)\\w*",
+          "summary": "pipeline_clean\\.py"
+        }
+      ],
+      "proves_fallback": "Deduplicating the Hospital Feeds by hospital and feed date removes the duplicate rows behind the Pipeline Defect."
     },
     {
       "id": "2a",
       "step": "Segment 2A",
       "title": "Hospital Cohorts",
-      "tables": ["features.hospital_cohorts"],
-      "readiness": {"rule": "deferred"},
+      "tables": [
+        "features.hospital_cohorts"
+      ],
+      "readiness": {
+        "rule": "deferred"
+      },
       "chart": {
         "type": "cohorts",
         "query": "SELECT * FROM `features.hospital_cohorts` LIMIT 500"
@@ -99,8 +248,12 @@
       "id": "2b",
       "step": "Segment 2B",
       "title": "WAPE leaderboard",
-      "tables": ["ml.forecast_leaderboard"],
-      "readiness": {"rule": "deferred"},
+      "tables": [
+        "ml.forecast_leaderboard"
+      ],
+      "readiness": {
+        "rule": "deferred"
+      },
       "chart": {
         "type": "leaderboard",
         "query": "SELECT * FROM `ml.forecast_leaderboard` LIMIT 200"
@@ -112,8 +265,12 @@
       "id": "2c",
       "step": "Segment 2C",
       "title": "The Reveal",
-      "tables": ["ml.reveal_forecast_evaluation"],
-      "readiness": {"rule": "deferred"},
+      "tables": [
+        "ml.reveal_forecast_evaluation"
+      ],
+      "readiness": {
+        "rule": "deferred"
+      },
       "chart": {
         "type": "reveal",
         "query": "SELECT * FROM `ml.reveal_forecast_evaluation` LIMIT 500"
@@ -125,8 +282,13 @@
       "id": "2d",
       "step": "Segment 2D",
       "title": "Next-period refresh",
-      "tables": ["ml.experiment_trials", "ml.forecast_leaderboard"],
-      "readiness": {"rule": "deferred"},
+      "tables": [
+        "ml.experiment_trials",
+        "ml.forecast_leaderboard"
+      ],
+      "readiness": {
+        "rule": "deferred"
+      },
       "chart": {
         "type": "refresh",
         "query": "SELECT * FROM `ml.experiment_trials` LIMIT 200"

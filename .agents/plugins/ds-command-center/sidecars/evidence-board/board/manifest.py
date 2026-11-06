@@ -19,11 +19,14 @@ from board.events import Event, Phase
 
 WORKING_DATASETS = frozenset({"staging", "features", "ml"})
 READINESS_RULES = frozenset({"non_empty", "deferred"})
-MatcherKind = Literal["lane", "blocked"]
+MatcherKind = Literal["lane", "blocked", "approval", "timer", "review"]
 # Matcher kind -> the event phases it matches.
 MATCHER_PHASES: dict[MatcherKind, frozenset[Phase]] = {
     "lane": frozenset({"pre", "post"}),
     "blocked": frozenset({"blocked"}),
+    "approval": frozenset({"pre", "post"}),
+    "timer": frozenset({"pre", "post", "blocked"}),
+    "review": frozenset({"pre", "post"}),
 }
 MATCHER_KINDS: frozenset[str] = frozenset(get_args(MatcherKind))
 
@@ -53,8 +56,11 @@ class ManifestError(ValueError):
 class Matcher:
     """Maps recorded events to a Tile's activity.
 
-    `kind` is `lane` (one lane per `label`, e.g. a triage subagent) or
-    `blocked` (a guardrail deny). `tool` must match the whole tool name;
+    `kind` is `lane` (one lane per `label`, e.g. a triage subagent),
+    `blocked` (a guardrail deny), `approval` (a written file awaiting the
+    presenter's approval), `timer` (a pre event starts it; a failed post or a
+    blocked event stops it) or `review` (a reviewer was dispatched). Every
+    kind but `blocked` needs a `label`. `tool` must match the whole tool name;
     `summary`, if set, must match somewhere in the event summary.
     """
 
@@ -83,6 +89,7 @@ class Tile:
     proves: str
     proves_fallback: str
     matchers: tuple[Matcher, ...]
+    chart_reads: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -144,7 +151,14 @@ def _parse_tile(entry: Any) -> Tile:
         raise ManifestError(
             f"Tile {tile_id}: chart query must be a string or list of lines"
         )
-    _check_query(tile_id, query, tables)
+    # Extra working tables the query may read for context (e.g. 1C's
+    # before-deduplication counts); they never gate readiness.
+    reads = chart.get("reads", [])
+    if not isinstance(reads, list):
+        raise ManifestError(f"Tile {tile_id}: chart 'reads' must be a list")
+    for table in reads:
+        _check_table(tile_id, table)
+    _check_query(tile_id, query, [*tables, *reads])
 
     proves = _text(entry, "proves", tile_id)
     fallback = entry.get("proves_fallback", proves)
@@ -168,6 +182,7 @@ def _parse_tile(entry: Any) -> Tile:
         readiness=rule,
         chart_type=_text(chart, "type", tile_id),
         chart_query=query,
+        chart_reads=tuple(reads),
         proves=proves,
         proves_fallback=fallback,
         matchers=parsed_matchers,
@@ -184,8 +199,8 @@ def _parse_matcher(tile_id: str, entry: Any) -> Matcher:
     if tool is None:
         raise ManifestError(f"Tile {tile_id}: each matcher needs a 'tool' regex")
     label = entry.get("label")
-    if kind == "lane" and (not isinstance(label, str) or not label.strip()):
-        raise ManifestError(f"Tile {tile_id}: a lane matcher needs a 'label'")
+    if kind != "blocked" and (not isinstance(label, str) or not label.strip()):
+        raise ManifestError(f"Tile {tile_id}: a {kind} matcher needs a 'label'")
     return Matcher(
         kind=kind,
         tool=tool,
@@ -246,5 +261,5 @@ def _check_query(tile_id: str, query: str, tables: list[str]) -> None:
             continue  # a CTE name or UNNEST
         if len(parts) != 2 or ref not in tables:
             raise ManifestError(
-                f"Tile {tile_id}: chart query reads {ref!r}; it may only read the Tile's own tables {tables}"
+                f"Tile {tile_id}: chart query reads {ref!r}; it may only read the Tile's own tables and chart reads {tables}"
             )

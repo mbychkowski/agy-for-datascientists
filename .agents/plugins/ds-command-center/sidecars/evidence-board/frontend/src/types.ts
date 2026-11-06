@@ -1,6 +1,6 @@
 /** Tile states as served by the board backend's `GET /api/tiles`. */
 
-export type Cell = string | number | boolean | null;
+export type Cell = string | number | boolean | null | string[];
 export type Row = Record<string, Cell>;
 
 interface TileBase {
@@ -21,6 +21,12 @@ export interface Activity {
   lanes?: { label: string; since: string }[];
   /** The latest calls the guardrail denied for this Tile. */
   blocked?: { ts: string; tool: string; summary: string; reason: string }[];
+  /** A file the agent wrote that awaits the presenter's approval (e.g. a diff). */
+  approval?: { label: string; since: string };
+  /** A long-running job: ticks from `since`; `until` and `ok: false` once it failed. */
+  timer?: { label: string; since: string; until?: string; ok?: boolean };
+  /** A reviewer subagent was dispatched (its verdict is in the agent's chat). */
+  review?: { label: string; since: string };
 }
 
 export interface InProgressTile extends TileBase {
