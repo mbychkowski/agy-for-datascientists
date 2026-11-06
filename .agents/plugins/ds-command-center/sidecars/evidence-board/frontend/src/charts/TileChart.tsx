@@ -1,6 +1,8 @@
 import type { Row } from "../types";
 import { BeforeAfterChart } from "./BeforeAfterChart";
+import { CohortsChart } from "./CohortsChart";
 import { HeatmapChart } from "./HeatmapChart";
+import { LeaderboardChart } from "./LeaderboardChart";
 import { RowsTable } from "./RowsTable";
 import { WaterfallChart } from "./WaterfallChart";
 import { WeeklyBarChart } from "./WeeklyBarChart";
@@ -16,6 +18,10 @@ export function TileChart({ type, rows, dark }: { type: string; rows: Row[]; dar
       return <WaterfallChart rows={rows} dark={dark} />;
     case "before_after":
       return <BeforeAfterChart rows={rows} />;
+    case "cohorts":
+      return <CohortsChart rows={rows} dark={dark} />;
+    case "leaderboard":
+      return <LeaderboardChart rows={rows} dark={dark} />;
     default:
       return <RowsTable rows={rows} />;
   }

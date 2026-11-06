@@ -27,6 +27,8 @@ export interface Activity {
   timer?: { label: string; since: string; until?: string; ok?: boolean };
   /** A reviewer subagent was dispatched (its verdict is in the agent's chat). */
   review?: { label: string; since: string };
+  /** The latest matching calls (e.g. forecasting trials started), oldest first. */
+  ticker?: { label: string; ts: string; summary: string }[];
 }
 
 export interface InProgressTile extends TileBase {

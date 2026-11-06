@@ -120,6 +120,7 @@ export function InProgressTileCard({ tile }: { tile: InProgressTile }) {
           </p>
           {lanes.length ? <LaneList lanes={lanes} /> : null}
           <StepList activity={tile.activity} landed={false} />
+          {tile.activity.ticker?.length ? <TickerList ticker={tile.activity.ticker} /> : null}
         </div>
       </div>
       {blocked.length ? <BlockedList blocked={blocked} /> : null}
@@ -220,6 +221,43 @@ function LaneList({ lanes }: { lanes: NonNullable<Activity["lanes"]> }) {
       ))}
     </ul>
   );
+}
+
+/** A ticker of the latest matching calls (e.g. each forecasting trial), newest on top. */
+function TickerList({ ticker }: { ticker: NonNullable<Activity["ticker"]> }) {
+  const now = useNow(1000);
+  return (
+    <ol className="mt-4 space-y-1.5" aria-label="Ticker">
+      {[...ticker].reverse().map((item, index) => (
+        <li
+          key={`${item.ts}:${item.label}`}
+          title={item.summary}
+          className={`flex items-center justify-between gap-3 rounded-lg border border-amber-200 bg-white px-3 py-1.5 dark:border-amber-800/40 dark:bg-zinc-900 ${index ? "opacity-70" : ""}`}
+        >
+          <span className="flex min-w-0 items-center gap-2 text-base font-medium">
+            <span
+              aria-hidden
+              className={`size-2 shrink-0 rounded-full ${index ? "bg-zinc-400" : "animate-pulse bg-amber-500"}`}
+            />
+            {item.label}
+            {firstTable(item.summary) ? (
+              <code className="truncate rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-sm text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+                {firstTable(item.summary)}
+              </code>
+            ) : null}
+          </span>
+          <span className="shrink-0 font-mono text-sm tabular-nums text-zinc-500 dark:text-zinc-400">
+            {elapsed(item.ts, now)} ago
+          </span>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+/** The first table a recorded summary names in its `[tables: ...]` suffix, or "". */
+function firstTable(summary: string): string {
+  return /\[tables: ([^,\]]+)/.exec(summary)?.[1] ?? "";
 }
 
 /** The calls the guardrail denied: what was attempted and why it was refused. */

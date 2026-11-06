@@ -1,5 +1,5 @@
 {
-  "_comment": "Tile manifest: the single source of truth for every Evidence Board Tile, in demo order. Tables and chart queries may only touch staging, features or ml (board/manifest.py rejects anything else); 'tables' gate readiness, and an optional chart 'reads' lists extra working tables the chart query may read without gating readiness. 2A-2D use the deferred readiness rule, and their chart queries and 'proves' lines are placeholders, until their tickets (#95-#96) define them. 'proves' placeholders are filled from the chart's last row. Event matchers map recorded hook events (bin/event_recorder.py) to a Tile's activity: 'lane' (one lane per label), 'blocked' (a guardrail deny), 'approval' (a written file awaiting approval), 'timer' (started by a pre event, stopped by a failed post or a deny) or 'review' (a reviewer dispatched); every kind but 'blocked' needs a label. 'tool' must match the whole tool name and 'summary' is searched.",
+  "_comment": "Tile manifest: the single source of truth for every Evidence Board Tile, in demo order. Tables and chart queries may only touch staging, features or ml (board/manifest.py rejects anything else); 'tables' gate readiness, and an optional chart 'reads' lists extra working tables the chart query may read without gating readiness. 2C and 2D use the deferred readiness rule, and their chart queries and 'proves' lines are placeholders, until their ticket (#96) defines them. 'proves' placeholders are filled from the chart's last row. Event matchers map recorded hook events (bin/event_recorder.py) to a Tile's activity: 'lane' (one lane per label), 'blocked' (a guardrail deny), 'approval' (a written file awaiting approval), 'timer' (started by a pre event, stopped by a failed post or a deny), 'review' (a reviewer dispatched) or 'ticker' (one entry per matching pre event, newest last); every kind but 'blocked' needs a label. 'tool' must match the whole tool name and 'summary' is searched.",
   "tiles": [
     {
       "id": "opening",
@@ -235,14 +235,71 @@
         "features.hospital_cohorts"
       ],
       "readiness": {
-        "rule": "deferred"
+        "rule": "non_empty"
       },
       "chart": {
         "type": "cohorts",
-        "query": "SELECT * FROM `features.hospital_cohorts` LIMIT 500"
+        "query": [
+          "WITH hospitals AS (",
+          "  SELECT hospital_id, cohort_id, peak_arrival_week, seasonal_trend",
+          "  FROM `features.hospital_cohorts`",
+          "),",
+          "cohorts AS (",
+          "  SELECT cohort_id, COUNT(*) AS cohort_size, AVG(seasonal_trend) AS mean_trend",
+          "  FROM hospitals",
+          "  GROUP BY cohort_id",
+          "),",
+          "breakout AS (",
+          "  -- The Outbreak Cohort: the steepest seasonal rise, found from the data.",
+          "  SELECT cohort_id AS breakout_cohort, cohort_size AS breakout_size",
+          "  FROM cohorts",
+          "  ORDER BY mean_trend DESC, cohort_size, cohort_id",
+          "  LIMIT 1",
+          "),",
+          "members AS (",
+          "  SELECT STRING_AGG(h.hospital_id, ', ' ORDER BY h.hospital_id) AS breakout_hospitals",
+          "  FROM hospitals AS h",
+          "  JOIN breakout AS b ON h.cohort_id = b.breakout_cohort",
+          "),",
+          "totals AS (",
+          "  SELECT COUNT(*) AS hospitals, COUNT(DISTINCT cohort_id) AS cohorts",
+          "  FROM hospitals",
+          ")",
+          "SELECT",
+          "  h.hospital_id,",
+          "  h.cohort_id,",
+          "  c.cohort_size,",
+          "  h.peak_arrival_week,",
+          "  ROUND(h.seasonal_trend, 3) AS seasonal_trend,",
+          "  b.breakout_cohort,",
+          "  b.breakout_size,",
+          "  m.breakout_hospitals,",
+          "  t.hospitals,",
+          "  t.cohorts",
+          "FROM hospitals AS h",
+          "JOIN cohorts AS c ON h.cohort_id = c.cohort_id",
+          "CROSS JOIN breakout AS b",
+          "CROSS JOIN members AS m",
+          "CROSS JOIN totals AS t",
+          "ORDER BY h.cohort_id, h.hospital_id"
+        ]
       },
-      "proves": "K-means groups hospitals into Cohorts with shared seasonal shape, isolating the Outbreak hospitals.",
-      "matchers": []
+      "proves": "K-means sorts {hospitals} hospitals into {cohorts} Cohorts by seasonal shape; the steepest-rising Cohort, {breakout_cohort}, holds just {breakout_size} hospitals ({breakout_hospitals}), isolating the Outbreak in its own Cohort.",
+      "proves_fallback": "K-means groups hospitals into Cohorts by seasonal shape, and the steepest-rising Cohort isolates the Outbreak hospitals.",
+      "matchers": [
+        {
+          "kind": "timer",
+          "label": "BQML K-means training",
+          "tool": "(.*[_.])?(run_command|call_mcp_tool|execute_sql\\w*)",
+          "summary": "\\[bqml: [^\\]]*\\bKMEANS\\b|(?i:\\bml\\.\\w*k_?means\\w*)"
+        },
+        {
+          "kind": "timer",
+          "label": "BQML K-means training",
+          "tool": "(.*[_.])?run_command",
+          "summary": "(?i)\\bbq\\s.*\\bsql/\\S*k_?means\\S*\\.sql\\b"
+        }
+      ]
     },
     {
       "id": "2b",
@@ -252,14 +309,89 @@
         "ml.forecast_leaderboard"
       ],
       "readiness": {
-        "rule": "deferred"
+        "rule": "non_empty"
       },
       "chart": {
         "type": "leaderboard",
-        "query": "SELECT * FROM `ml.forecast_leaderboard` LIMIT 200"
+        "query": [
+          "WITH cells AS (",
+          "  -- One cell per Cohort, family and training data, averaged over periods.",
+          "  SELECT",
+          "    cohort_id,",
+          "    model_family,",
+          "    training_data_version,",
+          "    ROUND(AVG(backtest_wape), 2) AS backtest_wape",
+          "  FROM `ml.forecast_leaderboard`",
+          "  GROUP BY cohort_id, model_family, training_data_version",
+          "),",
+          "versions AS (",
+          "  SELECT",
+          "    ROUND(AVG(IF(training_data_version = 'clean', backtest_wape, NULL)), 2) AS clean_wape,",
+          "    ROUND(AVG(IF(training_data_version = 'uncleaned', backtest_wape, NULL)), 2) AS uncleaned_wape",
+          "  FROM cells",
+          "),",
+          "pairs AS (",
+          "  SELECT",
+          "    COUNTIF(c.backtest_wape < u.backtest_wape) AS clean_wins,",
+          "    COUNT(*) AS comparisons",
+          "  FROM cells AS c",
+          "  JOIN cells AS u",
+          "    ON c.cohort_id = u.cohort_id AND c.model_family = u.model_family",
+          "  WHERE c.training_data_version = 'clean' AND u.training_data_version = 'uncleaned'",
+          "),",
+          "best AS (",
+          "  SELECT model_family AS best_family",
+          "  FROM cells",
+          "  WHERE training_data_version = 'clean'",
+          "  GROUP BY model_family",
+          "  ORDER BY AVG(backtest_wape), model_family",
+          "  LIMIT 1",
+          ")",
+          "SELECT",
+          "  cells.cohort_id,",
+          "  cells.model_family,",
+          "  cells.training_data_version,",
+          "  cells.backtest_wape,",
+          "  versions.clean_wape,",
+          "  versions.uncleaned_wape,",
+          "  pairs.clean_wins,",
+          "  pairs.comparisons,",
+          "  best.best_family",
+          "FROM cells",
+          "CROSS JOIN versions",
+          "CROSS JOIN pairs",
+          "LEFT JOIN best ON TRUE",
+          "ORDER BY cells.cohort_id, cells.model_family, cells.training_data_version"
+        ]
       },
-      "proves": "Forecasts trained on clean data beat forecasts trained on uncleaned data on WAPE.",
-      "matchers": []
+      "proves": "Forecasts trained on clean data beat uncleaned data in {clean_wins} of {comparisons} Cohort and model pairs, with mean WAPE {clean_wape:.1f}% vs {uncleaned_wape:.1f}%; {best_family} leads on clean data.",
+      "proves_fallback": "Forecasts trained on clean data beat forecasts trained on uncleaned data on WAPE, for both ARIMA_PLUS and TimesFM.",
+      "matchers": [
+        {
+          "kind": "ticker",
+          "label": "ARIMA_PLUS",
+          "tool": "(.*[_.])?(run_command|call_mcp_tool|execute_sql\\w*)",
+          "summary": "\\[bqml: [^\\]]*\\bARIMA_PLUS\\b|(?i:\\bml\\.\\w*arima\\w*)"
+        },
+        {
+          "kind": "ticker",
+          "label": "TimesFM",
+          "tool": "(.*[_.])?(run_command|call_mcp_tool|execute_sql\\w*)",
+          "summary": "\\[bqml: [^\\]]*\\bAI\\.FORECAST\\b|(?i:timesfm)"
+        },
+        {
+          "kind": "ticker",
+          "label": "ARIMA_PLUS + TimesFM",
+          "tool": "(.*[_.])?run_command",
+          "summary": "(?i)\\bbq\\s.*\\bsql/\\S*(forecast|arima|trial)\\S*\\.sql\\b"
+        },
+        {
+          "kind": "ticker",
+          "label": "Trial logged",
+          "tool": "(.*[_.])?(run_command|call_mcp_tool|execute_sql\\w*)",
+          "summary": "^(?!.*\\bml\\.forecast_leaderboard\\b).*\\bml\\.experiment_trials\\b"
+        }
+      ]
     },
     {
       "id": "2c",
