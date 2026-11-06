@@ -34,11 +34,17 @@ class TableCatalog(Protocol):
 
 
 class FakeCatalog:
-    """In-memory catalog: tables with row counts, modified stamps and chart rows."""
+    """In-memory catalog: tables with row counts, modified stamps and chart rows.
+
+    Built `from_json`, it re-reads its file whenever the file's mtime changes,
+    so a rehearsal can land a Tile by editing the file while the board runs.
+    """
 
     def __init__(self, tables: dict[str, dict[str, Any]] | None = None) -> None:
         self._lock = threading.Lock()
         self._tables: dict[str, dict[str, Any]] = {}
+        self._source: Path | None = None
+        self._source_mtime: int | None = None
         self.queries_run = 0
         self.failing = False
         for name, spec in (tables or {}).items():
@@ -46,7 +52,31 @@ class FakeCatalog:
 
     @classmethod
     def from_json(cls, path: str | Path) -> FakeCatalog:
-        return cls(json.loads(Path(path).read_text(encoding="utf-8")).get("tables", {}))
+        catalog = cls()
+        catalog._source = Path(path)
+        catalog._reload_if_changed()
+        return catalog
+
+    def _reload_if_changed(self) -> None:
+        """Replace the tables from the source file if its mtime changed.
+
+        A table without its own `modified` stamp takes the file's mtime, so an
+        edit re-runs the chart query of a Tile that has already landed.
+        """
+        if self._source is None:
+            return
+        mtime = self._source.stat().st_mtime_ns
+        with self._lock:
+            if mtime == self._source_mtime:
+                return
+        tables = json.loads(self._source.read_text(encoding="utf-8")).get("tables", {})
+        fresh = FakeCatalog()
+        for name, spec in tables.items():
+            fresh.put_table(name, **{"modified": str(mtime), **spec})
+        # Swap in one step so a concurrent reader never sees an empty catalog.
+        with self._lock:
+            self._tables = fresh._tables
+            self._source_mtime = mtime
 
     def put_table(
         self,
@@ -63,6 +93,7 @@ class FakeCatalog:
             }
 
     def table_info(self, table: str) -> TableInfo | None:
+        self._reload_if_changed()
         with self._lock:
             if self.failing:
                 raise ConnectionError("fake catalog: transient failure")
@@ -70,6 +101,7 @@ class FakeCatalog:
             return TableInfo(spec["num_rows"], spec["modified"]) if spec else None
 
     def run_query(self, sql: str) -> list[dict[str, Any]]:
+        self._reload_if_changed()
         with self._lock:
             if self.failing:
                 raise ConnectionError("fake catalog: transient failure")

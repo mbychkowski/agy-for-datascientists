@@ -1,0 +1,133 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# Evidence Board: standalone browser-tab launcher
+#
+# Runs the same backend the Antigravity sidecar runs, on 127.0.0.1:<port>, and
+# serves the built frontend bundle so the board opens in any browser tab. This
+# is the fallback when the side-pane sidecar is unavailable.
+#   - Builds the frontend bundle first if it is missing (skip with --no-build).
+#   - Reads BigQuery as the presenter (user ADC), with PROJECT_ID and REGION
+#     pinned by the backend from <workspace>/demo.env.
+#   - --fake-catalog <json> swaps BigQuery for an offline catalog; the file is
+#     re-read when it changes, so editing it lands Tiles during a rehearsal.
+# ==============================================================================
+
+set -uo pipefail
+
+# Resolve real script directory through any symlinks (CODING_STANDARDS.md §1)
+SOURCE="${BASH_SOURCE[0]}"
+while [[ -h "${SOURCE}" ]]; do
+    DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
+    SOURCE="$(readlink "${SOURCE}")"
+    [[ "${SOURCE}" != /* ]] && SOURCE="${DIR}/${SOURCE}"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+# Sourced per CODING_STANDARDS.md §1; the launcher itself never calls bq or
+# gcloud, and the backend pins PROJECT_ID/REGION from <workspace>/demo.env.
+# shellcheck source=lib/pinning.sh
+source "${SCRIPT_DIR}/lib/pinning.sh"
+
+BOARD_DIR="${REPO_ROOT}/.agents/plugins/ds-command-center/sidecars/evidence-board"
+PYTHON_BIN="${PYTHON:-python3}"
+
+WORKSPACE="${REPO_ROOT}"
+PORT="8765"
+FAKE_CATALOG=""
+BUILD=true
+
+usage() {
+    echo "Usage: ./evidence-board [OPTIONS]"
+    echo ""
+    echo "Open the Evidence Board in a browser tab at http://127.0.0.1:<port>/."
+    echo ""
+    echo "Options:"
+    echo "  -w, --workspace <path>     Repo root holding demo.env (default: this repo)"
+    echo "  -p, --port <port>          Port to bind on 127.0.0.1 (default: ${PORT})"
+    echo "      --fake-catalog <json>  Offline table catalog instead of BigQuery (rehearsal)"
+    echo "      --no-build             Do not build the frontend bundle if it is missing"
+    echo "  -h, --help                 Show this help message"
+}
+
+need_value() {
+    if [[ $# -lt 2 || -z "$2" ]]; then
+        echo "[FAIL] Missing value for $1" >&2
+        usage >&2
+        exit 1
+    fi
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --workspace|-w)
+            need_value "$@"
+            WORKSPACE="$2"
+            shift 2
+            ;;
+        --port|-p)
+            need_value "$@"
+            PORT="$2"
+            shift 2
+            ;;
+        --fake-catalog)
+            need_value "$@"
+            FAKE_CATALOG="$2"
+            shift 2
+            ;;
+        --no-build)
+            BUILD=false
+            shift
+            ;;
+        --help|-h)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "[FAIL] Unknown argument: $1" >&2
+            usage >&2
+            exit 1
+            ;;
+    esac
+done
+
+if [[ ! "${PORT}" =~ ^[0-9]+$ ]]; then
+    echo "[FAIL] --port must be a number, got: ${PORT}" >&2
+    exit 1
+fi
+
+# Resolve user paths before the backend changes directory into the sidecar.
+if ! WORKSPACE="$(cd "${WORKSPACE}" 2>/dev/null && pwd)"; then
+    echo "[FAIL] --workspace is not a directory" >&2
+    exit 1
+fi
+BACKEND_ARGS=(--workspace "${WORKSPACE}" --port "${PORT}")
+if [[ -n "${FAKE_CATALOG}" ]]; then
+    if [[ ! -f "${FAKE_CATALOG}" ]]; then
+        echo "[FAIL] --fake-catalog file not found: ${FAKE_CATALOG}" >&2
+        exit 1
+    fi
+    FAKE_CATALOG="$(cd "$(dirname "${FAKE_CATALOG}")" && pwd)/$(basename "${FAKE_CATALOG}")"
+    BACKEND_ARGS+=(--fake-catalog "${FAKE_CATALOG}")
+fi
+
+if ! "${PYTHON_BIN}" -c 'import fastapi, uvicorn' >/dev/null 2>&1; then
+    echo "[FAIL] The Evidence Board backend needs FastAPI and Uvicorn in ${PYTHON_BIN}." >&2
+    echo "       Install them: uv pip install -r ${BOARD_DIR}/requirements.txt" >&2
+    exit 1
+fi
+
+if [[ ! -f "${BOARD_DIR}/frontend/dist/index.html" ]]; then
+    if [[ "${BUILD}" == true ]]; then
+        echo "Building the Evidence Board frontend (make build-frontend)..."
+        if ! make -C "${REPO_ROOT}" --no-print-directory build-frontend; then
+            echo "[FAIL] Frontend build failed; rerun with --no-build to serve only the JSON API." >&2
+            exit 1
+        fi
+    else
+        echo "[WARN] Frontend bundle not built; only the JSON API is served." >&2
+    fi
+fi
+
+echo "Evidence Board: http://127.0.0.1:${PORT}/"
+cd "${BOARD_DIR}" || exit 1
+exec "${PYTHON_BIN}" -m board "${BACKEND_ARGS[@]}"

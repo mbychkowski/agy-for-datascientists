@@ -4,6 +4,7 @@ Binds 127.0.0.1 on `ANTIGRAVITY_SIDECAR_WEB_PORT` (injected by Antigravity), or
 on `--port` for the standalone browser tab. Reads BigQuery under the
 presenter's user ADC, pinned to PROJECT_ID and REGION from `<workspace>/demo.env`;
 `--fake-catalog <json>` swaps in an offline catalog for rehearsal and tests.
+Serves the built frontend bundle (`frontend/dist`) at `/`.
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ SIDECAR_DIR = Path(__file__).resolve().parent.parent
 # In the repo the sidecar lives at <repo>/.agents/plugins/ds-command-center/sidecars/evidence-board.
 # The installed copy (#91) is outside the repo, so it must pass --workspace.
 DEFAULT_WORKSPACE = SIDECAR_DIR.parents[4]
+STATIC_DIR = SIDECAR_DIR / "frontend" / "dist"
 
 
 def _port(flag: int | None, env: dict[str, str]) -> int:
@@ -79,7 +81,10 @@ def main(argv: list[str] | None = None) -> int:
     from board.service import Board
 
     uvicorn.run(
-        create_app(Board(manifest, catalog)), host=HOST, port=port, log_level="info"
+        create_app(Board(manifest, catalog), static_dir=STATIC_DIR),
+        host=HOST,
+        port=port,
+        log_level="info",
     )
     return 0
 

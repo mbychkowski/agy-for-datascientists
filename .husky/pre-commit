@@ -11,5 +11,6 @@ fi
 uvx ruff check .
 uvx ruff format --check .
 make test
+make build-frontend
 make lint-sh
 make lint-tf

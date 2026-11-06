@@ -1,4 +1,4 @@
-.PHONY: check check-docs test check-glossary lint-sh lint-tf
+.PHONY: check check-docs test check-glossary lint-sh lint-tf build-frontend
 
 # Candidate paths for lint-sh. A file is checked when line 1 is a bash or sh shebang
 # (sh for .husky/pre-commit, which husky runs with `sh -e`) or, for sourced libraries,
@@ -61,6 +61,16 @@ lint-sh:
 	echo "shellcheck:$$files"; \
 	$(SHELLCHECK) --severity=warning $$files && \
 	$(SHELLCHECK) --severity=info --include=SC1090,SC1091 $$files
+
+# Evidence Board frontend: type check + Vite production build (spec #88 tests the
+# frontend through this build). npm ci runs only when package-lock.json is newer
+# than the last install, so the guardrail stays fast once node_modules exists.
+FRONTEND_DIR := .agents/plugins/ds-command-center/sidecars/evidence-board/frontend
+
+build-frontend:
+	@cd $(FRONTEND_DIR) && \
+		{ [ node_modules/.package-lock.json -nt package-lock.json ] || npm ci --no-audit --no-fund; } && \
+		npm run build
 
 lint-tf:
 	terraform -chdir=infra init -backend=false -lockfile=readonly -input=false
