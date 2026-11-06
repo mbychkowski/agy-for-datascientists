@@ -79,6 +79,16 @@ class Board:
                 self._manifest, tables.snapshot, tables.charts, self._events
             )
 
+    def conversation_id(self) -> str | None:
+        """The conversation of the latest recorded tool call since the last
+        `reset`, or None."""
+        with self._lock:
+            self._tail_events(self._clock())
+            for event in reversed(self._events):
+                if event.conversation_id:
+                    return event.conversation_id
+            return None
+
     def _tail_events(self, now: float) -> None:
         if self._event_source is None or (
             self._last_event_read is not None

@@ -7,6 +7,11 @@ presenter's user ADC, pinned to PROJECT_ID and REGION from `<workspace>/demo.env
 Serves the built frontend bundle (`frontend/dist`) at `/`, and tails the
 workspace event log (`<workspace>/.evidence-board/events.jsonl`) written by the
 ds-command-center event recorder hook to show Tiles in progress.
+
+In sidecar mode (port from the env var, not `--port`) the Ask button can send
+through `agentapi send-message`, guarded by Antigravity's
+`ANTIGRAVITY_SIDECAR_UI_TOKEN` when set; the standalone tab has no sender, so
+its Ask button copies the prompt to the clipboard instead.
 """
 
 from __future__ import annotations
@@ -22,6 +27,7 @@ from board.manifest import ManifestError, load_manifest
 
 HOST = "127.0.0.1"
 PORT_ENV = "ANTIGRAVITY_SIDECAR_WEB_PORT"
+TOKEN_ENV = "ANTIGRAVITY_SIDECAR_UI_TOKEN"
 SIDECAR_DIR = Path(__file__).resolve().parent.parent
 # In the repo the sidecar lives at <repo>/.agents/plugins/ds-command-center/sidecars/evidence-board.
 # The installed copy (#91) is outside the repo, so it must pass --workspace.
@@ -66,6 +72,7 @@ def main(argv: list[str] | None = None) -> int:
         level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s"
     )
     port = _port(args.port, dict(os.environ))
+    sidecar_mode = args.port is None  # Antigravity injected the port
     try:
         manifest = load_manifest(args.manifest)
         if args.fake_catalog:
@@ -79,6 +86,7 @@ def main(argv: list[str] | None = None) -> int:
 
     import uvicorn
 
+    from board.agentapi import AgentApi
     from board.app import create_app
     from board.events import EventLog, event_log_path
     from board.service import Board
@@ -87,6 +95,8 @@ def main(argv: list[str] | None = None) -> int:
         create_app(
             Board(manifest, catalog, events=EventLog(event_log_path(args.workspace))),
             static_dir=STATIC_DIR,
+            sender=AgentApi() if sidecar_mode else None,
+            token=os.environ.get(TOKEN_ENV) or None,
         ),
         host=HOST,
         port=port,

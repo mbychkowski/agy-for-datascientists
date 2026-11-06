@@ -1,6 +1,7 @@
 import { CircleCheck, Loader2, Lock, ShieldX, Sparkles } from "lucide-react";
 import { useEffect, useState } from "react";
 import { TileChart } from "../charts/TileChart";
+import { AskButton } from "./AskButton";
 import type { Activity, InProgressTile, LandedTile, Tile } from "../types";
 
 /** A Tile that has not landed: names its step and the table it is waiting for. */
@@ -83,6 +84,8 @@ export function LandedTileCard({ tile, dark, unlocking }: { tile: LandedTile; da
           <p className="mt-1 text-lg leading-snug text-zinc-900 dark:text-zinc-100">{tile.proves}</p>
         </div>
       </div>
+
+      {tile.ask?.prompt ? <AskButton tileId={tile.id} prompt={tile.ask.prompt} /> : null}
     </article>
   );
 }

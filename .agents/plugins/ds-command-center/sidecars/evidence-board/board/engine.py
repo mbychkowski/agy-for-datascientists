@@ -9,6 +9,7 @@ Pure functions, no I/O. Tile state machine (spec #88):
 - `landed`: readiness met (for the `chart_rows` rule, the chart query also
   returned rows), with its chart and "what this proves" line. This
   wins regardless of events, so a Checkpoint swap goes `locked` -> `landed`.
+  It also carries its `ask` prompt for the "Ask the Command Center" button.
   A landed Tile still carries any `activity`, so the Opening (whose table is
   loaded before the session) can show the guardrail's blocked call.
 """
@@ -19,6 +20,7 @@ import string
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from board import ask
 from board.catalog import TableInfo
 from board.events import Event, since_last_reset
 from board.manifest import Manifest, Tile
@@ -134,10 +136,16 @@ def tile_states(
             )
         else:
             rows = charts[tile.id]
+            proves = _proves(tile, rows)
             state.update(
                 state="landed",
                 chart={"type": tile.chart_type, "rows": rows},
-                proves=_proves(tile, rows),
+                proves=proves,
+                ask={
+                    "prompt": ask.prompt(
+                        tile.step, tile.title, tile.tables, proves, rows
+                    )
+                },
             )
         if found:
             state["activity"] = found

@@ -41,6 +41,8 @@ export interface LandedTile extends TileBase {
   state: "landed";
   chart: { type: string; rows: Row[] };
   proves: string;
+  /** The "Ask the Command Center about this Tile" prompt: names the Tile, its tables and numbers. */
+  ask?: { prompt: string };
   activity?: Activity;
 }
 
