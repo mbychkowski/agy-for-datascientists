@@ -11,6 +11,9 @@
 #   - Drops live-created and loaded Reveal tables carrying 'demo:true'.
 #   - Restores raw, ops, and the defective staging.hospital_flu table (plus
 #     clean staging.hospital_flu_clean when resetting to ws2).
+#   - Appends a `reset` event to each stage clone's Evidence Board event log
+#     (<clone>/.evidence-board/events.jsonl) so the board ignores earlier
+#     events; a missing stage clone is skipped, never a reset failure.
 #   - Runs bin/verify-start-point <ws1|ws2> to confirm the restored state.
 # ==============================================================================
 
@@ -35,6 +38,9 @@ TARGET=""
 AUTO_YES=false
 POSITIONAL_DATASET_SET=false
 CLI_DATASET_SET=false
+# Stage-clone workspaces whose Evidence Board event log gets the `reset` event.
+# Default: the conventional DEMO.md clones under ${DEMO_STAGE_DIR:-~/demo-stage}.
+STAGE_CLONES=()
 
 usage() {
     echo "Usage: bin/reset <ws1|ws2> [OPTIONS] [dataset_location]"
@@ -47,6 +53,8 @@ usage() {
     echo "  -e, --env <path>          Path to environment file (default: demo.env)"
     echo "  -d, --dataset-dir <path>  Path or gs:// URI to dataset root (default: DATASET_LOCATION or fixtures/mock_dataset)"
     echo "  -y, --yes                 Skip interactive confirmation prompt"
+    echo "  -s, --stage-clone <path>  Stage-clone workspace whose Evidence Board is reset; repeatable"
+    echo "                            (default: ~/demo-stage/agy-ws1 and ~/demo-stage/agy-ws2)"
     echo "  -h, --help                Show this help message"
 }
 
@@ -69,6 +77,15 @@ while [[ $# -gt 0 ]]; do
             fi
             DATASET_DIR="$2"
             CLI_DATASET_SET=true
+            shift 2
+            ;;
+        --stage-clone|-s)
+            if [[ $# -lt 2 ]]; then
+                echo "[FAIL] Missing value for $1" >&2
+                usage >&2
+                exit 1
+            fi
+            STAGE_CLONES+=("$2")
             shift 2
             ;;
         --yes|-y)
@@ -121,6 +138,34 @@ case "${TARGET}" in
         exit 1
         ;;
 esac
+
+if [[ ${#STAGE_CLONES[@]} -eq 0 ]]; then
+    STAGE_DIR="${DEMO_STAGE_DIR:-${HOME}/demo-stage}"
+    STAGE_CLONES=("${STAGE_DIR}/agy-ws1" "${STAGE_DIR}/agy-ws2")
+fi
+
+# Append a `reset` event to each stage clone's Evidence Board event log. The
+# board ignores every event before the latest `reset`, and the Tiles whose
+# tables were dropped return to locked through readiness. Best-effort: a
+# missing clone or unwritable log is reported and skipped.
+record_board_reset() {
+    local clone log ts
+    ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    for clone in "${STAGE_CLONES[@]}"; do
+        if [[ ! -d "${clone}" ]]; then
+            echo "[SKIP] Stage clone ${clone} not found; no Evidence Board to reset there."
+            continue
+        fi
+        log="${clone}/.evidence-board/events.jsonl"
+        if mkdir -p "${clone}/.evidence-board" 2>/dev/null \
+            && printf '{"ts":"%s","phase":"reset","tool":"reset","summary":"reset %s"}\n' \
+                "${ts}" "${TARGET}" 2>/dev/null >>"${log}"; then
+            echo "Evidence Board reset recorded in ${log}"
+        else
+            echo "[WARN] Could not append a reset event to ${log}; Evidence Board not reset there." >&2
+        fi
+    done
+}
 
 if ! pinned_load_env "${ENV_FILE}"; then
     exit 1
@@ -277,6 +322,8 @@ if [[ ${#TABLES_TO_DROP[@]} -gt 0 ]]; then
         fi
     done
 fi
+
+record_board_reset
 
 if [[ "${TARGET}" == "ws1" ]]; then
     echo "==> Step 1/3: Restoring raw and ops tables..."
