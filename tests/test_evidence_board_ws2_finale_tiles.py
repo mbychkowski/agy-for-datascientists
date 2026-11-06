@@ -37,7 +37,6 @@ def _reveal_rows() -> list[dict]:
         "reveal_weeks": 6,
         "clean_wape": 4.2,
         "uncleaned_wape": 31.75,
-        "uncleaned_overshoot_pct": 31.75,
     }
     weeks = (
         ("2026-11-01", "2026-11-07", 600, 610, 790),
@@ -82,7 +81,7 @@ def _refresh_rows() -> list[dict]:
 
 REVEAL_PROVES = (
     "Over the 6 Reveal weeks after the Cutoff, the clean-data forecast tracks reality"
-    " at 4.2% WAPE, while the uncleaned forecast overshoots it by 31.8%."
+    " at 4.2% WAPE, against 31.8% for the uncleaned forecast."
 )
 REFRESH_PROVES = (
     "The cohort-forecast-refresh skill reran the forecasting workflow for 2026-W44:"
@@ -254,6 +253,12 @@ class RefreshActivityTest(WorkspaceCase):
             ["SKILL.md written", "Fresh subagent dispatched"],
         )
         self.assertEqual(activity["timer"]["label"], "Refreshing 2026-W44")
+
+    def test_a_cohort_forecast_subagent_counts_as_the_fresh_dispatch(self) -> None:
+        self.hook(RECORDER_PRE, _dispatch("self", "Cohort forecast runner"))
+
+        [lane] = self.tiles()["2d"]["activity"]["lanes"]
+        self.assertEqual(lane["label"], "Fresh subagent dispatched")
 
     def test_reading_the_skill_or_dispatching_triage_leaves_2d_locked(self) -> None:
         self.hook(RECORDER_PRE, _payload("view_file", {"AbsolutePath": SKILL_PATH}))

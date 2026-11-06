@@ -1,5 +1,5 @@
 {
-  "_comment": "Tile manifest: the single source of truth for every Evidence Board Tile, in demo order. Tables and chart queries may only touch staging, features or ml (board/manifest.py rejects anything else); 'tables' gate readiness, and an optional chart 'reads' lists extra working tables the chart query may read without gating readiness. Readiness is 'non_empty' (every table exists with rows) or 'chart_rows' (that, and the chart query returns at least one row; 2D uses it to land only once trials for the refresh period exist). 'proves' placeholders are filled from the chart's last row. Event matchers map recorded hook events (bin/event_recorder.py) to a Tile's activity: 'lane' (one lane per label), 'blocked' (a guardrail deny), 'approval' (a written file awaiting approval), 'timer' (started by a pre event, stopped by a failed post or a deny), 'review' (a reviewer dispatched) or 'ticker' (one entry per matching pre event, newest last); every kind but 'blocked' needs a label. 'tool' must match the whole tool name and 'summary' is searched.",
+  "_comment": "Tile manifest: the single source of truth for every Evidence Board Tile, in demo order. Tables and chart queries may only touch staging, features or ml (board/manifest.py rejects anything else); 'tables' gate readiness, and an optional chart 'reads' lists extra working tables the chart query may read without gating readiness. Readiness is 'non_empty' (every table exists with rows) or 'chart_rows' (that, and the chart query returns at least one row; 2D uses it to land only once trials for the refresh period exist; the refresh period, 2026-W44, is named in 2D's query regex, period literal, matchers and timer label, which change together). 'proves' placeholders are filled from the chart's last row. Event matchers map recorded hook events (bin/event_recorder.py) to a Tile's activity: 'lane' (one lane per label), 'blocked' (a guardrail deny), 'approval' (a written file awaiting approval), 'timer' (started by a pre event, stopped by a failed post or a deny), 'review' (a reviewer dispatched) or 'ticker' (one entry per matching pre event, newest last); every kind but 'blocked' needs a label. 'tool' must match the whole tool name and 'summary' is searched.",
   "tiles": [
     {
       "id": "opening",
@@ -421,8 +421,7 @@
           "  SELECT",
           "    COUNT(*) AS reveal_weeks,",
           "    ROUND(100 * SAFE_DIVIDE(SUM(ABS(clean_forecast_positives - reveal_observed_positives)), SUM(reveal_observed_positives)), 1) AS clean_wape,",
-          "    ROUND(100 * SAFE_DIVIDE(SUM(ABS(uncleaned_forecast_positives - reveal_observed_positives)), SUM(reveal_observed_positives)), 1) AS uncleaned_wape,",
-          "    ROUND(100 * SAFE_DIVIDE(SUM(uncleaned_forecast_positives - reveal_observed_positives), SUM(reveal_observed_positives)), 1) AS uncleaned_overshoot_pct",
+          "    ROUND(100 * SAFE_DIVIDE(SUM(ABS(uncleaned_forecast_positives - reveal_observed_positives)), SUM(reveal_observed_positives)), 1) AS uncleaned_wape",
           "  FROM weeks",
           ")",
           "SELECT",
@@ -434,14 +433,13 @@
           "  weeks.uncleaned_forecast_positives,",
           "  totals.reveal_weeks,",
           "  totals.clean_wape,",
-          "  totals.uncleaned_wape,",
-          "  totals.uncleaned_overshoot_pct",
+          "  totals.uncleaned_wape",
           "FROM weeks",
           "CROSS JOIN totals",
           "ORDER BY weeks.week_start"
         ]
       },
-      "proves": "Over the {reveal_weeks} Reveal weeks after the Cutoff, the clean-data forecast tracks reality at {clean_wape:.1f}% WAPE, while the uncleaned forecast overshoots it by {uncleaned_overshoot_pct:.1f}%.",
+      "proves": "Over the {reveal_weeks} Reveal weeks after the Cutoff, the clean-data forecast tracks reality at {clean_wape:.1f}% WAPE, against {uncleaned_wape:.1f}% for the uncleaned forecast.",
       "proves_fallback": "Over the six Reveal weeks after the Cutoff, the clean-data forecast tracks reality while the uncleaned forecast overshoots.",
       "matchers": [
         {
@@ -523,7 +521,7 @@
           "kind": "lane",
           "label": "Fresh subagent dispatched",
           "tool": "(.*[_.])?invoke_subagent",
-          "summary": "(?i)refresh|next.?period|2026.?w44"
+          "summary": "(?i)refresh|next.?period|2026.?w44|cohort.?forecast"
         },
         {
           "kind": "timer",

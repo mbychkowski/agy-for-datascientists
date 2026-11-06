@@ -1,7 +1,7 @@
 // The ESM entry: Vite's CJS interop hands back `{ default }` for lib/core.
 import ReactEChartsCore from "echarts-for-react/esm/core";
 import { useMemo } from "react";
-import { num } from "../format";
+import { num, percent } from "../format";
 import type { Row } from "../types";
 import { axisStyle, baseOption, cohortName, echarts, legendStyle } from "./theme";
 
@@ -88,9 +88,4 @@ export function LeaderboardChart({ rows, dark }: { rows: Row[]; dark: boolean })
       />
     </div>
   );
-}
-
-function percent(value: Row[string] | undefined): string {
-  const n = num(value);
-  return n === null ? "—" : `${n.toFixed(1)}%`;
 }
