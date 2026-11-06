@@ -1,11 +1,16 @@
 import json
 import os
-import subprocess
+import tempfile
 import unittest
+from pathlib import Path
 
-from tests.helpers import WORKTREE_ROOT
+from tests.helpers import (
+    EVIDENCE_BOARD_WORKSPACE_ENV,
+    PLUGIN_DIR,
+    WORKTREE_ROOT,
+    run_plugin_hook,
+)
 
-PLUGIN_DIR = WORKTREE_ROOT / ".agents" / "plugins" / "ds-command-center"
 PLUGIN_HOOKS_JSON = PLUGIN_DIR / "hooks.json"
 HOOK_BIN = PLUGIN_DIR / "bin" / "guardrail-hook"
 PRE_COMMIT = WORKTREE_ROOT / ".husky" / "pre-commit"
@@ -25,8 +30,8 @@ class TestGuardrailsAndHooks(unittest.TestCase):
         self.assertIn("uvx ruff format --check .", pre_commit_text)
         self.assertIn("make test", pre_commit_text)
 
-    def test_plugin_guardrail_hook_is_the_only_pre_tool_use_hook(self):
-        """The ds-command-center plugin hook is the only PreToolUse hook; no workspace-level duplicate exists."""
+    def test_plugin_guardrail_hook_is_the_only_hook_that_can_deny(self):
+        """The plugin guardrail is registered once and is the only hook that can deny; no workspace-level duplicate exists."""
         agents_dir = WORKTREE_ROOT / ".agents"
         # Workspace-level and plugin-level hook registrations; untracked personal
         # config elsewhere under .agents/ (ignored by .gitignore) is not scanned.
@@ -54,7 +59,36 @@ class TestGuardrailsAndHooks(unittest.TestCase):
         self.assertEqual(pre_tool[0]["matcher"], "*")
         self.assertEqual(pre_tool[0]["hooks"][0]["command"], "./bin/guardrail-hook")
 
-    def _run_hook(self, command_line: str) -> dict[str, str]:
+        pre_tool_commands = [
+            hook["command"]
+            for group in hooks_cfg.values()
+            for entry in group.get("PreToolUse", [])
+            for hook in entry["hooks"]
+        ]
+        self.assertEqual(pre_tool_commands.count("./bin/guardrail-hook"), 1)
+        # Every other PreToolUse hook (the Evidence Board event recorder) is
+        # observe-only: it allows calls the guardrail denies.
+        others = [c for c in pre_tool_commands if c != "./bin/guardrail-hook"]
+        self.assertTrue(others, "expected the observe-only event recorder hook")
+        with tempfile.TemporaryDirectory() as workspace:
+            env = {**os.environ, EVIDENCE_BOARD_WORKSPACE_ENV: workspace}
+            for command in others:
+                for denied in (
+                    "git push origin main",
+                    'bq query "TRUNCATE TABLE ops.pipeline_run_log"',
+                ):
+                    with self.subTest(command=command, denied=denied):
+                        self.assertEqual(
+                            self._run_hook(denied, PLUGIN_DIR / command, env),
+                            {"decision": "allow"},
+                        )
+
+    def _run_hook(
+        self,
+        command_line: str,
+        hook: Path = HOOK_BIN,
+        env: dict[str, str] | None = None,
+    ) -> dict[str, str]:
         payload = json.dumps(
             {
                 "toolCall": {
@@ -63,14 +97,8 @@ class TestGuardrailsAndHooks(unittest.TestCase):
                 }
             }
         )
-        proc = subprocess.run(
-            [str(HOOK_BIN)],
-            cwd=PLUGIN_DIR,
-            input=payload,
-            capture_output=True,
-            text=True,
-            check=True,
-        )
+        proc = run_plugin_hook(hook, payload, env)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
         return json.loads(proc.stdout)
 
     def test_hook_denies_direct_git_push_to_main(self):

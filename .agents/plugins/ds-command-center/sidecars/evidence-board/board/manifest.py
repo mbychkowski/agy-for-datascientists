@@ -13,10 +13,19 @@ import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, get_args
+
+from board.events import Event, Phase
 
 WORKING_DATASETS = frozenset({"staging", "features", "ml"})
 READINESS_RULES = frozenset({"non_empty", "deferred"})
+MatcherKind = Literal["lane", "blocked"]
+# Matcher kind -> the event phases it matches.
+MATCHER_PHASES: dict[MatcherKind, frozenset[Phase]] = {
+    "lane": frozenset({"pre", "post"}),
+    "blocked": frozenset({"blocked"}),
+}
+MATCHER_KINDS: frozenset[str] = frozenset(get_args(MatcherKind))
 
 _TABLE_NAME = re.compile(r"^([a-z_]+)\.([A-Za-z0-9_]+)$")
 # Any `<dataset>.` prefix naming a dataset the board must never read, quoted or not.
@@ -41,6 +50,28 @@ class ManifestError(ValueError):
 
 
 @dataclass(frozen=True)
+class Matcher:
+    """Maps recorded events to a Tile's activity.
+
+    `kind` is `lane` (one lane per `label`, e.g. a triage subagent) or
+    `blocked` (a guardrail deny). `tool` must match the whole tool name;
+    `summary`, if set, must match somewhere in the event summary.
+    """
+
+    kind: MatcherKind
+    tool: re.Pattern[str]
+    summary: re.Pattern[str] | None
+    label: str | None
+
+    def matches(self, event: Event) -> bool:
+        return (
+            event.phase in MATCHER_PHASES[self.kind]
+            and self.tool.fullmatch(event.tool) is not None
+            and (self.summary is None or self.summary.search(event.summary) is not None)
+        )
+
+
+@dataclass(frozen=True)
 class Tile:
     id: str
     step: str
@@ -51,7 +82,7 @@ class Tile:
     chart_query: str
     proves: str
     proves_fallback: str
-    matchers: tuple[Any, ...]
+    matchers: tuple[Matcher, ...]
 
 
 @dataclass(frozen=True)
@@ -127,6 +158,7 @@ def _parse_tile(entry: Any) -> Tile:
     matchers = entry.get("matchers", [])
     if not isinstance(matchers, list):
         raise ManifestError(f"Tile {tile_id}: 'matchers' must be a list")
+    parsed_matchers = tuple(_parse_matcher(tile_id, m) for m in matchers)
 
     return Tile(
         id=tile_id,
@@ -138,8 +170,42 @@ def _parse_tile(entry: Any) -> Tile:
         chart_query=query,
         proves=proves,
         proves_fallback=fallback,
-        matchers=tuple(matchers),
+        matchers=parsed_matchers,
     )
+
+
+def _parse_matcher(tile_id: str, entry: Any) -> Matcher:
+    if not isinstance(entry, dict) or entry.get("kind") not in MATCHER_KINDS:
+        raise ManifestError(
+            f"Tile {tile_id}: each matcher needs a 'kind' in {sorted(MATCHER_KINDS)}"
+        )
+    kind = entry["kind"]
+    tool = _pattern(tile_id, entry, "tool")
+    if tool is None:
+        raise ManifestError(f"Tile {tile_id}: each matcher needs a 'tool' regex")
+    label = entry.get("label")
+    if kind == "lane" and (not isinstance(label, str) or not label.strip()):
+        raise ManifestError(f"Tile {tile_id}: a lane matcher needs a 'label'")
+    return Matcher(
+        kind=kind,
+        tool=tool,
+        summary=_pattern(tile_id, entry, "summary"),
+        label=label if isinstance(label, str) else None,
+    )
+
+
+def _pattern(tile_id: str, entry: dict, key: str) -> re.Pattern[str] | None:
+    value = entry.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value:
+        raise ManifestError(f"Tile {tile_id}: matcher '{key}' must be a regex string")
+    try:
+        return re.compile(value)
+    except re.error as exc:
+        raise ManifestError(
+            f"Tile {tile_id}: matcher '{key}' is not a valid regex: {exc}"
+        ) from exc
 
 
 def _text(obj: dict, key: str, tile_id: str) -> str:

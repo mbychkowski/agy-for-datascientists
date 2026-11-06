@@ -4,7 +4,9 @@ Binds 127.0.0.1 on `ANTIGRAVITY_SIDECAR_WEB_PORT` (injected by Antigravity), or
 on `--port` for the standalone browser tab. Reads BigQuery under the
 presenter's user ADC, pinned to PROJECT_ID and REGION from `<workspace>/demo.env`;
 `--fake-catalog <json>` swaps in an offline catalog for rehearsal and tests.
-Serves the built frontend bundle (`frontend/dist`) at `/`.
+Serves the built frontend bundle (`frontend/dist`) at `/`, and tails the
+workspace event log (`<workspace>/.evidence-board/events.jsonl`) written by the
+ds-command-center event recorder hook to show Tiles in progress.
 """
 
 from __future__ import annotations
@@ -47,7 +49,7 @@ def main(argv: list[str] | None = None) -> int:
         "--workspace",
         type=Path,
         default=DEFAULT_WORKSPACE,
-        help="repo root holding demo.env",
+        help="repo root holding demo.env and the .evidence-board/ event log",
     )
     parser.add_argument(
         "--manifest",
@@ -78,10 +80,14 @@ def main(argv: list[str] | None = None) -> int:
     import uvicorn
 
     from board.app import create_app
+    from board.events import EventLog, event_log_path
     from board.service import Board
 
     uvicorn.run(
-        create_app(Board(manifest, catalog), static_dir=STATIC_DIR),
+        create_app(
+            Board(manifest, catalog, events=EventLog(event_log_path(args.workspace))),
+            static_dir=STATIC_DIR,
+        ),
         host=HOST,
         port=port,
         log_level="info",

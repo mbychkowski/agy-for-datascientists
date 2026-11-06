@@ -31,6 +31,9 @@ node_modules/
 .agents/plugins/ds-command-center/sidecars/evidence-board/frontend/dist/
 *.tsbuildinfo
 
+# Evidence Board event log, appended by the ds-command-center event recorder hook
+.evidence-board/
+
 # Terraform local state and caches
 .terraform/
 *.tfstate
