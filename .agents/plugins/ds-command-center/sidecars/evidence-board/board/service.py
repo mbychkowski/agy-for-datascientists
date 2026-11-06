@@ -81,8 +81,9 @@ class Board:
 
     def conversation_id(self) -> str | None:
         """The conversation of the latest recorded tool call since the last
-        `reset`, or None. Read after `tiles()`, which tails the event log."""
+        `reset`, or None."""
         with self._lock:
+            self._tail_events(self._clock())
             for event in reversed(self._events):
                 if event.conversation_id:
                     return event.conversation_id

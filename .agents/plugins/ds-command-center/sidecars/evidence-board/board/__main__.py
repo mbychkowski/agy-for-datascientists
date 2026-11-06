@@ -72,6 +72,7 @@ def main(argv: list[str] | None = None) -> int:
         level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s"
     )
     port = _port(args.port, dict(os.environ))
+    sidecar_mode = args.port is None  # Antigravity injected the port
     try:
         manifest = load_manifest(args.manifest)
         if args.fake_catalog:
@@ -94,7 +95,7 @@ def main(argv: list[str] | None = None) -> int:
         create_app(
             Board(manifest, catalog, events=EventLog(event_log_path(args.workspace))),
             static_dir=STATIC_DIR,
-            sender=AgentApi() if args.port is None else None,
+            sender=AgentApi() if sidecar_mode else None,
             token=os.environ.get(TOKEN_ENV) or None,
         ),
         host=HOST,

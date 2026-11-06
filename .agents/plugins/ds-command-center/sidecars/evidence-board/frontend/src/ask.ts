@@ -20,8 +20,8 @@ declare global {
 
 export type AskVia = "sidecar" | "agentapi" | "clipboard" | "none";
 
-// The bridge's own timeout; the backend gives agentapi 15 s, so wait a little longer.
-const SIDECAR_TIMEOUT_MS = 10_000;
+// Both paths end in this backend running agentapi with a 15 s timeout, so wait a little longer.
+const SIDECAR_TIMEOUT_MS = 20_000;
 const BACKEND_TIMEOUT_MS = 20_000;
 
 class TimedOut extends Error {}

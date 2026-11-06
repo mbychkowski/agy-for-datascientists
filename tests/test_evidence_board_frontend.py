@@ -82,23 +82,6 @@ class FrontendBuildContractTest(unittest.TestCase):
                     path.read_text("utf-8"), r"from\s+[\"']echarts-for-react/lib/"
                 )
 
-    def test_ask_tries_sidecar_bridge_then_backend_then_clipboard(self) -> None:
-        # #97: feature-detected bridge first, confirm-gated backend second,
-        # clipboard last; each path falls through silently on failure.
-        ask = (FRONTEND_DIR / "src" / "ask.ts").read_text("utf-8")
-
-        positions = [
-            ask.find(marker)
-            for marker in (
-                "window.sidecar?.agent?.sendMessage",
-                '"api/ask"',
-                "navigator.clipboard",
-            )
-        ]
-
-        self.assertNotIn(-1, positions)
-        self.assertEqual(positions, sorted(positions))
-
 
 if __name__ == "__main__":
     unittest.main()

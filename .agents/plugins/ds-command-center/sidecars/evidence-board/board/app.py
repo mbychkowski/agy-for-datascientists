@@ -59,7 +59,7 @@ def create_app(
 
     @app.post("/api/ask")
     async def ask(request: Request) -> JSONResponse:
-        body = await _json_body(request, token, token_required=False)
+        body = await _authorized_json(request, token, token_required=False)
         if isinstance(body, JSONResponse):
             return body
         tile_id, text = body.get("tile"), body.get("prompt")
@@ -70,13 +70,12 @@ def create_app(
 
     @app.post("/_sidecar/send-message")
     async def send_message(request: Request) -> JSONResponse:
-        body = await _json_body(request, token, token_required=True)
+        body = await _authorized_json(request, token, token_required=True)
         if isinstance(body, JSONResponse):
             return body
         message = body.get("message")
         if not isinstance(message, str) or not message.strip():
             return _refuse(400, "message required")
-        board.tiles()  # tail the event log for the latest conversation
         return _send(board, sender, body.get("conversationId"), message)
 
     index = static_dir / "index.html" if static_dir else None
@@ -102,10 +101,10 @@ def _refuse(status: int, reason: str) -> JSONResponse:
     return JSONResponse({"sent": False, "reason": reason}, status_code=status)
 
 
-async def _json_body(
+async def _authorized_json(
     request: Request, token: str | None, token_required: bool
 ) -> dict[str, Any] | JSONResponse:
-    """The request's JSON object body, or the refusal to return instead."""
+    """The request's JSON object body once its token checks out, or the refusal to return instead."""
     if token_required and not token:
         return _refuse(401, "unauthorized")
     if token:

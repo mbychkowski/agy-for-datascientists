@@ -43,8 +43,7 @@ def prompt(
         "Explain what these numbers show and how they were produced from the "
         "source table(s), and flag anything that looks off."
     )
-    text = "\n".join(lines)
-    return text if len(text) <= PROMPT_MAX else text[: PROMPT_MAX - 1] + "…"
+    return _clip("\n".join(lines), PROMPT_MAX)
 
 
 def _row(row: Mapping[str, Any]) -> str:
@@ -58,4 +57,8 @@ def _value(value: Any) -> str:
         text = "null"
     else:
         text = str(value)
-    return text if len(text) <= VALUE_MAX else text[: VALUE_MAX - 1] + "…"
+    return _clip(text, VALUE_MAX)
+
+
+def _clip(text: str, limit: int) -> str:
+    return text if len(text) <= limit else text[: limit - 1] + "…"
