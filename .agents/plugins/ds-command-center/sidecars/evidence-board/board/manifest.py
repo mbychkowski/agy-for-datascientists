@@ -19,7 +19,7 @@ from board.events import Event, Phase
 
 WORKING_DATASETS = frozenset({"staging", "features", "ml"})
 READINESS_RULES = frozenset({"non_empty", "deferred"})
-MatcherKind = Literal["lane", "blocked", "approval", "timer", "review"]
+MatcherKind = Literal["lane", "blocked", "approval", "timer", "review", "ticker"]
 # Matcher kind -> the event phases it matches.
 MATCHER_PHASES: dict[MatcherKind, frozenset[Phase]] = {
     "lane": frozenset({"pre", "post"}),
@@ -27,6 +27,7 @@ MATCHER_PHASES: dict[MatcherKind, frozenset[Phase]] = {
     "approval": frozenset({"pre", "post"}),
     "timer": frozenset({"pre", "post", "blocked"}),
     "review": frozenset({"pre", "post"}),
+    "ticker": frozenset({"pre"}),
 }
 MATCHER_KINDS: frozenset[str] = frozenset(get_args(MatcherKind))
 
@@ -59,8 +60,9 @@ class Matcher:
     `kind` is `lane` (one lane per `label`, e.g. a triage subagent),
     `blocked` (a guardrail deny), `approval` (a written file awaiting the
     presenter's approval), `timer` (a pre event starts it; a failed post or a
-    blocked event stops it) or `review` (a reviewer was dispatched). Every
-    kind but `blocked` needs a `label`. `tool` must match the whole tool name;
+    blocked event stops it), `review` (a reviewer was dispatched) or `ticker`
+    (one entry per matching pre event, e.g. each forecasting trial started).
+    Every kind but `blocked` needs a `label`. `tool` must match the whole tool name;
     `summary`, if set, must match somewhere in the event summary.
     """
 

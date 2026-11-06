@@ -22,6 +22,7 @@ import json
 import os
 import re
 import sys
+from collections.abc import Iterable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -37,11 +38,18 @@ QUOTED_MAX = 60
 VALUE_MAX = 60
 # Longest ` [tables: ...]` suffix a summary carries.
 TABLES_MAX = 100
+# Longest ` [bqml: ...]` suffix a summary carries.
+BQML_MAX = 60
 RESPONSES = {"pre": {"decision": "allow"}, "post": {}}
 
 _QUOTED = re.compile(r"\"(?:[^\"\\]|\\.)*\"|'[^']*'")
 # A BigQuery table in one of the demo datasets, project-qualified or not.
 _TABLE_REF = re.compile(r"(?i)\b(staging|features|ml|raw|ops)\.(\w+)\b")
+# A BigQuery ML model type (`model_type='KMEANS'`, or `"model_type":"ARIMA_PLUS"`
+# in JSON) or an upper-case ML./AI. function call; lower-case `ml.x` is a table.
+_BQML_REF = re.compile(
+    r"(?i:model_type)['\"]?\s*[=:]\s*['\"](\w+)['\"]|\b((?:AI|ML)\.[A-Z][A-Z_]*)\s*\("
+)
 _ENV_ASSIGNMENT = re.compile(r"\b([A-Z_][A-Z0-9_]*)=(\"[^\"]*\"?|'[^']*'?|[^\s;&|]+)")
 _SECRET_FLAG = re.compile(
     r"(?i)(--?[\w-]*(?:token|password|passwd|secret|api[-_]?key|credential)[\w-]*[= ])\S+"
@@ -103,9 +111,10 @@ def tool_call(data: Any) -> tuple[str, dict[str, Any]]:
 def summarize(name: str, args: dict[str, Any]) -> str:
     """A short, redacted line saying what the call does.
 
-    Commands, SQL and other tool calls end with the BigQuery tables the call
-    names (`[tables: staging.hospital_flu]`), so a Tile matcher still sees a
-    table that the clipped command or SQL text no longer shows. Subagent
+    Commands, SQL and other tool calls end with the BigQuery ML model types
+    and functions the call uses (`[bqml: KMEANS, ML.PREDICT]`), then the
+    BigQuery tables it names (`[tables: staging.hospital_flu]`), so a Tile
+    matcher still sees what the clipped command or SQL text no longer shows. Subagent
     dispatches carry only type and role, and file writes only their path:
     a table named in written source code is not one the call touches.
     """
@@ -124,7 +133,7 @@ def summarize(name: str, args: dict[str, Any]) -> str:
             (args[k] for k in _COMMAND_KEYS if isinstance(args.get(k), str)), None
         )
         text = _QUOTED.sub(_cut_quoted, command) if command else _key_values(args)
-    suffix = _tables_suffix(args)
+    suffix = _bqml_suffix(args) + _tables_suffix(args)
     return clip(redact(text), SUMMARY_MAX - len(suffix)) + suffix
 
 
@@ -221,6 +230,27 @@ def _strings(value: Any, depth: int = 0) -> list[str]:
     return []
 
 
+def _bqml_suffix(args: dict[str, Any]) -> str:
+    """` [bqml: KMEANS, ML.PREDICT]` for the BQML model types and functions in
+    args, in first-mention order, or "" if none."""
+    names: dict[str, None] = {}
+    for text in _strings(args):
+        for match in _BQML_REF.finditer(text):
+            names.setdefault((match.group(1) or match.group(2)).upper())
+    return _list_suffix("bqml", names, BQML_MAX)
+
+
+def _list_suffix(tag: str, names: Iterable[str], limit: int) -> str:
+    """` [tag: a, b]` holding as many names as fit in `limit` characters."""
+    joined = ""
+    for name in names:
+        longer = f"{joined}, {name}" if joined else name
+        if len(longer) + len(f" [{tag}: ]") > limit:
+            break
+        joined = longer
+    return f" [{tag}: {joined}]" if joined else ""
+
+
 def _tables_suffix(args: dict[str, Any]) -> str:
     """` [tables: a, b]` for the dataset.table names in args, or "" if none."""
     tables: dict[str, str] = {}
@@ -228,13 +258,7 @@ def _tables_suffix(args: dict[str, Any]) -> str:
         for match in _TABLE_REF.finditer(text):
             ref = f"{match.group(1)}.{match.group(2)}"
             tables.setdefault(ref.lower(), ref)
-    suffix = ""
-    for ref in tables.values():
-        longer = f"{suffix}, {ref}" if suffix else ref
-        if len(longer) + len(" [tables: ]") > TABLES_MAX:
-            break
-        suffix = longer
-    return f" [tables: {suffix}]" if suffix else ""
+    return _list_suffix("tables", tables.values(), TABLES_MAX)
 
 
 if __name__ == "__main__":

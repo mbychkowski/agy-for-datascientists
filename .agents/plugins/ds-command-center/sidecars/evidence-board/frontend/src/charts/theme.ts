@@ -1,10 +1,19 @@
-import { BarChart, HeatmapChart } from "echarts/charts";
-import { GridComponent, TooltipComponent, VisualMapComponent } from "echarts/components";
+import { BarChart, HeatmapChart, ScatterChart } from "echarts/charts";
+import { GridComponent, LegendComponent, TooltipComponent, VisualMapComponent } from "echarts/components";
 import * as echarts from "echarts/core";
 import { CanvasRenderer } from "echarts/renderers";
 
 // Tree-shaken ECharts: register only what the Tiles use.
-echarts.use([BarChart, HeatmapChart, GridComponent, TooltipComponent, VisualMapComponent, CanvasRenderer]);
+echarts.use([
+  BarChart,
+  HeatmapChart,
+  ScatterChart,
+  GridComponent,
+  LegendComponent,
+  TooltipComponent,
+  VisualMapComponent,
+  CanvasRenderer,
+]);
 
 export { echarts };
 
@@ -35,4 +44,14 @@ export function axisStyle(dark: boolean) {
     axisLabel: { color: dark ? "#a1a1aa" : "#52525b", fontSize: 14 },
     splitLine: { lineStyle: { color: dark ? "#27272a" : "#f4f4f5" } },
   };
+}
+
+/** Legend pinned top-left, styled like the axis labels. */
+export function legendStyle(dark: boolean) {
+  return { top: 0, left: 0, textStyle: { color: dark ? "#a1a1aa" : "#52525b", fontSize: 14 } };
+}
+
+/** Display name for a Cohort id, e.g. COHORT_3 -> "Cohort 3". */
+export function cohortName(cohortId: string): string {
+  return cohortId.replace(/^COHORT_/i, "Cohort ");
 }

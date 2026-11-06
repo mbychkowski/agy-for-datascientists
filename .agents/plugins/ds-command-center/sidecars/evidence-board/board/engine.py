@@ -5,7 +5,7 @@ Pure functions, no I/O. Tile state machine (spec #88):
 - `locked`: readiness not met and no matching events since the last `reset`.
 - `in_progress`: readiness not met, but matching events since the last
   `reset`; carries the `activity` to display (lanes, approval, timer,
-  review, blocked calls).
+  review, ticker, blocked calls).
 - `landed`: readiness met, with its chart and "what this proves" line. This
   wins regardless of events, so a Checkpoint swap goes `locked` -> `landed`.
   A landed Tile still carries any `activity`, so the Opening (whose table is
@@ -25,6 +25,8 @@ from board.manifest import Manifest, Tile
 Snapshot = Mapping[str, TableInfo | None]
 # Blocked calls shown per Tile, newest last.
 MAX_BLOCKED = 3
+# Ticker entries shown per Tile, newest last.
+MAX_TICKER = 8
 
 
 def awaiting(tile: Tile, snapshot: Snapshot) -> list[str]:
@@ -41,7 +43,8 @@ def is_ready(tile: Tile, snapshot: Snapshot) -> bool:
 def activity(tile: Tile, events: Sequence[Event]) -> dict[str, Any] | None:
     """What the Tile's matchers make of the events, or None if nothing matched.
 
-    `lanes` and `review` keep their first match; `approval` its latest. A
+    `lanes` and `review` keep their first match; `approval` its latest;
+    `ticker` the latest MAX_TICKER matches, oldest first. A
     `timer` (re)starts on each matching pre event and stops, with `ok` false,
     on a failed post or a blocked event. A successful post leaves it running:
     Antigravity reports a long command done once it moves to the background,
@@ -49,6 +52,7 @@ def activity(tile: Tile, events: Sequence[Event]) -> dict[str, Any] | None:
     """
     lanes: dict[str, dict[str, Any]] = {}
     blocked: list[dict[str, Any]] = []
+    ticker: list[dict[str, Any]] = []
     found: dict[str, Any] = {}
     for event in since_last_reset(list(events)):
         for matcher in tile.matchers:
@@ -71,11 +75,17 @@ def activity(tile: Tile, events: Sequence[Event]) -> dict[str, Any] | None:
                 found.setdefault("review", {"label": matcher.label, "since": event.ts})
             elif matcher.kind == "timer":
                 _tick(found, matcher.label, event)
+            elif matcher.kind == "ticker":
+                ticker.append(
+                    {"label": matcher.label, "ts": event.ts, "summary": event.summary}
+                )
             break
     if lanes:
         found["lanes"] = list(lanes.values())
     if blocked:
         found["blocked"] = blocked[-MAX_BLOCKED:]
+    if ticker:
+        found["ticker"] = ticker[-MAX_TICKER:]
     return found or None
 
 
