@@ -14,7 +14,7 @@ import logging
 import threading
 import time
 from collections.abc import Callable
-from typing import Any, Protocol
+from typing import Any, NamedTuple, Protocol
 
 from board import engine
 from board.catalog import TableCatalog
@@ -22,6 +22,13 @@ from board.events import Event
 from board.manifest import Manifest
 
 log = logging.getLogger("evidence_board")
+
+
+class TableView(NamedTuple):
+    """One catalog read: table metadata plus the chart rows of each ready Tile."""
+
+    snapshot: engine.Snapshot
+    charts: dict[str, list[dict[str, Any]]]
 
 
 class EventSource(Protocol):
@@ -45,10 +52,8 @@ class Board:
         self._event_source = events
         self._event_interval = event_interval
         self._lock = threading.Lock()
-        # Last good catalog view: (snapshot, chart rows per ready Tile).
-        self._tables: tuple[engine.Snapshot, dict[str, list[dict[str, Any]]]] | None = (
-            None
-        )
+        # Last good catalog view.
+        self._tables: TableView | None = None
         self._last_refresh = 0.0
         self._events: list[Event] = []
         self._last_event_read: float | None = None
@@ -68,8 +73,10 @@ class Board:
                         exc_info=True,
                     )
             self._tail_events(now)
-            snapshot, charts = self._tables if self._tables is not None else ({}, {})
-            return engine.tile_states(self._manifest, snapshot, charts, self._events)
+            tables = self._tables or TableView({}, {})
+            return engine.tile_states(
+                self._manifest, tables.snapshot, tables.charts, self._events
+            )
 
     def _tail_events(self, now: float) -> None:
         if self._event_source is None or (
@@ -86,9 +93,7 @@ class Board:
                 exc_info=True,
             )
 
-    def _refresh(
-        self,
-    ) -> tuple[engine.Snapshot, dict[str, list[dict[str, Any]]]]:
+    def _refresh(self) -> TableView:
         snapshot = {
             table: self._catalog.table_info(table) for table in self._manifest.tables
         }
@@ -102,4 +107,4 @@ class Board:
                 cached = (stamps, self._catalog.run_query(tile.chart_query))
                 self._charts[tile.id] = cached
             charts[tile.id] = cached[1]
-        return snapshot, charts
+        return TableView(snapshot, charts)

@@ -4,8 +4,8 @@ Observe-only: turns one Antigravity hook payload into one redacted JSON line
 appended to the workspace event log, `<repo>/.evidence-board/events.jsonl`,
 which the Evidence Board tails to show Tiles in progress (spec #88, #92).
 
-Run as `event_recorder.py pre|post` by `bin/event-recorder-pre` and
-`bin/event-recorder-post`; `bin/guardrail-hook` imports `record()` to log its
+Run as `event_recorder.py pre|post` by `bin/event-recorder` (through its
+`event-recorder-pre` / `-post` symlinks); `bin/guardrail-hook` imports `record()` to log its
 own denies as `blocked` events, because a denied call may never reach
 PostToolUse. Recording never raises and never decides anything: `main()`
 always prints the allow / empty response and returns 0.

@@ -13,10 +13,13 @@ import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, get_args
 
 EVENT_LOG = Path(".evidence-board") / "events.jsonl"
-PHASES = frozenset({"pre", "post", "blocked", "reset"})
+# pre / post: a tool call starting / finishing; blocked: a guardrail deny;
+# reset: a rehearsal reset, which hides every earlier event.
+Phase = Literal["pre", "post", "blocked", "reset"]
+PHASES: frozenset[str] = frozenset(get_args(Phase))
 
 
 def event_log_path(workspace: str | Path) -> Path:
@@ -26,7 +29,7 @@ def event_log_path(workspace: str | Path) -> Path:
 @dataclass(frozen=True)
 class Event:
     ts: str
-    phase: str
+    phase: Phase
     tool: str
     summary: str
     ok: bool | None = None

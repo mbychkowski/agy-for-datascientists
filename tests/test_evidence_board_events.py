@@ -19,15 +19,15 @@ import time
 import unittest
 from pathlib import Path
 
-from tests.helpers import WORKTREE_ROOT
+from tests.helpers import EVIDENCE_BOARD_WORKSPACE_ENV as WORKSPACE_ENV
+from tests.helpers import PLUGIN_DIR, WORKTREE_ROOT, run_plugin_hook
 
-PLUGIN_DIR = WORKTREE_ROOT / ".agents" / "plugins" / "ds-command-center"
+RECORDER = PLUGIN_DIR / "bin" / "event-recorder"
 RECORDER_PRE = PLUGIN_DIR / "bin" / "event-recorder-pre"
 RECORDER_POST = PLUGIN_DIR / "bin" / "event-recorder-post"
 GUARDRAIL = PLUGIN_DIR / "bin" / "guardrail-hook"
 BOARD_DIR = PLUGIN_DIR / "sidecars" / "evidence-board"
 MANIFEST_PATH = BOARD_DIR / "tiles.json"
-WORKSPACE_ENV = "EVIDENCE_BOARD_WORKSPACE"
 
 if str(BOARD_DIR) not in sys.path:
     sys.path.insert(0, str(BOARD_DIR))
@@ -79,16 +79,7 @@ class WorkspaceCase(unittest.TestCase):
     def hook(
         self, script: Path, payload: str, env: dict[str, str] | None = None
     ) -> subprocess.CompletedProcess:
-        result = subprocess.run(
-            [str(script)],
-            cwd=PLUGIN_DIR,
-            input=payload,
-            env=env or self.env,
-            capture_output=True,
-            text=True,
-            timeout=30,
-            check=False,
-        )
+        result = run_plugin_hook(script, payload, env or self.env)
         self.assertEqual(result.returncode, 0, result.stderr)
         return result
 
@@ -403,18 +394,17 @@ class StaticContractTest(unittest.TestCase):
         self.assertIn("./bin/event-recorder-post", registered["PostToolUse"])
         for script in (RECORDER_PRE, RECORDER_POST):
             self.assertTrue(os.access(script, os.X_OK), script)
+            self.assertEqual(
+                script.resolve(), RECORDER, "one script serves both phases"
+            )
 
     def test_recorder_and_board_agree_on_the_event_log_path(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             env = {**os.environ, WORKSPACE_ENV: tmp}
-            subprocess.run(
-                [str(RECORDER_PRE)],
-                input=_payload("run_command", {"CommandLine": "ls"}),
-                env=env,
-                check=True,
-                capture_output=True,
-                text=True,
+            result = run_plugin_hook(
+                RECORDER_PRE, _payload("run_command", {"CommandLine": "ls"}), env
             )
+            self.assertEqual(result.returncode, 0, result.stderr)
 
             self.assertEqual(len(EventLog(event_log_path(tmp)).read()), 1)
 
@@ -425,7 +415,6 @@ class StaticContractTest(unittest.TestCase):
             {"kind": "lane", "tool": ".*"},
             {"kind": "blocked"},
             {"kind": "blocked", "tool": "("},
-            {"kind": "blocked", "tool": ".*", "phases": ["later"]},
         ):
             with self.subTest(matcher=matcher), self.assertRaises(ManifestError):
                 parse_manifest({"tiles": [{**tile, "matchers": [matcher]}]})

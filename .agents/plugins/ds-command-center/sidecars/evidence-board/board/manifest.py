@@ -13,16 +13,19 @@ import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, get_args
+
+from board.events import Event, Phase
 
 WORKING_DATASETS = frozenset({"staging", "features", "ml"})
 READINESS_RULES = frozenset({"non_empty", "deferred"})
-# Matcher kind -> the event phases it matches by default.
-MATCHER_KINDS = {
+MatcherKind = Literal["lane", "blocked"]
+# Matcher kind -> the event phases it matches.
+MATCHER_PHASES: dict[MatcherKind, frozenset[Phase]] = {
     "lane": frozenset({"pre", "post"}),
     "blocked": frozenset({"blocked"}),
 }
-EVENT_PHASES = frozenset({"pre", "post", "blocked"})
+MATCHER_KINDS: frozenset[str] = frozenset(get_args(MatcherKind))
 
 _TABLE_NAME = re.compile(r"^([a-z_]+)\.([A-Za-z0-9_]+)$")
 # Any `<dataset>.` prefix naming a dataset the board must never read, quoted or not.
@@ -55,15 +58,14 @@ class Matcher:
     `summary`, if set, must match somewhere in the event summary.
     """
 
-    kind: str
+    kind: MatcherKind
     tool: re.Pattern[str]
     summary: re.Pattern[str] | None
-    phases: frozenset[str]
     label: str | None
 
-    def matches(self, event: Any) -> bool:
+    def matches(self, event: Event) -> bool:
         return (
-            event.phase in self.phases
+            event.phase in MATCHER_PHASES[self.kind]
             and self.tool.fullmatch(event.tool) is not None
             and (self.summary is None or self.summary.search(event.summary) is not None)
         )
@@ -181,11 +183,6 @@ def _parse_matcher(tile_id: str, entry: Any) -> Matcher:
     tool = _pattern(tile_id, entry, "tool")
     if tool is None:
         raise ManifestError(f"Tile {tile_id}: each matcher needs a 'tool' regex")
-    phases = entry.get("phases", sorted(MATCHER_KINDS[kind]))
-    if not isinstance(phases, list) or not phases or not set(phases) <= EVENT_PHASES:
-        raise ManifestError(
-            f"Tile {tile_id}: matcher 'phases' must be a non-empty subset of {sorted(EVENT_PHASES)}"
-        )
     label = entry.get("label")
     if kind == "lane" and (not isinstance(label, str) or not label.strip()):
         raise ManifestError(f"Tile {tile_id}: a lane matcher needs a 'label'")
@@ -193,7 +190,6 @@ def _parse_matcher(tile_id: str, entry: Any) -> Matcher:
         kind=kind,
         tool=tool,
         summary=_pattern(tile_id, entry, "summary"),
-        phases=frozenset(phases),
         label=label if isinstance(label, str) else None,
     )
 

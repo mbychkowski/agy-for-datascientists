@@ -1,13 +1,16 @@
 import json
 import os
-import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 
-from tests.helpers import WORKTREE_ROOT
+from tests.helpers import (
+    EVIDENCE_BOARD_WORKSPACE_ENV,
+    PLUGIN_DIR,
+    WORKTREE_ROOT,
+    run_plugin_hook,
+)
 
-PLUGIN_DIR = WORKTREE_ROOT / ".agents" / "plugins" / "ds-command-center"
 PLUGIN_HOOKS_JSON = PLUGIN_DIR / "hooks.json"
 HOOK_BIN = PLUGIN_DIR / "bin" / "guardrail-hook"
 PRE_COMMIT = WORKTREE_ROOT / ".husky" / "pre-commit"
@@ -68,7 +71,7 @@ class TestGuardrailsAndHooks(unittest.TestCase):
         others = [c for c in pre_tool_commands if c != "./bin/guardrail-hook"]
         self.assertTrue(others, "expected the observe-only event recorder hook")
         with tempfile.TemporaryDirectory() as workspace:
-            env = {**os.environ, "EVIDENCE_BOARD_WORKSPACE": workspace}
+            env = {**os.environ, EVIDENCE_BOARD_WORKSPACE_ENV: workspace}
             for command in others:
                 for denied in (
                     "git push origin main",
@@ -94,15 +97,8 @@ class TestGuardrailsAndHooks(unittest.TestCase):
                 }
             }
         )
-        proc = subprocess.run(
-            [str(hook)],
-            cwd=PLUGIN_DIR,
-            env=env,
-            input=payload,
-            capture_output=True,
-            text=True,
-            check=True,
-        )
+        proc = run_plugin_hook(hook, payload, env)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
         return json.loads(proc.stdout)
 
     def test_hook_denies_direct_git_push_to_main(self):

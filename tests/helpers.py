@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,26 @@ CHECKPOINT_SYMLINK = WORKTREE_ROOT / "checkpoint"
 RUN_PIPELINE_CLEAN_BIN = WORKTREE_ROOT / "bin" / "run-pipeline-clean"
 RUN_PIPELINE_CLEAN_SYMLINK = WORKTREE_ROOT / "run-pipeline-clean"
 VENDORED_DAK_DIR = WORKTREE_ROOT / ".agents" / "plugins" / "dak-bigquery"
+PLUGIN_DIR = WORKTREE_ROOT / ".agents" / "plugins" / "ds-command-center"
+# Points the Evidence Board event recorder at a workspace (bin/event_recorder.py).
+EVIDENCE_BOARD_WORKSPACE_ENV = "EVIDENCE_BOARD_WORKSPACE"
+
+
+def run_plugin_hook(
+    script: Path, payload: str, env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
+    """Pipe a hook payload into a ds-command-center hook script, run from the
+    plugin directory as Antigravity runs it; the caller checks the result."""
+    return subprocess.run(
+        [str(script)],
+        cwd=PLUGIN_DIR,
+        input=payload,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
 
 
 def create_demo_env_file(
