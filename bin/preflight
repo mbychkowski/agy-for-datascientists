@@ -74,6 +74,13 @@ _execute_check() {
     if output=$("$check_fn" "$@" 2>&1); then
         printf "${COLOR_GREEN}[PASS]${COLOR_RESET} %s\n" "${title}"
         ((CHECKS_PASSED++))
+        # A passing check may still report a "[WARN] " line (such as a probe it
+        # could not clean up); show those without changing the result.
+        if [[ -n "${output}" ]]; then
+            while IFS= read -r line; do
+                [[ "${line}" == "[WARN] "* ]] && printf "       %s\n" "${line}"
+            done <<< "${output}"
+        fi
         return 0
     fi
 
@@ -310,27 +317,55 @@ check_dataproc_hello_world_batch() {
     local batch_id="${PREFLIGHT_BATCH_ID:-preflight-hello-$$}"
     local temp_table="${PREFLIGHT_HELLO_TABLE:-_preflight_hello_$$}"
 
+    local probe_table_ref="${PROJECT_ID}:staging.${temp_table}"
+    local batch_in_flight="false"
+
+    # Removes the probe table and batch. Runs on every exit from this check,
+    # including an interrupt (see the traps below). A batch still running when
+    # interrupted is cancelled first so it cannot write the table after the
+    # removal. A failed removal prints a "[WARN] " line naming the table but
+    # leaves the check result unchanged.
     cleanup_hello_world() {
-        pinned_bq rm -f -t "${PROJECT_ID}:staging.${temp_table}" >/dev/null 2>&1 || true
+        # Ignore (not reset) further signals so a second Ctrl-C cannot abort
+        # the cleanup between cancelling the batch and removing the table.
+        trap '' INT TERM HUP
+        if [[ "${batch_in_flight}" == "true" ]]; then
+            pinned_dataproc_cancel "${batch_id}" >/dev/null 2>&1 || true
+        fi
+        local rm_out
+        if ! rm_out=$(pinned_bq rm -f -t "${probe_table_ref}" 2>&1); then
+            echo "[WARN] Could not remove probe table ${probe_table_ref}; remove it by hand. Error details: ${rm_out//$'\n'/ }"
+        fi
         pinned_dataproc_delete "${batch_id}" >/dev/null 2>&1 || true
     }
+    # This check runs in its own subshell, so the traps end with it. On an
+    # interrupt, warnings go to fd 3, which main opens as preflight's stderr
+    # ('exec 3>&2'), because main stops before printing this check's captured
+    # output.
+    trap 'cleanup_hello_world >&3; exit 130' INT
+    trap 'cleanup_hello_world >&3; exit 143' TERM
+    trap 'cleanup_hello_world >&3; exit 129' HUP
 
     local submit_out
+    batch_in_flight="true"
     if ! submit_out=$(pinned_dataproc_submit "${hello_script}" "${batch_id}" -- \
         --project-id "${PROJECT_ID}" \
         --dataset "staging" \
         --table "${temp_table}" \
         --staging-bucket "${STAGING_BUCKET}" 2>&1); then
+        # A failed submit may still leave the batch running (gcloud can lose
+        # its poll), so cleanup cancels it before removing the table.
         echo "Dataproc Serverless runtime 3.0 hello-world batch failed to execute."
         echo "Verify that Terraform has been applied ('terraform -chdir=infra apply'), Private Google Access is enabled on '${subnet_target}', and Shielded VM org policy constraints are satisfied."
         echo "Error details: ${submit_out}"
         cleanup_hello_world
         return 1
     fi
+    batch_in_flight="false"
 
     local bq_out
-    if ! bq_out=$(pinned_bq show "${PROJECT_ID}:staging.${temp_table}" 2>&1); then
-        echo "Dataproc hello-world batch completed, but verification table '${PROJECT_ID}:staging.${temp_table}' was not found in BigQuery."
+    if ! bq_out=$(pinned_bq show "${probe_table_ref}" 2>&1); then
+        echo "Dataproc hello-world batch completed, but verification table '${probe_table_ref}' was not found in BigQuery."
         echo "Error details: ${bq_out}"
         cleanup_hello_world
         return 1
@@ -859,6 +894,18 @@ main() {
     echo "=================================================="
     echo "Environment file: ${ENV_FILE}"
     echo ""
+
+    # Ctrl-C or a timeout stops preflight rather than moving on to the next
+    # check. Only the Dataproc check (5) traps the signal to remove its probe
+    # table and batch first; the ml probes of checks 8 and 9 are not cleaned
+    # up on an interrupt. The check sees the signal only when it reaches the
+    # whole process group (terminal Ctrl-C, or 'timeout' without
+    # --foreground). fd 3 keeps the terminal's stderr for warnings that check
+    # 5 prints while cleaning up.
+    exec 3>&2
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    trap 'exit 129' HUP
 
     # Load demo.env once into this shell; each check subshell re-validates it
     # through the Pinning guard instead of reloading the file.

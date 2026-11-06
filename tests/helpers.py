@@ -28,6 +28,26 @@ EVIDENCE_BOARD_DIR = PLUGIN_DIR / "sidecars" / "evidence-board"
 INSTALL_EVIDENCE_BOARD_BIN = WORKTREE_ROOT / "bin" / "install-evidence-board"
 # Points the Evidence Board event recorder at a workspace (bin/event_recorder.py).
 EVIDENCE_BOARD_WORKSPACE_ENV = "EVIDENCE_BOARD_WORKSPACE"
+# Names setup_preflight_test_env pins for the preflight Dataproc probe.
+PREFLIGHT_BATCH_ID = "preflight-hello-test"
+PREFLIGHT_HELLO_TABLE = "_preflight_hello_test"
+
+
+def preflight_probe_table_ref(project_id: str = "demo-proj-123") -> str:
+    """The `bq` reference of the preflight Dataproc probe table."""
+    return f"{project_id}:staging.{PREFLIGHT_HELLO_TABLE}"
+
+
+def preflight_probe_table_file(tmpdir: str | Path) -> Path:
+    """The file standing in for the probe table under `probe_table_file=True`:
+    it exists exactly while the fake BigQuery holds the table."""
+    return Path(tmpdir) / "probe_tables" / PREFLIGHT_HELLO_TABLE
+
+
+def preflight_batch_started_file(tmpdir: str | Path) -> Path:
+    """Touched by the fake batch submit under `batch_hangs=True` once the
+    probe table exists and gcloud starts blocking."""
+    return Path(tmpdir) / "batch_started"
 
 
 def run_plugin_hook(
@@ -122,6 +142,9 @@ def setup_preflight_test_env(
     token_fails: bool = False,
     batch_fails: bool = False,
     bq_show_fails: bool = False,
+    probe_table_file: bool = False,
+    batch_hangs: bool = False,
+    probe_rm_fails: bool = False,
     adc_dict: dict[str, Any] | None = None,
     dak_proxy_bytes: bytes | None = None,
     missing_dak_proxy: bool = False,
@@ -152,7 +175,14 @@ def setup_preflight_test_env(
     clean_equiv_status_preamble: bool = False,
     evidence_board: str = "installed",
 ) -> tuple[Path, dict[str, str], Path]:
-    """Build a complete mock CLI and ADC environment for testing bin/preflight and CLIs."""
+    """Build a complete mock CLI and ADC environment for testing bin/preflight and CLIs.
+
+    `probe_table_file` backs the preflight probe table with a real file
+    (`preflight_probe_table_file`): the batch submit creates it before
+    reporting its result, `bq show` finds it and `bq rm -f -t` deletes it.
+    `batch_hangs` (submit blocks until interrupted) and `probe_rm_fails`
+    (`bq rm` of the probe table fails) imply `probe_table_file`.
+    """
     tmp_path = Path(tmpdir)
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
@@ -195,8 +225,39 @@ def setup_preflight_test_env(
         if token_fails
         else 'echo "ya29.mock-presenter-access-token"; exit 0'
     )
+    probe_table_file = probe_table_file or batch_hangs or probe_rm_fails
+    probe_file = preflight_probe_table_file(tmp_path)
+    probe_ref = preflight_probe_table_ref(project_id)
+    if probe_table_file:
+        probe_file.parent.mkdir(exist_ok=True)
+    # The Spark job writes the probe table before gcloud reports back.
+    probe_submit_script = (
+        f'if [[ "$*" == *"--table {PREFLIGHT_HELLO_TABLE}"* ]]; then touch "{probe_file}"; fi'
+        if probe_table_file
+        else ":"
+    )
+    probe_rm_script = (
+        f'echo "BigQuery error in rm operation: Access Denied: {probe_ref}" >&2; exit 1'
+        if probe_rm_fails
+        else f'rm -f "{probe_file}"; exit 0'
+    )
+    probe_bq_script = (
+        f"""if [[ "$*" == *"{probe_ref}"* ]]; then
+    if [[ "$1" == "show" ]]; then
+        [[ -f "{probe_file}" ]] && exit 0
+        echo "Not found: Table {probe_ref}" >&2; exit 1
+    fi
+    if [[ "$1" == "rm" ]]; then
+        {probe_rm_script}
+    fi
+fi"""
+        if probe_table_file
+        else ":"
+    )
     batch_script = (
-        "echo 'ERROR: batch execution failed' >&2; exit 1"
+        f'touch "{preflight_batch_started_file(tmp_path)}"; while true; do sleep 0.1; done'
+        if batch_hangs
+        else "echo 'ERROR: batch execution failed' >&2; exit 1"
         if batch_fails
         else f"""if [[ "{use_stateful_bq}" == "true" ]]; then
         if [[ "$*" == *"pipeline_v1.py"* ]]; then
@@ -252,6 +313,7 @@ if [[ "$*" == *"print-access-token"* ]]; then
     {token_script}
 fi
 if [[ "$*" == *"dataproc batches submit"* ]]; then
+    {probe_submit_script}
     {batch_script}
 fi
 if [[ "$*" == *"storage cp"* ]]; then
@@ -337,6 +399,7 @@ exit 0
     fake_bq.write_text(
         f"""#!/usr/bin/env bash
 echo "bq $*" >> "{log_file}"
+{probe_bq_script}
 if [[ "$*" == *" ls "* ]] || [[ "$1" == "ls" ]]; then
     python3 -c '
 import json, sys
@@ -591,8 +654,8 @@ exit 0
     env = os.environ.copy()
     env["PATH"] = f"{bin_dir}:{env['PATH']}"
     env["GOOGLE_APPLICATION_CREDENTIALS"] = str(adc_file)
-    env["PREFLIGHT_BATCH_ID"] = "preflight-hello-test"
-    env["PREFLIGHT_HELLO_TABLE"] = "_preflight_hello_test"
+    env["PREFLIGHT_BATCH_ID"] = PREFLIGHT_BATCH_ID
+    env["PREFLIGHT_HELLO_TABLE"] = PREFLIGHT_HELLO_TABLE
     env["PREFLIGHT_KMEANS_MODEL"] = "_preflight_kmeans_test"
     env["PREFLIGHT_AGY_TIMEOUT"] = "5s"
     env["PIPELINE_V1_BATCH_ID"] = "ws1-pipeline-v1-test"
