@@ -7,8 +7,12 @@ PROBLEM.md
 # Per-user environment (copy from demo.env.example)
 demo.env
 
-# Personal agent setup for building this repo (not part of the demo)
-.agents/skills/
+# Personal agent setup for building this repo (not part of the demo).
+# Only the demo's shared agent config under .agents/ is tracked.
+.agents/*
+!.agents/plugins/
+!.agents/plugins.json
+!.agents/skills.json
 skills-lock.json
 .vscode/
 

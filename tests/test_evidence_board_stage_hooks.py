@@ -18,17 +18,19 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tests.helpers import WORKTREE_ROOT
+from tests.helpers import (
+    EVIDENCE_BOARD_WORKSPACE_ENV,
+    PLUGIN_DIR,
+    WORKTREE_ROOT,
+    run_plugin_hook,
+)
 
-PLUGIN_DIR = WORKTREE_ROOT / ".agents" / "plugins" / "ds-command-center"
 RECORDER = PLUGIN_DIR / "bin" / "event-recorder"
 RECORDER_PRE = PLUGIN_DIR / "bin" / "event-recorder-pre"
 RECORDER_POST = PLUGIN_DIR / "bin" / "event-recorder-post"
 GUARDRAIL = PLUGIN_DIR / "bin" / "guardrail-hook"
 RULES = PLUGIN_DIR / "rules" / "AGENTS.md"
 MANIFEST_REL = ".agents/plugins/ds-command-center/sidecars/evidence-board/tiles.json"
-# Points the event recorder at a workspace (bin/event_recorder.py).
-WORKSPACE_ENV = "EVIDENCE_BOARD_WORKSPACE"
 CONVERSATION = "ec33ebf9-0cba-4100-8142-c61503f6c587"
 TRUNCATE_OPS = 'bq query --nouse_legacy_sql "TRUNCATE TABLE ops.pipeline_run_log"'
 
@@ -51,19 +53,10 @@ class StageHookCase(unittest.TestCase):
     def setUp(self) -> None:
         self.workspace = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.workspace, ignore_errors=True)
-        self.env = {**os.environ, WORKSPACE_ENV: str(self.workspace)}
+        self.env = {**os.environ, EVIDENCE_BOARD_WORKSPACE_ENV: str(self.workspace)}
 
     def hook(self, script: Path, body: str) -> dict:
-        result = subprocess.run(
-            [str(script)],
-            cwd=PLUGIN_DIR,
-            input=body,
-            env=self.env,
-            capture_output=True,
-            text=True,
-            timeout=30,
-            check=False,
-        )
+        result = run_plugin_hook(script, body, self.env)
         self.assertEqual(result.returncode, 0, result.stderr)
         return json.loads(result.stdout)
 
