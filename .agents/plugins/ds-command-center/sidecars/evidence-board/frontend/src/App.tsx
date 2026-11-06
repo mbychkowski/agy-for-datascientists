@@ -1,7 +1,7 @@
 import { Moon, Sun } from "lucide-react";
 import { useEffect, useState } from "react";
-import { LandedTileCard, LockedTileCard } from "./components/TileCard";
-import { isLanded, type Tile } from "./types";
+import { InProgressTileCard, LandedTileCard, LockedTileCard } from "./components/TileCard";
+import { isInProgress, isLanded, type Tile } from "./types";
 import { useTiles } from "./useTiles";
 
 interface Section {
@@ -100,11 +100,17 @@ export function App() {
                     <span
                       aria-hidden
                       className={`absolute -left-[1.85rem] top-7 size-3.5 rounded-full border-2 border-zinc-50 sm:-left-[2.6rem] dark:border-[#09090b] ${
-                        isLanded(tile) ? "bg-emerald-500" : "bg-zinc-300 dark:bg-zinc-700"
+                        isLanded(tile)
+                          ? "bg-emerald-500"
+                          : isInProgress(tile)
+                            ? "bg-amber-500"
+                            : "bg-zinc-300 dark:bg-zinc-700"
                       }`}
                     />
                     {isLanded(tile) ? (
                       <LandedTileCard tile={tile} dark={dark} unlocking={!landedOnLoad.has(tile.id)} />
+                    ) : isInProgress(tile) ? (
+                      <InProgressTileCard tile={tile} />
                     ) : (
                       <LockedTileCard tile={tile} />
                     )}

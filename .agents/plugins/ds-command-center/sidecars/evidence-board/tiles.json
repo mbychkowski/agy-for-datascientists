@@ -1,5 +1,5 @@
 {
-  "_comment": "Tile manifest: the single source of truth for every Evidence Board Tile, in demo order. Tables and chart queries may only touch staging, features or ml (board/manifest.py rejects anything else). Only the Opening can land in this slice: 1A-2D use the deferred readiness rule, and their chart queries and 'proves' lines are placeholders, until their tickets (#94-#96) define them.",
+  "_comment": "Tile manifest: the single source of truth for every Evidence Board Tile, in demo order. Tables and chart queries may only touch staging, features or ml (board/manifest.py rejects anything else). Only the Opening can land in this slice: 1A-2D use the deferred readiness rule, and their chart queries and 'proves' lines are placeholders, until their tickets (#94-#96) define them. Event matchers map recorded hook events (bin/event_recorder.py) to a Tile's activity: 'lane' (one lane per label) or 'blocked' (a guardrail deny); 'tool' must match the whole tool name and 'summary' is searched.",
   "tiles": [
     {
       "id": "opening",
@@ -35,7 +35,9 @@
       },
       "proves": "Northeast flu-positive counts rose {wow_pct:+.0f}% in the week ending on the Cutoff, in raw counts: the Spike the agents must explain.",
       "proves_fallback": "Northeast flu-positive counts jumped in the week ending on the Cutoff, in raw counts: the Spike the agents must explain.",
-      "matchers": []
+      "matchers": [
+        {"kind": "blocked", "tool": ".*"}
+      ]
     },
     {
       "id": "1a",
@@ -61,7 +63,11 @@
         "query": "SELECT * FROM `staging.ws1_attribution` LIMIT 50"
       },
       "proves": "Four causes (Pipeline Defect, Sampling Artifact, Outbreak and Seasonal Ramp) sum to the Spike, and the stats-reviewer challenged the Attribution.",
-      "matchers": []
+      "matchers": [
+        {"kind": "lane", "label": "distribution-triage", "tool": "(.*[_.])?invoke_subagent", "summary": "^distribution-triage\\b"},
+        {"kind": "lane", "label": "sampling-triage", "tool": "(.*[_.])?invoke_subagent", "summary": "^sampling-triage\\b"},
+        {"kind": "lane", "label": "pipeline-triage", "tool": "(.*[_.])?invoke_subagent", "summary": "^pipeline-triage\\b"}
+      ]
     },
     {
       "id": "1c",
