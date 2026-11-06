@@ -74,13 +74,14 @@ cp -R .gemini/skills ~/demo-stage/agy-ws1/.gemini/
 
 ### Step 0b: Install the **Evidence Board** Sidecar (Window 2, Once per Machine)
 
-Antigravity discovers UI sidecars only under `~/.gemini/config/`, never in a workspace, so from the presenter repo on `main` build the **Evidence Board** frontend and copy it to `~/.gemini/config/sidecars/evidence-board/` as a standalone sidecar, pinned to the stage clone's `demo.env`. It is not a global copy of the **Command Center** plugin, so the stage clone stays the only source of the plugin's rules, skills and hooks:
+Antigravity discovers UI sidecars only under `~/.gemini/config/`, never in a workspace, so from the presenter repo on `main` build the **Evidence Board** frontend and copy it to `~/.gemini/config/sidecars/evidence-board/` as a standalone sidecar, pinned to the stage clone's `demo.env`. It is not a global copy of the **Command Center** plugin, so the stage clone stays the only source of the plugin's rules, skills and hooks. First install the board's Python requirements into the interpreter the sidecar will run (`${PYTHON:-python3}`, which the installer records):
 
 ```bash
+uv pip install --python "${PYTHON:-python3}" -r .agents/plugins/ds-command-center/sidecars/evidence-board/requirements.txt
 ./install-evidence-board --workspace ~/demo-stage/agy-ws1
 ```
 
-The command never edits your Antigravity user config. Merge the line it prints into `~/.gemini/config/config.json`, then restart the Antigravity App. Do this during machine setup, never in the T-15 window:
+The command never edits your Antigravity user config. Merge the line it prints into `~/.gemini/config/config.json`, then restart the Antigravity App. UI sidecars also sit behind the `enable-ui-sidecars` experiment flag; with it off the side pane stays blank even when the sidecar is enabled. Do this during machine setup, never in the T-15 window:
 
 ```json
 {"sidecars": {"evidence-board": {"enabled": true}}}
@@ -132,10 +133,22 @@ git -C ~/demo-stage/agy-ws1 clean -fd
 
 If a rehearsal left a commit in the stage clone, delete the clone and repeat Step 0 instead.
 
+`./reset ws1` also returns the **Evidence Board** to its **Start Point** view, with only the Opening **Tile** landed: it drops the working tables labelled `demo:true` and appends a `reset` marker to the stage clone's `.evidence-board/events.jsonl`. It preserves tables without that label, so if the agent created a **Tile**'s table without `demo:true`, that **Tile** stays landed until you drop the table.
+
 ### Step 4: Arrange Your Two Stage Windows
 
 1. **Window 1 — Command Center (Antigravity, agent)**: Open Antigravity on the stage clone at `~/demo-stage/agy-ws1` once Steps 1–3 have completed, so the fresh session loads only `.agents/plugins/ds-command-center`, `.agents/plugins/dak-bigquery`, and `.gemini/skills/` from the clone. Every prompt in this guide is typed here.
 2. **Window 2 — Presenter Terminal (`main` repo, Fallback Runner)**: Open at the presenter repo root on `main` with `source demo.env` active. Run `./checkpoint --list` to confirm the available **Checkpoints**, so you can run a fallback or swap a **Checkpoint** in ~6 seconds if needed.
+
+The **Evidence Board** sits in Window 1's side pane, beside the **Command Center** chat. Before you share your screen, ask the agent to reply with the `[Evidence Board](sidecar://evidence-board/)` pill, then click it. Only the Opening **Tile** should show as landed. If the pane is blank or the sidecar never starts, use the standalone fallback in a browser tab next to Window 1, launched from Window 2:
+
+* **Window 2 — launch the standalone Evidence Board (Fallback), then open it in a browser tab beside Window 1**:
+
+  ```bash
+  ./evidence-board --workspace ~/demo-stage/agy-ws1
+  ```
+
+  Open `http://127.0.0.1:8765/` (`--port` changes the port). It reads the same tables, so **Tiles** land exactly as they would in the pane, but its Ask button only copies to the clipboard.
 
 ---
 
@@ -168,6 +181,24 @@ The agent runs every long job itself from Window 1. **The 60-second rule**: if a
 | **Workstream 2D `cohort-forecast-refresh` Skill** | `ws2_cohort_forecast_refresh` (`.agents/plugins/ds-command-center/skills/cohort-forecast-refresh/SKILL.md`) | Window 1: the agent writes `SKILL.md`, then a fresh subagent runs `2026-W44` | **~`2 min`** (the run repeats the 2A and 2B jobs, `57s` + `46s` + `14s`) | Give the agent until **`01:12`** to write `SKILL.md` and dispatch the subagent. If it hasn't dispatched the subagent 60 seconds past that, stop the agent and swap in the Window 2 fallback at **`01:13`**; once dispatched, never run the fallback alongside it. | Window 2: `./run-cohort-forecast-refresh --period 2026-W44` (~`2 min`, runs the presenter repo's copy of the skill) |
 | **Pre-Stage Defective Pipeline Batch** | `ws1_pipeline_v1_dataproc_runtime_3_0` (`pipelines/pipeline_v1.py`) | `./bin/run-pipeline-v1` | **`88s`** (`last_observed_seconds` on Dataproc Serverless runtime `3.0`) | Pre-stage only (`./setup`): materialises the defective `staging.hospital_flu` before the session starts; never run live on stage. | `./checkpoint ws1_pipeline_v1` (`6s`) |
 | **Refined Full-Scale (90-Hospital) Operations** (`101,470` **Hospital Feed** rows, `3,780` **Reveal** rows) | — | `./load-raw-ops`, `./reset`, `./load-reveal`, `./verify-start-point` | `load-raw-ops`: **`15s`** · `verify-start-point ws1`: **`12s`** · `verify-start-point ws2`: **`9s`** · `load-reveal`: **`11s`** · `verify-start-point main`: **`23s`** · `reset ws1`: **`68s`** · `reset ws2`: **`59s`** · `checkpoint swap`: **`6s`** | Pre-stage, intermission, and Segment 2C: recorded from live BigQuery and Cloud Storage runs on the refined full-scale dataset (`90` hospitals, `scale="full"`, `seed=42`). | `./checkpoint <checkpoint_id>` (`6s`) |
+
+### 3.3 The **Evidence Board**: **Tiles** & Ask Moments
+
+Each **Tile** lands by itself as soon as its source table has rows in `staging`, `features` or `ml` (the board polls table metadata every few seconds), so it lands the same way whether the agent, a Window 2 fallback or a **Checkpoint** swap wrote the table ([ADR 0003](docs/adr/0003-evidence-board-installed-by-copy-and-driven-by-tables.md)). The manifest is [`tiles.json`](.agents/plugins/ds-command-center/sidecars/evidence-board/tiles.json).
+
+| **Tile** | Lands When This Table Has Rows | Ask Moment |
+| :--- | :--- | :--- |
+| **Opening** (The Northeast **Spike**) | `staging.hospital_flu` | Already landed at the **Start Point**; leave it on screen during Part A. |
+| **1A** (Where the **Spike** lives) | `staging.ws1_eda_heatmap` | End of 1A, before you dispatch triage. |
+| **1B** (**Attribution** of the **Spike**) | `staging.ws1_attribution` | After `stats-reviewer` reports, before your sign-off. |
+| **1C** (The **Pipeline Defect** removed) | `staging.hospital_flu_clean` | After the batch or its fallback lands, to close **Workstream** 1. |
+| **2A** (Hospital **Cohorts**) | `features.hospital_cohorts` | After the 3 **Outbreak** hospitals show as their own **Cohort**. |
+| **2B** (**WAPE** leaderboard) | `ml.forecast_leaderboard` | When clean-data models top the leaderboard, before you hand off to the **Reveal**. |
+| **2C** (The **Reveal**) | `staging.reveal_forecast_comparison` (written by `./load-reveal` in Window 2) | The finale: ask before you narrate the punchline. |
+| **2D** (Next-period refresh) | `ml.experiment_trials` and `ml.forecast_leaderboard`, once `2026-W44` trials exist | After the subagent's `2026-W44` run, to close the demo. |
+
+* **Ask button**: only landed **Tiles** have one, and only click it while the agent is idle. It opens a dialog showing the exact prompt (step, title, source tables, the "what this proves" line and up to 12 chart rows); nothing is sent until you click **Send to Command Center**. The side pane delivers the prompt straight into the **Command Center** chat; if that fails it falls back to `agentapi`, then to the clipboard ("Copied to clipboard"), and you paste it into the Window 1 chat. The standalone browser tab always copies to the clipboard.
+* **Activity lanes**: the in-progress view of a **Tile** comes from the agent's tool calls, recorded by the **Command Center** hooks into the stage clone's `.evidence-board/events.jsonl`. Both **Start Point** branches carry the event recorder hook (#117); a stage clone without it (an older clone) sends **Tiles** straight from locked to landed, because landing never depends on events.
 
 ---
 
@@ -356,7 +387,7 @@ Window 1 is still on the **Workstream** 1 stage clone. Recovery only: if the age
   Compare our Cohort forecasts trained on uncleaned staging.hospital_flu versus cleaned staging.hospital_flu_clean against the six withheld post-Cutoff Reveal weeks, and display the Reveal comparison chart and post-Cutoff WAPE by model and data cleanliness.
   ```
 * **Say to the Audience (The Finale Punchline)**:
-  > "Until this moment, no agent or table in the workspace had access to what happened after Saturday, October 31, 2026: the six post-**Cutoff** **Reveal** weeks lived in a separate bucket outside the repository. Look at the **Reveal** chart and `ml.reveal_forecast_evaluation`: the red curve, trained on uncleaned `staging.hospital_flu`, dramatically overshoots the six **Reveal** weeks because it mistook the +15-point **Pipeline Defect** and +8-point **Sampling Artifact** for exponential disease spread. The green curve, trained on `staging.hospital_flu_clean` after our **Workstream** 1 triage and deduplication fix, tracks reality tightly (`WAPE ~0.075` vs `~0.165` on uncleaned data). That is why **Workstream** 1 and **Workstream** 2 belong in the same **Command Center**: forecasting at scale only works when your agents first verify whether the data is good to use."
+  > "Until this moment, no agent or table in the workspace had access to what happened after Saturday, October 31, 2026: the six post-**Cutoff** **Reveal** weeks lived in a separate bucket outside the repository. Look at the **Reveal** chart and `staging.reveal_forecast_comparison`: the red curve, trained on uncleaned `staging.hospital_flu`, dramatically overshoots the six **Reveal** weeks because it mistook the +15-point **Pipeline Defect** and +8-point **Sampling Artifact** for exponential disease spread. The green curve, trained on `staging.hospital_flu_clean` after our **Workstream** 1 triage and deduplication fix, tracks reality tightly (`WAPE ~0.075` vs `~0.165` on uncleaned data). That is why **Workstream** 1 and **Workstream** 2 belong in the same **Command Center**: forecasting at scale only works when your agents first verify whether the data is good to use."
 
 ### Segment 2D: The Agent Creates & Runs the `cohort-forecast-refresh` Skill (`4 min`, `01:11–01:15`)
 * **Type This Prompt into Window 1 (Command Center, `01:11`)**:
@@ -406,6 +437,7 @@ The agent writes `pipeline_clean.py` (Segment 1C), the seasonal-features and K-m
 * **2A**: the 3 **Outbreak** hospitals land in their own **Cohort**.
 * **2B**: `ARIMA_PLUS` starts before `TimesFM`, and clean models beat uncleaned ones in `ml.forecast_leaderboard`.
 * **2D**: `SKILL.md` lands in `.agents/plugins/ds-command-center/skills/cohort-forecast-refresh/`, and the subagent's `2026-W44` run appends rows to `ml.experiment_trials`.
+* **Evidence Board**: each **Tile** lands within seconds of its table, and an Ask from the side pane logs `delivered via: sidecar` in the board's browser console (`agentapi` or `clipboard` means a fallback took over).
 
 Note each step's runtime as well. If the agent's output or timing differs between runs, tighten the prompt wording before Demo Day rather than relying on the Window 2 fallbacks.
 
@@ -451,3 +483,4 @@ For full derivations, see the [Data Science Primer](docs/data-science-primer.md)
 | **Chronological Backtesting** | *"Why not standard random k-fold cross-validation?"* | *"Random splits leak future time points into past training windows. Chronological backtesting trains strictly prior to the historical peak and forecasts forward."* |
 | **WAPE vs MAPE** | *"Why rank the leaderboard by WAPE instead of MAPE?"* | *"MAPE divides by individual weekly counts and explodes when off-season flu counts are small. **WAPE** (`SUM(|error|) / SUM(actual)`) weights errors proportionally to patient volume."* |
 | **Security & IAM ([ADR 0002](docs/adr/0002-dataproc-runs-as-presenter.md))** | *"Does this require `roles/owner` or custom service accounts?"* | *"Neither. Terraform creates zero service accounts or IAM bindings, and Dataproc Serverless, BigQuery, and BigQuery MCP all run under the presenter's own user credentials."* |
+| **Evidence Board ([ADR 0003](docs/adr/0003-evidence-board-installed-by-copy-and-driven-by-tables.md))** | *"Is the board scripted to the demo?"* | *"No. A **Tile** lands only when its table exists in BigQuery, and its chart queries that table. That's why it still tells the truth when I swap in a **Checkpoint**."* |

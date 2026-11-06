@@ -239,7 +239,7 @@ The live session runs from **two separate repositories**, never from one checkou
 | Window | Repository | What runs there |
 | :--- | :--- | :--- |
 | **Window 1 (agent)** | A fresh single-branch clone of `workstream-1-start`, outside this repo, with its remote removed and `demo.env` copied in | Antigravity. The agent writes and runs its code here. |
-| **Window 2 (presenter terminal)** | This repo on `main` | Every presenter script: `./stage-clean-env`, `./preflight`, `./reset`, `./verify-start-point`, `./checkpoint`, `./run-pipeline-clean`, `./run-ws2-cohorts`, `./run-ws2-forecasts`, `./load-reveal`, `./run-cohort-forecast-refresh`. |
+| **Window 2 (presenter terminal)** | This repo on `main` | Every presenter script: `./stage-clean-env`, `./preflight`, `./reset`, `./verify-start-point`, `./checkpoint`, `./run-pipeline-clean`, `./run-ws2-cohorts`, `./run-ws2-forecasts`, `./load-reveal`, `./run-cohort-forecast-refresh`, `./install-evidence-board`, `./evidence-board`. |
 
 The presenter scripts read the **Workstream** 2 SQL, the **Workstream** 2 **Checkpoint** manifests, and the **Reveal** comparison SQL, and the branch-boundary tests (`tests/test_ws1_reference_fix.py`, `tests/test_ws2_start_point.py`, `tests/test_reveal_and_verify_main.py`) keep those files off the stage branches ([ADR 0001](adr/0001-answer-key-outside-agent-reach.md)). That is why the presenter scripts only exist on `main`, and why `main` must stay out of the agent's reach:
 
@@ -260,3 +260,34 @@ cp -R .gemini/skills ~/demo-stage/agy-ws1/.gemini/
 `.gemini/skills/` is git-ignored, so the clone starts without the licensed Data Agent Kit skills; the last two lines copy your workspace install across. `./preflight` checks the presenter repo, not the clone, so confirm the copy with `ls ~/demo-stage/agy-ws1/.gemini/skills/bigquery-ai-ml/SKILL.md`.
 
 Before every rehearsal and on Demo Day, the T-15 checklist resets the clone's code (`git reset --hard`, `git clean -fd`) and then runs `./reset ws1 --yes` and `./verify-start-point ws1` from this repo. See the [DEMO.md Pre-Stage Checklist](../DEMO.md#2-pre-stage-checklist-t-15-minutes) for the full sequence.
+
+---
+
+## 9. The **Evidence Board** in Your Own Project
+
+The **Evidence Board** is an Antigravity UI sidecar that shows one **Tile** per demo step beside the **Command Center** chat. A **Tile** lands when its source table has rows in `staging`, `features` or `ml`, so it works the same whether the agent, a Window 2 fallback or a **Checkpoint** swap wrote the table. The **Tile** manifest is [`tiles.json`](../.agents/plugins/ds-command-center/sidecars/evidence-board/tiles.json).
+
+> [!WARNING]
+> **Experimental Antigravity feature.** UI sidecars sit behind the `enable-ui-sidecars` experiment flag, and their web-UI layer is undocumented, so it may change between Antigravity releases. Antigravity also discovers sidecars only under the global `~/.gemini/config/` directories, never in a workspace, so the board's source lives in this repo and an installer copies it out ([ADR 0003](adr/0003-evidence-board-installed-by-copy-and-driven-by-tables.md)). Rehearse on the machine you present from, and keep the standalone launcher ready. A blank or empty **Evidence Board** pane most likely means `enable-ui-sidecars` is off or the sidecar isn't enabled in `config.json`; use the standalone `./evidence-board` fallback.
+
+1. **Install the board's Python dependencies** into the interpreter the sidecar will run (`${PYTHON:-python3}`, which the installer records). Building the frontend also needs Node.js and `npm`:
+   ```bash
+   uv pip install --python "${PYTHON:-python3}" -r .agents/plugins/ds-command-center/sidecars/evidence-board/requirements.txt
+   ```
+2. **Copy the board into Antigravity**, pinned to the workspace whose `demo.env` it reads (for the two-repository setup, the stage clone):
+   ```bash
+   ./install-evidence-board --workspace ~/demo-stage/agy-ws1
+   ```
+   It builds the frontend, copies the sidecar to `~/.gemini/config/sidecars/evidence-board/` (replacing any earlier install), and records the Python interpreter and workspace in `install.env`. Rerun it after pulling **Evidence Board** changes, or to point the board at another workspace.
+3. **Enable the sidecar** by merging `{"sidecars": {"evidence-board": {"enabled": true}}}` into `~/.gemini/config/config.json`, then restart the Antigravity App. The installer never edits `config.json`.
+4. **Verify**: `./preflight` warns (it never fails) when the install is missing, out of date with the repo, unpinned or not enabled. If the side pane stays blank, check `~/.gemini/antigravity/sidecar_data/evidence-board/logs/`.
+
+**Standalone fallback.** Without the sidecar (for example, in the Antigravity CLI), serve the same board in a browser tab:
+
+```bash
+./evidence-board --workspace ~/demo-stage/agy-ws1 --port 8765
+```
+
+Open `http://127.0.0.1:8765/`. **Tiles** land the same way, but the Ask button copies its prompt to the clipboard instead of sending it to the **Command Center**. `--fake-catalog <json>` runs it offline against a hand-written table catalog for rehearsing the layout.
+
+**Activity lanes** (a **Tile**'s in-progress view) come from the **Command Center** event recorder hooks, which append the agent's tool calls to `<workspace>/.evidence-board/events.jsonl`, so the workspace the agent runs in (your stage clone) must carry the plugin's `hooks.json` and `bin/event-recorder*`. Landing never depends on them, and `./reset` appends a `reset` marker to that log so the board starts fresh.
