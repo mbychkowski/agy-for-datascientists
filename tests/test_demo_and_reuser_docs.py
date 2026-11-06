@@ -346,6 +346,29 @@ class TestDemoAndReuserDocs(unittest.TestCase):
         self.assertRegex(guide, r"(?i)worktree")
         self.assertIn("git show main:", guide)
 
+    def test_docs_cover_the_evidence_board_and_adr_0003(self) -> None:
+        adr = "docs/adr/0003-evidence-board-installed-by-copy-and-driven-by-tables.md"
+        self.assertTrue((REPO_ROOT / adr).is_file(), f"Missing {adr}")
+        layout = _segment(self.demo, "Step 4: Arrange")
+        self.assertIn("sidecar://evidence-board/", layout)
+        self.assertIn("./evidence-board --workspace ~/demo-stage/agy-ws1", layout)
+        ask = _segment(self.demo, "3.3 ")
+        for tile in ("Opening", "1A", "1B", "1C", "2A", "2B", "2C", "2D"):
+            with self.subTest(doc="DEMO.md 3.3", tile=tile):
+                self.assertIn(f"| **{tile}** (", ask)
+        self.assertIn("Send to Command Center", ask)
+        self.assertRegex(ask, r"(?i)clipboard")
+        for name, doc in (
+            ("README.md", self.readme),
+            ("reuser-guide", self.reuser_guide),
+        ):
+            with self.subTest(doc=name):
+                self.assertIn("./install-evidence-board --workspace", doc)
+                self.assertIn("./evidence-board --workspace", doc)
+                self.assertIn("enable-ui-sidecars", doc)
+                self.assertIn('"evidence-board": {"enabled": true}', doc)
+                self.assertIn(adr.removeprefix("docs/"), doc)
+
     def test_stage_prompts_are_typed_into_window_1(self) -> None:
         for name, doc in self._docs():
             for title in (GUARDRAIL_MOMENT, *WS1_SEGMENTS, *WS2_SEGMENTS):
