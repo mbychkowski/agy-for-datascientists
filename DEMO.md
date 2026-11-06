@@ -81,7 +81,7 @@ uv pip install --python "${PYTHON:-python3}" -r .agents/plugins/ds-command-cente
 ./install-evidence-board --workspace ~/demo-stage/agy-ws1
 ```
 
-The command never edits your Antigravity user config. Merge the line it prints into `~/.gemini/config/config.json`, then restart the Antigravity App. Do this during machine setup, never in the T-15 window:
+The command never edits your Antigravity user config. Merge the line it prints into `~/.gemini/config/config.json`, then restart the Antigravity App. UI sidecars also sit behind the `enable-ui-sidecars` experiment flag; with it off the side pane stays blank even when the sidecar is enabled. Do this during machine setup, never in the T-15 window:
 
 ```json
 {"sidecars": {"evidence-board": {"enabled": true}}}
@@ -198,7 +198,7 @@ Each **Tile** lands by itself as soon as its source table has rows in `staging`,
 | **2D** (Next-period refresh) | `ml.experiment_trials` and `ml.forecast_leaderboard`, once `2026-W44` trials exist | After the subagent's `2026-W44` run, to close the demo. |
 
 * **Ask button**: only landed **Tiles** have one, and only click it while the agent is idle. It opens a dialog showing the exact prompt (step, title, source tables, the "what this proves" line and up to 12 chart rows); nothing is sent until you click **Send to Command Center**. The side pane delivers the prompt straight into the **Command Center** chat; if that fails it falls back to `agentapi`, then to the clipboard ("Copied to clipboard"), and you paste it into the Window 1 chat. The standalone browser tab always copies to the clipboard.
-* **Activity lanes**: the in-progress view of a **Tile** comes from the agent's tool calls, recorded by the **Command Center** hooks into the stage clone's `.evidence-board/events.jsonl`. If the stage branch's `hooks.json` lacks the event recorder hook, **Tiles** go straight from locked to landed on stage; landing never depends on events.
+* **Activity lanes**: the in-progress view of a **Tile** comes from the agent's tool calls, recorded by the **Command Center** hooks into the stage clone's `.evidence-board/events.jsonl`. Both **Start Point** branches carry the event recorder hook (#117); a stage clone without it (an older clone) sends **Tiles** straight from locked to landed, because landing never depends on events.
 
 ---
 

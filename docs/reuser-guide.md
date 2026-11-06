@@ -290,4 +290,4 @@ The **Evidence Board** is an Antigravity UI sidecar that shows one **Tile** per 
 
 Open `http://127.0.0.1:8765/`. **Tiles** land the same way, but the Ask button copies its prompt to the clipboard instead of sending it to the **Command Center**. `--fake-catalog <json>` runs it offline against a hand-written table catalog for rehearsing the layout.
 
-**Activity lanes** (a **Tile**'s in-progress view) come from the **Command Center** event recorder hooks, which append the agent's tool calls to `<workspace>/.evidence-board/events.jsonl`. Landing never depends on them, and `./reset` appends a `reset` marker to that log so the board starts fresh.
+**Activity lanes** (a **Tile**'s in-progress view) come from the **Command Center** event recorder hooks, which append the agent's tool calls to `<workspace>/.evidence-board/events.jsonl`, so the workspace the agent runs in (your stage clone) must carry the plugin's `hooks.json` and `bin/event-recorder*`. Landing never depends on them, and `./reset` appends a `reset` marker to that log so the board starts fresh.
