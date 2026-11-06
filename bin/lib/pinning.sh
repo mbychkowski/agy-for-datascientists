@@ -55,6 +55,9 @@
 #   pinned_dataproc_delete
 #     reads:  PATH, PROJECT_ID, REGION
 #     writes: -
+#   pinned_dataproc_cancel
+#     reads:  PATH, PROJECT_ID, REGION
+#     writes: -
 
 _pinning_resolve_repo_root() {
   local src="${BASH_SOURCE[0]}"
@@ -446,6 +449,32 @@ pinned_dataproc_delete() {
   shift
 
   gcloud dataproc batches delete "${batch_id}" \
+    --project="${PROJECT_ID}" \
+    --region="${REGION}" \
+    --quiet \
+    "$@"
+}
+
+# Cancels a running batch without removing it; pinned_dataproc_delete then
+# removes the batch resource once it is terminal.
+pinned_dataproc_cancel() {
+  if ! command -v gcloud >/dev/null 2>&1; then
+    echo "[FAIL] gcloud CLI is not installed or not on PATH" >&2
+    return 1
+  fi
+
+  if ! pinned_require_project_region; then
+    return 1
+  fi
+
+  local batch_id="${1:-}"
+  if [[ -z "${batch_id}" ]]; then
+    echo "[FAIL] pinned_dataproc_cancel requires a batch_id" >&2
+    return 1
+  fi
+  shift
+
+  gcloud dataproc batches cancel "${batch_id}" \
     --project="${PROJECT_ID}" \
     --region="${REGION}" \
     --quiet \
