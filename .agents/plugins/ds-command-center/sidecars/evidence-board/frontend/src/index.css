@@ -1,0 +1,64 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans: "DM Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+}
+
+/* Projector legibility: a larger base size than a desk dashboard. */
+html {
+  font-size: 17px;
+}
+
+/* A Tile unlocking in place: lifts out of its locked placeholder with a green glow. */
+@keyframes tile-unlock {
+  0% {
+    opacity: 0.35;
+    transform: scale(0.97);
+    filter: blur(3px) grayscale(1);
+    box-shadow: 0 0 0 0 rgb(16 185 129 / 0.55);
+  }
+  45% {
+    opacity: 1;
+    transform: scale(1.01);
+    filter: blur(0) grayscale(0);
+    box-shadow: 0 0 0 10px rgb(16 185 129 / 0.25);
+  }
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgb(16 185 129 / 0);
+  }
+}
+
+@keyframes tile-unlock-badge {
+  0% {
+    opacity: 0;
+    transform: translateY(6px) scale(0.8);
+  }
+  15%,
+  80% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.95);
+  }
+}
+
+.tile-unlock {
+  animation: tile-unlock 1.1s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.tile-unlock-badge {
+  animation: tile-unlock-badge 4s ease-out 0.3s both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tile-unlock,
+  .tile-unlock-badge {
+    animation-duration: 1ms;
+  }
+}

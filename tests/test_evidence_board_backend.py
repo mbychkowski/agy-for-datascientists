@@ -233,6 +233,67 @@ class HealthTest(unittest.TestCase):
         self.assertEqual(response.json(), {"status": "ok"})
 
 
+class FrontendBundleTest(unittest.TestCase):
+    """The backend serves the built frontend bundle beside its JSON API."""
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    def _client(self, static_dir: Path) -> TestClient:
+        board = Board(load_manifest(MANIFEST_PATH), FakeCatalog(), refresh_interval=0)
+        return TestClient(create_app(board, static_dir=static_dir))
+
+    def test_serves_the_built_bundle_at_the_root_and_keeps_the_api(self) -> None:
+        dist = self.tmp / "dist"
+        (dist / "assets").mkdir(parents=True)
+        (dist / "index.html").write_text("<html>board</html>", "utf-8")
+        (dist / "assets" / "app.js").write_text("console.log(1)", "utf-8")
+        client = self._client(dist)
+
+        page = client.get("/")
+        asset = client.get("/assets/app.js")
+
+        self.assertEqual(page.status_code, 200)
+        self.assertIn("text/html", page.headers["content-type"])
+        self.assertIn("board", page.text)
+        self.assertEqual(asset.status_code, 200)
+        self.assertEqual(asset.text, "console.log(1)")
+        self.assertEqual(len(client.get("/api/tiles").json()["tiles"]), 8)
+
+    def test_missing_bundle_names_the_build_command_and_keeps_the_api(self) -> None:
+        client = self._client(self.tmp / "not-built")
+
+        page = client.get("/")
+
+        self.assertEqual(page.status_code, 503)
+        self.assertIn("make build-frontend", page.text)
+        self.assertEqual(client.get("/api/health").json(), {"status": "ok"})
+
+
+class RehearsalCatalogTest(unittest.TestCase):
+    """A fake catalog file is re-read when it changes, so a rehearsal can land a Tile."""
+
+    def test_editing_the_fake_catalog_file_lands_the_opening(self) -> None:
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        path = tmp / "catalog.json"
+        path.write_text(json.dumps({"tables": {}}), "utf-8")
+        os.utime(path, (1_000, 1_000))
+        client = _client(FakeCatalog.from_json(path))
+        self.assertEqual(_tiles(client)[0]["state"], "locked")
+
+        path.write_text(
+            json.dumps({"tables": {"staging.hospital_flu": {"rows": SPIKE_ROWS}}}),
+            "utf-8",
+        )
+        os.utime(path, (2_000, 2_000))
+
+        opening = _tiles(client)[0]
+        self.assertEqual(opening["state"], "landed")
+        self.assertEqual(opening["chart"]["rows"], SPIKE_ROWS)
+
+
 def _manifest_with(**overrides: object) -> dict:
     tile = {
         "id": "x",
@@ -472,6 +533,122 @@ class LauncherTest(unittest.TestCase):
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn(str(WORKTREE_ROOT / "demo.env"), result.stderr)
+
+
+STANDALONE_BIN = WORKTREE_ROOT / "bin" / "evidence-board"
+STANDALONE_LINK = WORKTREE_ROOT / "evidence-board"
+
+
+class StandaloneLauncherTest(unittest.TestCase):
+    """`./evidence-board`: the repo-root browser-tab fallback for the sidecar."""
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.env = {**_env_without_port(), "PYTHON": sys.executable}
+
+    def test_root_wrapper_is_a_symlink_to_bin_like_the_other_root_scripts(
+        self,
+    ) -> None:
+        self.assertTrue(STANDALONE_LINK.is_symlink())
+        self.assertEqual(STANDALONE_LINK.resolve(), STANDALONE_BIN.resolve())
+        self.assertTrue(os.access(STANDALONE_BIN, os.X_OK))
+
+    def test_help_documents_workspace_and_port(self) -> None:
+        result = subprocess.run(
+            [str(STANDALONE_LINK), "--help"],
+            env=self.env,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for flag in ("--workspace", "--port", "--fake-catalog"):
+            self.assertIn(flag, result.stdout)
+
+    def test_serves_the_board_on_the_given_port_from_any_cwd(self) -> None:
+        fake = self.tmp / "catalog.json"
+        fake.write_text(
+            json.dumps({"tables": {"staging.hospital_flu": {"rows": SPIKE_ROWS}}}),
+            "utf-8",
+        )
+        port = _free_port()
+        cmd = [
+            str(STANDALONE_LINK),
+            "--port",
+            str(port),
+            "--fake-catalog",
+            str(fake),
+            "--no-build",
+        ]
+        with subprocess.Popen(
+            cmd,
+            cwd=self.tmp,
+            env=self.env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        ) as proc:
+            try:
+                tiles = self._wait_for_tiles(proc, port)
+            finally:
+                proc.terminate()
+                output, _ = proc.communicate(timeout=10)
+
+        self.assertEqual([t["state"] for t in tiles][:2], ["landed", "locked"])
+        self.assertIn(f"http://127.0.0.1:{port}/", output)
+
+    def test_workspace_flag_selects_the_demo_env_the_backend_pins_to(self) -> None:
+        create_demo_env_file(self.tmp, project_id="your-project-id")
+
+        result = subprocess.run(
+            [
+                str(STANDALONE_LINK),
+                "--workspace",
+                str(self.tmp),
+                "--port",
+                str(_free_port()),
+                "--no-build",
+            ],
+            env=self.env,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(str(self.tmp / "demo.env"), result.stderr)
+        self.assertIn("PROJECT_ID", result.stderr)
+
+    def test_rejects_unknown_arguments(self) -> None:
+        result = subprocess.run(
+            [str(STANDALONE_LINK), "--bogus"],
+            env=self.env,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("--bogus", result.stderr)
+
+    def _wait_for_tiles(self, proc: subprocess.Popen, port: int) -> list[dict]:
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline:
+            if proc.poll() is not None:
+                self.fail(f"launcher exited early with {proc.returncode}")
+            try:
+                with urllib.request.urlopen(
+                    f"http://127.0.0.1:{port}/api/tiles", timeout=1
+                ) as resp:
+                    return json.loads(resp.read())["tiles"]
+            except OSError:
+                time.sleep(0.2)
+        self.fail("launcher never served /api/tiles")
 
 
 if __name__ == "__main__":

@@ -39,6 +39,9 @@ jobs:
         with:
           node-version: 22
           cache: 'npm'
+          cache-dependency-path: |
+            package-lock.json
+            .agents/plugins/ds-command-center/sidecars/evidence-board/frontend/package-lock.json
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v10.3.3
@@ -70,6 +73,9 @@ jobs:
 
       - name: Run shell syntax check & test suite
         run: make test
+
+      - name: Build Evidence Board frontend (type check + Vite build)
+        run: make build-frontend
 
       - name: Run shellcheck
         run: make lint-sh

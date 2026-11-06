@@ -1,0 +1,32 @@
+{
+  "name": "evidence-board-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Evidence Board frontend: the audience-facing storyline of Tiles (spec #88).",
+  "scripts": {
+    "dev": "vite",
+    "typecheck": "tsc -b",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@fontsource/dm-sans": "^5.3.0",
+    "@fontsource/jetbrains-mono": "^5.3.0",
+    "echarts": "^6.1.0",
+    "echarts-for-react": "^3.0.6",
+    "lucide-react": "^1.69.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.4",
+    "@types/node": "^26.6.6",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.2.1",
+    "tailwindcss": "^4.3.4",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.6"
+  }
+}

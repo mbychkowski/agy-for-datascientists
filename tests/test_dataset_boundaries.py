@@ -257,7 +257,8 @@ def _scanned_files() -> list[Path]:
             files.extend(
                 p
                 for p in sorted(directory.rglob("*"))
-                if p.is_file() and not {"__pycache__", "node_modules"} & set(p.parts)
+                if p.is_file()
+                and not {"__pycache__", "node_modules", "dist"} & set(p.parts)
             )
     return files
 
