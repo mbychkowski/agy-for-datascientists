@@ -34,6 +34,8 @@ class Event:
     summary: str
     ok: bool | None = None
     reason: str | None = None
+    # The Antigravity conversation the call ran in, for the Ask button (#97).
+    conversation_id: str | None = None
 
 
 def parse_event(line: str) -> Event | None:
@@ -44,6 +46,7 @@ def parse_event(line: str) -> Event | None:
     if not isinstance(raw, dict) or raw.get("phase") not in PHASES:
         return None
     ok, reason = raw.get("ok"), raw.get("reason")
+    conversation = raw.get("conversationId")
     return Event(
         ts=str(raw.get("ts", "")),
         phase=raw["phase"],
@@ -51,6 +54,7 @@ def parse_event(line: str) -> Event | None:
         summary=str(raw.get("summary", "")),
         ok=ok if isinstance(ok, bool) else None,
         reason=reason if isinstance(reason, str) else None,
+        conversation_id=conversation if isinstance(conversation, str) else None,
     )
 
 

@@ -29,9 +29,10 @@ MANIFEST_PATH = BOARD_DIR / "tiles.json"
 if str(BOARD_DIR) not in sys.path:
     sys.path.insert(0, str(BOARD_DIR))
 
+from board.agentapi import AgentApi, SendError
 from board.app import create_app
 from board.catalog import FakeCatalog
-from board.events import EventLog, event_log_path
+from board.events import EventLog, event_log_path, parse_event
 from board.manifest import ManifestError, load_manifest, parse_manifest
 from board.service import Board
 from fastapi.testclient import TestClient
@@ -44,13 +45,17 @@ __all__ = [
     "RECORDER",
     "RECORDER_POST",
     "RECORDER_PRE",
+    "AgentApi",
     "Board",
     "EventLog",
     "FakeCatalog",
     "ManifestError",
+    "SendError",
     "WorkspaceCase",
+    "create_app",
     "event_log_path",
     "load_manifest",
+    "parse_event",
     "parse_manifest",
     "payload",
 ]
