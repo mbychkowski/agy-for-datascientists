@@ -383,6 +383,7 @@ STAGING_BUCKET="pinned-staging-46"
 pinned_dataproc_submit "pipelines/pipeline_clean.py" "batch-sync-1" -- --project_id "$PROJECT_ID" --region "$REGION"
 pinned_dataproc_submit --async "pipelines/pipeline_v1.py" "batch-async-2" -- --project_id "$PROJECT_ID"
 pinned_dataproc_describe "batch-sync-1" --format="value(state)"
+pinned_dataproc_cancel "batch-sync-1"
 pinned_dataproc_delete "batch-sync-1"
 """,
                 env=env,
@@ -405,6 +406,10 @@ pinned_dataproc_delete "batch-sync-1"
             )
             self.assertIn(
                 "gcloud dataproc batches describe batch-sync-1 --project=pinned-proj-46 --region=us-east4 --format=value(state)",
+                calls,
+            )
+            self.assertIn(
+                "gcloud dataproc batches cancel batch-sync-1 --project=pinned-proj-46 --region=us-east4 --quiet",
                 calls,
             )
             self.assertIn(
