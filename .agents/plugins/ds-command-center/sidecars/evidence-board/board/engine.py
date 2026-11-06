@@ -4,7 +4,8 @@ Pure functions, no I/O. Tile state machine (spec #88):
 
 - `locked`: readiness not met and no matching events since the last `reset`.
 - `in_progress`: readiness not met, but matching events since the last
-  `reset`; carries the `activity` to display (lanes, blocked calls).
+  `reset`; carries the `activity` to display (lanes, approval, timer,
+  review, blocked calls).
 - `landed`: readiness met, with its chart and "what this proves" line. This
   wins regardless of events, so a Checkpoint swap goes `locked` -> `landed`.
   A landed Tile still carries any `activity`, so the Opening (whose table is
@@ -38,9 +39,17 @@ def is_ready(tile: Tile, snapshot: Snapshot) -> bool:
 
 
 def activity(tile: Tile, events: Sequence[Event]) -> dict[str, Any] | None:
-    """What the Tile's matchers make of the events, or None if nothing matched."""
+    """What the Tile's matchers make of the events, or None if nothing matched.
+
+    `lanes` and `review` keep their first match; `approval` its latest. A
+    `timer` (re)starts on each matching pre event and stops, with `ok` false,
+    on a failed post or a blocked event. A successful post leaves it running:
+    Antigravity reports a long command done once it moves to the background,
+    so only the Tile landing ends a healthy timer.
+    """
     lanes: dict[str, dict[str, Any]] = {}
     blocked: list[dict[str, Any]] = []
+    found: dict[str, Any] = {}
     for event in since_last_reset(list(events)):
         for matcher in tile.matchers:
             if not matcher.matches(event):
@@ -56,13 +65,30 @@ def activity(tile: Tile, events: Sequence[Event]) -> dict[str, Any] | None:
                         "reason": event.reason or "",
                     }
                 )
+            elif matcher.kind == "approval":
+                found["approval"] = {"label": matcher.label, "since": event.ts}
+            elif matcher.kind == "review":
+                found.setdefault("review", {"label": matcher.label, "since": event.ts})
+            elif matcher.kind == "timer":
+                _tick(found, matcher.label, event)
             break
-    found: dict[str, Any] = {}
     if lanes:
         found["lanes"] = list(lanes.values())
     if blocked:
         found["blocked"] = blocked[-MAX_BLOCKED:]
     return found or None
+
+
+def _tick(found: dict[str, Any], label: str | None, event: Event) -> None:
+    timer = found.get("timer")
+    if event.phase == "pre":
+        found["timer"] = {"label": label, "since": event.ts}
+    elif (
+        timer is not None
+        and "until" not in timer
+        and (event.phase == "blocked" or event.ok is False)
+    ):
+        timer.update(until=event.ts, ok=False)
 
 
 def tile_states(

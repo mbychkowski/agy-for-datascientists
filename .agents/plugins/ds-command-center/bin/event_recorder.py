@@ -35,9 +35,13 @@ WORKSPACE_ENV = "EVIDENCE_BOARD_WORKSPACE"
 SUMMARY_MAX = 200
 QUOTED_MAX = 60
 VALUE_MAX = 60
+# Longest ` [tables: ...]` suffix a summary carries.
+TABLES_MAX = 100
 RESPONSES = {"pre": {"decision": "allow"}, "post": {}}
 
 _QUOTED = re.compile(r"\"(?:[^\"\\]|\\.)*\"|'[^']*'")
+# A BigQuery table in one of the demo datasets, project-qualified or not.
+_TABLE_REF = re.compile(r"(?i)\b(staging|features|ml|raw|ops)\.(\w+)\b")
 _ENV_ASSIGNMENT = re.compile(r"\b([A-Z_][A-Z0-9_]*)=(\"[^\"]*\"?|'[^']*'?|[^\s;&|]+)")
 _SECRET_FLAG = re.compile(
     r"(?i)(--?[\w-]*(?:token|password|passwd|secret|api[-_]?key|credential)[\w-]*[= ])\S+"
@@ -46,6 +50,10 @@ _BEARER = re.compile(r"(?i)\b(bearer\s+)\S+")
 _ACCESS_TOKEN = re.compile(r"\bya29\.[\w.-]+")
 _WHITESPACE = re.compile(r"\s+")
 _COMMAND_KEYS = ("CommandLine", "command", "cmd")
+# File-writing tools (write_file, edit_file, replace_file_content, ...): their
+# content is source text, not a call on the tables it mentions.
+_FILE_WRITE = re.compile(r"(?i)write|edit|replace")
+_PATH_KEY = re.compile(r"(?i)path|file")
 # Envelope keys some hook payloads nest under (as unwrapped by bin/guardrail-hook).
 _WRAPPER_KEYS = ("preToolHookArgs", "toolHookArgs", "hookArgs")
 
@@ -93,10 +101,20 @@ def tool_call(data: Any) -> tuple[str, dict[str, Any]]:
 
 
 def summarize(name: str, args: dict[str, Any]) -> str:
-    """A short, redacted line saying what the call does."""
+    """A short, redacted line saying what the call does.
+
+    Commands, SQL and other tool calls end with the BigQuery tables the call
+    names (`[tables: staging.hospital_flu]`), so a Tile matcher still sees a
+    table that the clipped command or SQL text no longer shows. Subagent
+    dispatches carry only type and role, and file writes only their path:
+    a table named in written source code is not one the call touches.
+    """
     if name.endswith("invoke_subagent"):
-        text = f"{args.get('TypeName', '')}: {args.get('Role', '')}"
-    elif name.endswith("call_mcp_tool"):
+        return clip(redact(f"{args.get('TypeName', '')}: {args.get('Role', '')}"))
+    if _FILE_WRITE.search(name):
+        paths = {k: v for k, v in args.items() if _PATH_KEY.search(k)}
+        return clip(redact(_key_values(paths)))
+    if name.endswith("call_mcp_tool"):
         inner = args.get("Arguments")
         text = f"{args.get('ServerName', '')}/{args.get('ToolName', '')} " + (
             _key_values(inner) if isinstance(inner, dict) else ""
@@ -106,7 +124,8 @@ def summarize(name: str, args: dict[str, Any]) -> str:
             (args[k] for k in _COMMAND_KEYS if isinstance(args.get(k), str)), None
         )
         text = _QUOTED.sub(_cut_quoted, command) if command else _key_values(args)
-    return clip(redact(text))
+    suffix = _tables_suffix(args)
+    return clip(redact(text), SUMMARY_MAX - len(suffix)) + suffix
 
 
 def redact(text: str) -> str:
@@ -177,8 +196,45 @@ def _key_values(args: dict[str, Any]) -> str:
     parts = []
     for key, value in args.items():
         if isinstance(value, (str, int, float, bool)):
-            parts.append(f"{key}={clip(str(value), VALUE_MAX)}")
+            parts.append(f"{key}={_clip_value(str(value))}")
     return " ".join(parts)
+
+
+def _clip_value(value: str) -> str:
+    """Clip a value to VALUE_MAX; a path keeps its tail, where the file name is."""
+    value = _WHITESPACE.sub(" ", value).strip()
+    if len(value) > VALUE_MAX and "/" in value and " " not in value:
+        return "…" + value[-(VALUE_MAX - 1) :]
+    return clip(value, VALUE_MAX)
+
+
+def _strings(value: Any, depth: int = 0) -> list[str]:
+    """Every string in a (nested) args value, a few levels deep."""
+    if isinstance(value, str):
+        return [value]
+    if depth >= 3:
+        return []
+    if isinstance(value, dict):
+        value = list(value.values())
+    if isinstance(value, list):
+        return [s for item in value for s in _strings(item, depth + 1)]
+    return []
+
+
+def _tables_suffix(args: dict[str, Any]) -> str:
+    """` [tables: a, b]` for the dataset.table names in args, or "" if none."""
+    tables: dict[str, str] = {}
+    for text in _strings(args):
+        for match in _TABLE_REF.finditer(text):
+            ref = f"{match.group(1)}.{match.group(2)}"
+            tables.setdefault(ref.lower(), ref)
+    suffix = ""
+    for ref in tables.values():
+        longer = f"{suffix}, {ref}" if suffix else ref
+        if len(longer) + len(" [tables: ]") > TABLES_MAX:
+            break
+        suffix = longer
+    return f" [tables: {suffix}]" if suffix else ""
 
 
 if __name__ == "__main__":

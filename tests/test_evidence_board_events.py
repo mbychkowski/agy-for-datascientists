@@ -11,49 +11,32 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import subprocess
-import sys
 import tempfile
 import time
 import unittest
-from pathlib import Path
 
+from tests.evidence_board_helpers import (
+    CONVERSATION,
+    GUARDRAIL,
+    MANIFEST_PATH,
+    RECORDER,
+    RECORDER_POST,
+    RECORDER_PRE,
+    Board,
+    EventLog,
+    ManifestError,
+    WorkspaceCase,
+    event_log_path,
+    load_manifest,
+    parse_manifest,
+)
+from tests.evidence_board_helpers import payload as _payload
 from tests.helpers import EVIDENCE_BOARD_WORKSPACE_ENV as WORKSPACE_ENV
 from tests.helpers import PLUGIN_DIR, WORKTREE_ROOT, run_plugin_hook
 
-RECORDER = PLUGIN_DIR / "bin" / "event-recorder"
-RECORDER_PRE = PLUGIN_DIR / "bin" / "event-recorder-pre"
-RECORDER_POST = PLUGIN_DIR / "bin" / "event-recorder-post"
-GUARDRAIL = PLUGIN_DIR / "bin" / "guardrail-hook"
-BOARD_DIR = PLUGIN_DIR / "sidecars" / "evidence-board"
-MANIFEST_PATH = BOARD_DIR / "tiles.json"
-
-if str(BOARD_DIR) not in sys.path:
-    sys.path.insert(0, str(BOARD_DIR))
-
-from board.app import create_app
-from board.catalog import FakeCatalog
-from board.events import EventLog, event_log_path
-from board.manifest import ManifestError, load_manifest, parse_manifest
-from board.service import Board
-from fastapi.testclient import TestClient
-
-CONVERSATION = "ec33ebf9-0cba-4100-8142-c61503f6c587"
 TRIAGE = ["distribution-triage", "sampling-triage", "pipeline-triage"]
 SPIKE_ROWS = [{"week_end": "2026-10-31", "positive_flu_tests": 540, "wow_pct": 35.0}]
-
-
-def _payload(name: str, args: dict, **extra: object) -> str:
-    return json.dumps(
-        {
-            "toolCall": {"name": name, "args": args},
-            "stepIdx": 4,
-            "conversationId": CONVERSATION,
-            "workspacePaths": ["/workspace/project"],
-            **extra,
-        }
-    )
 
 
 def _triage_payload(type_name: str) -> str:
@@ -65,41 +48,6 @@ def _triage_payload(type_name: str) -> str:
             "Prompt": "Investigate the +35% Northeast Spike in staging.hospital_flu.",
         },
     )
-
-
-class WorkspaceCase(unittest.TestCase):
-    """A temp workspace that hooks record into and the board reads from."""
-
-    def setUp(self) -> None:
-        self.workspace = Path(tempfile.mkdtemp())
-        self.addCleanup(shutil.rmtree, self.workspace, ignore_errors=True)
-        self.env = {**os.environ, WORKSPACE_ENV: str(self.workspace)}
-        self.catalog = FakeCatalog()
-
-    def hook(
-        self, script: Path, payload: str, env: dict[str, str] | None = None
-    ) -> subprocess.CompletedProcess:
-        result = run_plugin_hook(script, payload, env or self.env)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        return result
-
-    def events(self) -> list[dict]:
-        path = event_log_path(self.workspace)
-        if not path.exists():
-            return []
-        return [json.loads(line) for line in path.read_text("utf-8").splitlines()]
-
-    def tiles(self) -> dict[str, dict]:
-        board = Board(
-            load_manifest(MANIFEST_PATH),
-            self.catalog,
-            refresh_interval=0.0,
-            events=EventLog(event_log_path(self.workspace)),
-            event_interval=0.0,
-        )
-        response = TestClient(create_app(board)).get("/api/tiles")
-        self.assertEqual(response.status_code, 200, response.text)
-        return {tile["id"]: tile for tile in response.json()["tiles"]}
 
 
 class TriageLanesTest(WorkspaceCase):

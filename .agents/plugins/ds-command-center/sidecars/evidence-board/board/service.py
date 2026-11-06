@@ -5,7 +5,8 @@ Readiness is checked through table metadata only, at most once per
 cached until one of its source tables' last-modified stamps changes. The
 workspace event log is tailed at most once per `event_interval` seconds, so
 in-progress activity shows up faster than readiness. Any catalog or event log
-error keeps the last good state and is logged; it never reaches the API.
+error keeps the last good state and is logged; it never reaches the API. A
+failing chart query holds back only its own Tile.
 """
 
 from __future__ import annotations
@@ -94,17 +95,39 @@ class Board:
             )
 
     def _refresh(self) -> TableView:
-        snapshot = {
-            table: self._catalog.table_info(table) for table in self._manifest.tables
-        }
+        # Chart reads are watched too, so a chart re-runs when its context
+        # table changes; they never gate readiness.
+        watched = dict.fromkeys(
+            [
+                *self._manifest.tables,
+                *(t for tile in self._manifest.tiles for t in tile.chart_reads),
+            ]
+        )
+        snapshot = {table: self._catalog.table_info(table) for table in watched}
         charts: dict[str, list[dict[str, Any]]] = {}
         for tile in self._manifest.tiles:
             if not engine.is_ready(tile, snapshot):
                 continue
-            stamps = tuple(snapshot[t].modified for t in tile.tables)
+            stamps = tuple(
+                info.modified if (info := snapshot[t]) else ""
+                for t in (*tile.tables, *tile.chart_reads)
+            )
             cached = self._charts.get(tile.id)
             if cached is None or cached[0] != stamps:
-                cached = (stamps, self._catalog.run_query(tile.chart_query))
-                self._charts[tile.id] = cached
+                try:
+                    cached = (stamps, self._catalog.run_query(tile.chart_query))
+                except Exception:
+                    # A live agent's table can differ from the reference
+                    # schema; that Tile waits (or keeps its last rows) while
+                    # the rest of the board carries on.
+                    log.warning(
+                        "Evidence Board chart query for Tile %s failed; retrying next refresh",
+                        tile.id,
+                        exc_info=True,
+                    )
+                    if cached is None:
+                        continue
+                else:
+                    self._charts[tile.id] = cached
             charts[tile.id] = cached[1]
         return TableView(snapshot, charts)

@@ -101,14 +101,25 @@ class FakeCatalog:
             return TableInfo(spec["num_rows"], spec["modified"]) if spec else None
 
     def run_query(self, sql: str) -> list[dict[str, Any]]:
+        """The rows of the known table named earliest in `sql`.
+
+        So a chart query that joins several tables must name the table whose
+        rows stand in for its result first (e.g. 1C names
+        `staging.hospital_flu_clean` before `staging.hospital_flu`).
+        """
         self._reload_if_changed()
         with self._lock:
             if self.failing:
                 raise ConnectionError("fake catalog: transient failure")
             self.queries_run += 1
+            named = []
             for name, spec in self._tables.items():
-                if re.search(rf"`?{re.escape(name)}`?(?![\w])", sql):
-                    return [dict(row) for row in spec["rows"]]
+                found = re.search(rf"`?{re.escape(name)}`?(?![\w])", sql)
+                if found:
+                    named.append((found.start(), spec))
+            if named:
+                _, spec = min(named, key=lambda pair: pair[0])
+                return [dict(row) for row in spec["rows"]]
             raise LookupError(f"fake catalog: query reads no known table: {sql[:80]}")
 
 

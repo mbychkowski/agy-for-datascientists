@@ -70,6 +70,7 @@ export function LandedTileCard({ tile, dark, unlocking }: { tile: LandedTile; da
         </div>
       </div>
 
+      {tile.activity ? <StepList activity={tile.activity} landed /> : null}
       {tile.activity?.blocked?.length ? <BlockedList blocked={tile.activity.blocked} /> : null}
 
       <div className="mt-6">
@@ -118,10 +119,83 @@ export function InProgressTileCard({ tile }: { tile: InProgressTile }) {
             ))}
           </p>
           {lanes.length ? <LaneList lanes={lanes} /> : null}
+          <StepList activity={tile.activity} landed={false} />
         </div>
       </div>
       {blocked.length ? <BlockedList blocked={blocked} /> : null}
     </article>
+  );
+}
+
+/**
+ * The approval, timer and review steps of a Tile's activity. A landed Tile
+ * keeps only what still matters: the review and a timer that failed.
+ */
+function StepList({ activity, landed }: { activity: Activity; landed: boolean }) {
+  const now = useNow(1000);
+  const { approval, timer, review } = activity;
+  const timerFailed = timer?.ok === false;
+  const approved = Boolean(approval && timer && Date.parse(timer.since) >= Date.parse(approval.since));
+  const steps: { key: string; tone: "busy" | "done" | "failed"; text: string; detail?: string; clock?: string }[] = [];
+  if (approval && !landed) {
+    steps.push({
+      key: "approval",
+      tone: approved ? "done" : "busy",
+      text: approved ? "Diff approved" : "Diff awaiting approval",
+      detail: approval.label,
+    });
+  }
+  if (timer && (!landed || timerFailed)) {
+    const end = timer.until ? Date.parse(timer.until) : now;
+    steps.push({
+      key: "timer",
+      tone: timerFailed ? "failed" : "busy",
+      text: timerFailed ? `${timer.label} failed` : `${timer.label} running`,
+      clock: elapsed(timer.since, end),
+    });
+  }
+  if (review) {
+    steps.push({
+      key: "review",
+      tone: landed ? "done" : "busy",
+      text: landed ? "Peer review requested" : "Peer review",
+      detail: review.label,
+      clock: landed ? undefined : elapsed(review.since, now),
+    });
+  }
+  if (!steps.length) return null;
+  const tones = {
+    busy: { dot: "animate-pulse bg-amber-500", box: "border-amber-200 dark:border-amber-800/40" },
+    done: { dot: "bg-emerald-500", box: "border-emerald-200 dark:border-emerald-800/40" },
+    failed: { dot: "bg-red-500", box: "border-red-300 dark:border-red-800/50" },
+  };
+  return (
+    <ul className="mt-4 space-y-2" aria-label="Steps">
+      {steps.map((step) => (
+        <li
+          key={step.key}
+          data-step={step.key}
+          className={`flex items-center justify-between gap-3 rounded-lg border bg-white px-3 py-2 dark:bg-zinc-900 ${tones[step.tone].box}`}
+        >
+          <span className="flex min-w-0 flex-wrap items-center gap-2 text-base font-medium">
+            <span aria-hidden className={`size-2 shrink-0 rounded-full ${tones[step.tone].dot}`} />
+            {step.text}
+            {step.detail ? (
+              <code className="break-all rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-sm text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+                {step.detail}
+              </code>
+            ) : null}
+          </span>
+          {step.clock ? (
+            <span
+              className={`shrink-0 font-mono text-sm tabular-nums ${step.tone === "failed" ? "text-red-600 dark:text-red-400" : "text-zinc-500 dark:text-zinc-400"}`}
+            >
+              {step.clock}
+            </span>
+          ) : null}
+        </li>
+      ))}
+    </ul>
   );
 }
 
