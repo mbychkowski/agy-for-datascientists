@@ -598,6 +598,9 @@ exit 0
     env["PIPELINE_V1_BATCH_ID"] = "ws1-pipeline-v1-test"
     env["PIPELINE_CLEAN_BATCH_ID"] = "ws1-pipeline-clean-test"
     env["RECORDED_RUNTIMES_FILE"] = str(tmp_path / "recorded_runtimes.json")
+    # bin/reset appends Evidence Board reset events to the stage clones; keep
+    # tests away from a real ~/demo-stage.
+    env["DEMO_STAGE_DIR"] = str(tmp_path / "demo-stage")
     env["PREFLIGHT_STRICT_JAVA_PATH"] = "1"
     env["JAVA_HOME"] = str(tmp_path)
     env["JAVA_21_HOME"] = ""
