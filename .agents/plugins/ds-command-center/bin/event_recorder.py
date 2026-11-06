@@ -41,7 +41,7 @@ RESPONSES = {"pre": {"decision": "allow"}, "post": {}}
 
 _QUOTED = re.compile(r"\"(?:[^\"\\]|\\.)*\"|'[^']*'")
 # A BigQuery table in one of the demo datasets, project-qualified or not.
-_TABLE_REF = re.compile(r"(?i)\b(staging|features|ml|raw|ops|checkpoint)\.(\w+)\b")
+_TABLE_REF = re.compile(r"(?i)\b(staging|features|ml|raw|ops)\.(\w+)\b")
 _ENV_ASSIGNMENT = re.compile(r"\b([A-Z_][A-Z0-9_]*)=(\"[^\"]*\"?|'[^']*'?|[^\s;&|]+)")
 _SECRET_FLAG = re.compile(
     r"(?i)(--?[\w-]*(?:token|password|passwd|secret|api[-_]?key|credential)[\w-]*[= ])\S+"
@@ -50,6 +50,10 @@ _BEARER = re.compile(r"(?i)\b(bearer\s+)\S+")
 _ACCESS_TOKEN = re.compile(r"\bya29\.[\w.-]+")
 _WHITESPACE = re.compile(r"\s+")
 _COMMAND_KEYS = ("CommandLine", "command", "cmd")
+# File-writing tools (write_file, edit_file, replace_file_content, ...): their
+# content is source text, not a call on the tables it mentions.
+_FILE_WRITE = re.compile(r"(?i)write|edit|replace")
+_PATH_KEY = re.compile(r"(?i)path|file")
 # Envelope keys some hook payloads nest under (as unwrapped by bin/guardrail-hook).
 _WRAPPER_KEYS = ("preToolHookArgs", "toolHookArgs", "hookArgs")
 
@@ -99,12 +103,17 @@ def tool_call(data: Any) -> tuple[str, dict[str, Any]]:
 def summarize(name: str, args: dict[str, Any]) -> str:
     """A short, redacted line saying what the call does.
 
-    Except for subagent dispatches, it ends with the BigQuery tables the call
+    Commands, SQL and other tool calls end with the BigQuery tables the call
     names (`[tables: staging.hospital_flu]`), so a Tile matcher still sees a
-    table that the clipped command or SQL text no longer shows.
+    table that the clipped command or SQL text no longer shows. Subagent
+    dispatches carry only type and role, and file writes only their path:
+    a table named in written source code is not one the call touches.
     """
     if name.endswith("invoke_subagent"):
         return clip(redact(f"{args.get('TypeName', '')}: {args.get('Role', '')}"))
+    if _FILE_WRITE.search(name):
+        paths = {k: v for k, v in args.items() if _PATH_KEY.search(k)}
+        return clip(redact(_key_values(paths)))
     if name.endswith("call_mcp_tool"):
         inner = args.get("Arguments")
         text = f"{args.get('ServerName', '')}/{args.get('ToolName', '')} " + (

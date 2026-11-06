@@ -9,31 +9,21 @@ rows stand in for each Tile's chart query result.
 from __future__ import annotations
 
 import json
-import os
-import shutil
-import sys
-import tempfile
 import unittest
-from pathlib import Path
 
-from tests.helpers import EVIDENCE_BOARD_WORKSPACE_ENV as WORKSPACE_ENV
-from tests.helpers import PLUGIN_DIR, run_plugin_hook
-
-RECORDER_PRE = PLUGIN_DIR / "bin" / "event-recorder-pre"
-RECORDER_POST = PLUGIN_DIR / "bin" / "event-recorder-post"
-GUARDRAIL = PLUGIN_DIR / "bin" / "guardrail-hook"
-BOARD_DIR = PLUGIN_DIR / "sidecars" / "evidence-board"
-MANIFEST_PATH = BOARD_DIR / "tiles.json"
-
-if str(BOARD_DIR) not in sys.path:
-    sys.path.insert(0, str(BOARD_DIR))
-
-from board.app import create_app
-from board.catalog import FakeCatalog
-from board.events import EventLog, event_log_path
-from board.manifest import ManifestError, load_manifest, parse_manifest
-from board.service import Board
-from fastapi.testclient import TestClient
+from tests.evidence_board_helpers import (
+    GUARDRAIL,
+    MANIFEST_PATH,
+    RECORDER_POST,
+    RECORDER_PRE,
+    FakeCatalog,
+    ManifestError,
+    WorkspaceCase,
+    event_log_path,
+    load_manifest,
+    parse_manifest,
+)
+from tests.evidence_board_helpers import payload as _payload
 
 TRIAGE = ["distribution-triage", "sampling-triage", "pipeline-triage"]
 PIPELINE_PATH = (
@@ -113,21 +103,10 @@ SOURCES = {
     "1c": ("staging.hospital_flu_clean", DEDUP_ROWS),
 }
 PROVES = {
-    "1a": "17 of 25 Northeast hospitals carry 92% of the Spike in the week ending on the Cutoff; the other 8 barely moved.",
+    "1a": "17 of 25 Northeast hospitals carry 92% of the Spike in the week ending on the Cutoff; the other 8 share the rest.",
     "1b": "The four causes add up to the +35% Spike; only 12 of those points are real disease (Outbreak plus Seasonal Ramp), the rest is the Pipeline Defect and the Sampling Artifact.",
     "1c": "Deduplicating by hospital and feed date removes 40 Hospital Feed rows across 40 duplicate keys, leaving 0 duplicate keys in staging.hospital_flu_clean.",
 }
-
-
-def _payload(name: str, args: dict, **extra: object) -> str:
-    return json.dumps(
-        {
-            "toolCall": {"name": name, "args": args},
-            "conversationId": "ec33ebf9-0cba-4100-8142-c61503f6c587",
-            "workspacePaths": ["/workspace/project"],
-            **extra,
-        }
-    )
 
 
 def _subagent(type_name: str) -> str:
@@ -135,36 +114,6 @@ def _subagent(type_name: str) -> str:
         "invoke_subagent",
         {"TypeName": type_name, "Role": "Reviewer", "Prompt": "Challenge it."},
     )
-
-
-class WorkspaceCase(unittest.TestCase):
-    def setUp(self) -> None:
-        self.workspace = Path(tempfile.mkdtemp())
-        self.addCleanup(shutil.rmtree, self.workspace, ignore_errors=True)
-        self.env = {**os.environ, WORKSPACE_ENV: str(self.workspace)}
-        self.catalog = FakeCatalog()
-
-    def hook(self, script: Path, payload: str) -> None:
-        result = run_plugin_hook(script, payload, self.env)
-        self.assertEqual(result.returncode, 0, result.stderr)
-
-    def events(self) -> list[dict]:
-        path = event_log_path(self.workspace)
-        return [json.loads(line) for line in path.read_text("utf-8").splitlines()]
-
-    def board(self) -> Board:
-        return Board(
-            load_manifest(MANIFEST_PATH),
-            self.catalog,
-            refresh_interval=0.0,
-            events=EventLog(event_log_path(self.workspace)),
-            event_interval=0.0,
-        )
-
-    def tiles(self, board: Board | None = None) -> dict[str, dict]:
-        response = TestClient(create_app(board or self.board())).get("/api/tiles")
-        self.assertEqual(response.status_code, 200, response.text)
-        return {tile["id"]: tile for tile in response.json()["tiles"]}
 
 
 class ProfilingActivityTest(WorkspaceCase):
@@ -282,6 +231,18 @@ class CleanPipelineActivityTest(WorkspaceCase):
             tile["activity"]["approval"]["label"], "pipelines/pipeline_clean.py"
         )
         self.assertNotIn("timer", tile["activity"])
+
+    def test_pipeline_source_naming_the_table_does_not_start_1a(self) -> None:
+        source = 'spark.read.table("staging.hospital_flu").dropDuplicates()\n'
+        self.hook(
+            RECORDER_POST,
+            _payload("write_file", {"Path": PIPELINE_PATH, "Content": source}),
+        )
+
+        tiles = self.tiles()
+
+        self.assertEqual(tiles["1a"]["state"], "locked")
+        self.assertIn("approval", tiles["1c"]["activity"])
 
     def test_batch_submit_starts_a_timer_that_a_failure_stops(self) -> None:
         self.hook(

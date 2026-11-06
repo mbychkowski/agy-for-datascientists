@@ -103,7 +103,7 @@
           "ORDER BY ne.share_of_ne_spike_pct DESC, ne.hospital_id, ne.week_end"
         ]
       },
-      "proves": "{spike_hospitals} of {ne_hospitals} Northeast hospitals carry {spike_share_pct:.0f}% of the Spike in the week ending on the Cutoff; the other {other_hospitals} barely moved.",
+      "proves": "{spike_hospitals} of {ne_hospitals} Northeast hospitals carry {spike_share_pct:.0f}% of the Spike in the week ending on the Cutoff; the other {other_hospitals} share the rest.",
       "matchers": [
         {
           "kind": "lane",
