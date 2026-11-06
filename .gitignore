@@ -7,12 +7,16 @@ PROBLEM.md
 # Per-user environment (copy from demo.env.example)
 demo.env
 
-# Personal agent setup for building this repo (not part of the demo).
-# Only the demo's shared agent config under .agents/ is tracked.
+# Agent config under .agents/: the demo's plugins plus the shared skills,
+# rules, and workflows used to build this repo are tracked; anything else
+# (e.g. per-user mcp_config.json) stays local.
 .agents/*
 !.agents/plugins/
 !.agents/plugins.json
 !.agents/skills.json
+!.agents/rules/
+!.agents/skills/
+!.agents/workflows/
 skills-lock.json
 .vscode/
 
