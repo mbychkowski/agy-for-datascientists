@@ -3,8 +3,8 @@
 # Evidence Board: sidecar entrypoint (sidecar.json runs `bash bin/serve`)
 #
 # Antigravity starts this from the installed copy under
-# ~/.gemini/config/plugins/ds-command-center/sidecars/evidence-board/, with that
-# folder as the working directory and ANTIGRAVITY_SIDECAR_WEB_PORT set. The
+# ~/.gemini/config/sidecars/evidence-board/, with that folder as the working
+# directory and ANTIGRAVITY_SIDECAR_WEB_PORT set. The
 # installed copy lives outside the repo, so bin/install-evidence-board records
 # the Python interpreter and the workspace (the folder holding demo.env) in
 # install.env next to sidecar.json. Without install.env (running from the repo)

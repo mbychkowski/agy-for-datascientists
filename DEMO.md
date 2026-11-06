@@ -72,7 +72,23 @@ cp -R .gemini/skills ~/demo-stage/agy-ws1/.gemini/
 
 `.gemini/skills/` is git-ignored, so the clone starts without the licensed Data Agent Kit skills; the last two lines copy your workspace install across. `./preflight` checks the presenter repo, not the clone, so confirm the copy with `ls ~/demo-stage/agy-ws1/.gemini/skills/bigquery-ai-ml/SKILL.md`.
 
-Complete Steps 1–5 before connecting to the projector or starting your screen share, so only the repository's **Command Center** configuration loads and every Google Cloud dependency is verified.
+### Step 0b: Install the **Evidence Board** Sidecar (Window 2, Once per Machine)
+
+Antigravity discovers UI sidecars only under `~/.gemini/config/`, never in a workspace, so from the presenter repo on `main` build the **Evidence Board** frontend and copy it to `~/.gemini/config/sidecars/evidence-board/` as a standalone sidecar, pinned to the stage clone's `demo.env`. It is not a global copy of the **Command Center** plugin, so the stage clone stays the only source of the plugin's rules, skills and hooks:
+
+```bash
+./install-evidence-board --workspace ~/demo-stage/agy-ws1
+```
+
+The command never edits your Antigravity user config. Merge the line it prints into `~/.gemini/config/config.json`, then restart the Antigravity App. Do this during machine setup, never in the T-15 window:
+
+```json
+{"sidecars": {"evidence-board": {"enabled": true}}}
+```
+
+Rerun the command after pulling **Evidence Board** changes on `main`; it replaces the earlier install. `./preflight` (Step 2) warns when the install is missing, out of date with the repo, or not enabled. If the side pane stays blank, check `~/.gemini/antigravity/sidecar_data/evidence-board/logs/`, or open the board in a browser tab with `./evidence-board --workspace ~/demo-stage/agy-ws1`.
+
+Complete Steps 1–4 before connecting to the projector or starting your screen share, so only the repository's **Command Center** configuration loads and every Google Cloud dependency is verified.
 
 ### Step 1: Isolate Personal Rules & Skills (`./stage-clean-env --stash`, Window 2)
 
@@ -101,7 +117,7 @@ source demo.env
 ./preflight
 ```
 
-Verify that all 12 checks report `[PASS]`: environment variables, active `gcloud` project pinning, Application Default Credentials (ADC) quota project alignment, Dataproc Serverless runtime `3.0` execution, BigQuery MCP presenter authentication, `guardrail-hook` dataset enforcement, BigQuery ML (`AI.FORECAST` and `KMEANS`), subagent dispatch, workspace Data Agent Kit skills visibility, and Java 21 availability. Do not go on stage if any required check reports `[FAIL]`.
+Verify that all 12 checks report `[PASS]`: environment variables, active `gcloud` project pinning, Application Default Credentials (ADC) quota project alignment, Dataproc Serverless runtime `3.0` execution, BigQuery MCP presenter authentication, `guardrail-hook` dataset enforcement, BigQuery ML (`AI.FORECAST` and `KMEANS`), subagent dispatch, workspace Data Agent Kit skills visibility, and Java 21 availability. Do not go on stage if any required check reports `[FAIL]`. The warning-only checks that follow (vendored BigQuery MCP proxy drift and the **Evidence Board** install) never fail preflight; fix an **Evidence Board** warning with Step 0b, or plan on the browser-tab fallback.
 
 ### Step 3: Reset the Stage Clone's Code & the Workstream 1 Start Point (Window 2)
 
@@ -116,25 +132,9 @@ git -C ~/demo-stage/agy-ws1 clean -fd
 
 If a rehearsal left a commit in the stage clone, delete the clone and repeat Step 0 instead.
 
-### Step 4: Install the **Evidence Board** Sidecar (`./install-evidence-board`, Window 2)
+### Step 4: Arrange Your Two Stage Windows
 
-Antigravity discovers UI sidecars only under `~/.gemini/config/plugins/`, so from the presenter repo on `main` (Window 2) build the **Evidence Board** frontend and copy the sidecar there, pinned to the stage clone's `demo.env`. Rerun it after pulling `main`; it replaces the earlier install:
-
-```bash
-./install-evidence-board --workspace ~/demo-stage/agy-ws1
-```
-
-The command never edits your Antigravity user config. Once per machine, merge the line it prints into `~/.gemini/config/config.json` and restart the Antigravity App:
-
-```json
-{"sidecars": {"ds-command-center/evidence-board": {"enabled": true}}}
-```
-
-If the side pane stays blank, check `~/.gemini/antigravity/sidecar_data/ds-command-center/evidence-board/logs/`, or open the board in a browser tab with `./evidence-board --workspace ~/demo-stage/agy-ws1`.
-
-### Step 5: Arrange Your Two Stage Windows
-
-1. **Window 1 — Command Center (Antigravity, agent)**: Open Antigravity on the stage clone at `~/demo-stage/agy-ws1` once Steps 1–4 have completed, so the fresh session loads only `.agents/plugins/ds-command-center`, `.agents/plugins/dak-bigquery`, and `.gemini/skills/` from the clone. Every prompt in this guide is typed here.
+1. **Window 1 — Command Center (Antigravity, agent)**: Open Antigravity on the stage clone at `~/demo-stage/agy-ws1` once Steps 1–3 have completed, so the fresh session loads only `.agents/plugins/ds-command-center`, `.agents/plugins/dak-bigquery`, and `.gemini/skills/` from the clone. Every prompt in this guide is typed here.
 2. **Window 2 — Presenter Terminal (`main` repo, Fallback Runner)**: Open at the presenter repo root on `main` with `source demo.env` active. Run `./checkpoint --list` to confirm the available **Checkpoints**, so you can run a fallback or swap a **Checkpoint** in ~6 seconds if needed.
 
 ---

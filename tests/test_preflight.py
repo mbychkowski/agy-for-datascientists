@@ -345,8 +345,12 @@ class TestPreflightCLI(unittest.TestCase):
                 "Manual Verification Steps (Not Scriptable by CLI Harness):",
                 proc.stdout,
             )
+            self.assertIn(
+                "[PASS] Evidence Board sidecar is installed, current and enabled",
+                proc.stdout,
+            )
             self.assertIn("[MANUAL] VS Code Data Agent Kit UI", proc.stdout)
-            self.assertIn("Summary: 13 passed, 0 failed.", proc.stdout)
+            self.assertIn("Summary: 14 passed, 0 failed.", proc.stdout)
 
     def test_preflight_runs_ai_forecast_and_kmeans_and_cleans_up_temp_model(self):
         """preflight must invoke AI.FORECAST, train a tiny K-means model in ml, and clean up the temporary model."""
@@ -591,6 +595,48 @@ class TestPreflightEnvironmentLoading(unittest.TestCase):
             self.assertIn("terraform -chdir=infra apply", dataproc_block)
             calls = log_file.read_text(encoding="utf-8") if log_file.exists() else ""
             self.assertNotIn("dataproc batches submit", calls)
+
+
+class TestPreflightEvidenceBoardCheck(unittest.TestCase):
+    TITLE = "Evidence Board sidecar is installed, current and enabled"
+    FIX = "./install-evidence-board --workspace ~/demo-stage/agy-ws1"
+
+    def _warn_block(self, state: str) -> str:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env_file, env, _ = setup_preflight_test_env(tmpdir, evidence_board=state)
+            config_dir = env["PREFLIGHT_GEMINI_CONFIG_DIR"]
+            before = sorted(str(p) for p in Path(config_dir).rglob("*"))
+
+            proc = _run_preflight(env_file, env)
+
+            self.assertEqual(proc.returncode, 0, f"{proc.stdout}\n{proc.stderr}")
+            self.assertIn(f"[WARN] {self.TITLE}", proc.stdout)
+            self.assertIn("0 failed, 1 warning(s)", proc.stdout)
+            # Read-only: preflight never installs or enables the board itself.
+            after = sorted(str(p) for p in Path(config_dir).rglob("*"))
+            self.assertEqual(before, after)
+            return proc.stdout.split(f"[WARN] {self.TITLE}", 1)[1].split("\n[", 1)[0]
+
+    def test_warns_with_the_install_command_when_the_board_is_missing(self):
+        block = self._warn_block("missing")
+        self.assertIn("not installed", block)
+        self.assertIn(self.FIX, block)
+
+    def test_warns_when_the_installed_copy_is_out_of_date_with_the_repo(self):
+        block = self._warn_block("stale")
+        self.assertIn("out of date", block)
+        self.assertIn("tiles.json", block)
+        self.assertIn(self.FIX, block)
+
+    def test_warns_when_the_installed_workspace_has_no_demo_env(self):
+        block = self._warn_block("no_workspace")
+        self.assertIn("demo.env", block)
+        self.assertIn(self.FIX, block)
+
+    def test_warns_with_the_enable_line_when_the_sidecar_is_not_enabled(self):
+        block = self._warn_block("disabled")
+        self.assertIn('{"sidecars": {"evidence-board": {"enabled": true}}}', block)
+        self.assertIn("config.json", block)
 
 
 if __name__ == "__main__":

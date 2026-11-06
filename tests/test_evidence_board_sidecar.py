@@ -23,9 +23,10 @@ DESCRIPTOR = SIDECAR_DIR / "sidecar.json"
 AUX_PANE = "SIDECAR_UI_ENTRYPOINT_AUX_PANE"
 INSTALL_BIN = WORKTREE_ROOT / "bin" / "install-evidence-board"
 INSTALL_SYMLINK = WORKTREE_ROOT / "install-evidence-board"
-INSTALLED_REL = Path(
-    ".gemini", "config", "plugins", "ds-command-center", "sidecars", "evidence-board"
-)
+# A standalone global sidecar, not a global `ds-command-center` plugin: that
+# would share a folder name (and its enable toggle) with the workspace plugin.
+INSTALLED_REL = Path(".gemini", "config", "sidecars", "evidence-board")
+SIDECAR_ID = "evidence-board"
 USER_CONFIG_REL = Path(".gemini", "config", "config.json")
 
 
@@ -104,7 +105,7 @@ class InstallCommandTest(unittest.TestCase):
         self.assertTrue(INSTALL_SYMLINK.is_symlink())
         self.assertEqual(INSTALL_SYMLINK.resolve(), INSTALL_BIN.resolve())
 
-    def test_copies_the_sidecar_under_ds_command_center_without_symlinks(
+    def test_copies_a_standalone_global_sidecar_without_symlinks(
         self,
     ) -> None:
         proc = self._install()
@@ -117,6 +118,7 @@ class InstallCommandTest(unittest.TestCase):
         for path in [self.installed, *self.installed.rglob("*")]:
             self.assertFalse(path.is_symlink(), f"{path} must be a copy")
         self.assertEqual(list(self.installed.rglob("node_modules")), [])
+        self.assertFalse((self.home / ".gemini" / "config" / "plugins").exists())
 
     def test_installed_entrypoint_starts_the_backend_against_the_workspace(
         self,
@@ -164,8 +166,7 @@ class InstallCommandTest(unittest.TestCase):
             (before.st_mtime_ns, before.st_ino), (after.st_mtime_ns, after.st_ino)
         )
         self.assertIn(str(self.user_config), proc.stdout)
-        self.assertIn('"ds-command-center/evidence-board"', proc.stdout)
-        self.assertIn('"enabled": true', proc.stdout)
+        self.assertIn(f'"{SIDECAR_ID}": {{"enabled": true}}', proc.stdout)
 
     def test_fails_without_demo_env_in_the_workspace_and_installs_nothing(
         self,
@@ -180,28 +181,40 @@ class InstallCommandTest(unittest.TestCase):
 
 
 class PreStageAndRulesTest(unittest.TestCase):
-    def test_pre_stage_checklist_installs_the_board_from_window_2(self) -> None:
+    def test_pre_stage_setup_installs_the_board_once_per_machine(self) -> None:
         demo = (WORKTREE_ROOT / "DEMO.md").read_text("utf-8")
-        checklist = demo.split("## 3.", 1)[0].split("## 2. Pre-Stage Checklist", 1)[1]
-        step = next(
-            s for s in checklist.split("\n### ") if "./install-evidence-board" in s
-        )
+        checklist = demo.split("\n## 3.", 1)[0].split("\n## 2. Pre-Stage Checklist", 1)[
+            1
+        ]
+        steps = checklist.split("\n### ")[1:]
+        installs = [s for s in steps if "./install-evidence-board" in s]
 
-        self.assertIn("Window 2", step)
+        self.assertEqual(len(installs), 1)
+        step = installs[0]
+        heading = step.splitlines()[0]
+        self.assertIn("Window 2", heading)
+        self.assertIn("Once per Machine", heading)
+        # The enable step restarts the App, so it runs with the stage clone
+        # setup, before the T-15 steps rather than among them.
+        self.assertLess(
+            steps.index(step),
+            next(i for i, s in enumerate(steps) if s.startswith("Step 1:")),
+        )
         self.assertIn("--workspace ~/demo-stage/agy-ws1", step)
-        self.assertIn('"ds-command-center/evidence-board"', step)
+        self.assertIn(f'"{SIDECAR_ID}": {{"enabled": true}}', step)
         self.assertIn("config.json", step)
+        self.assertNotIn("ds-command-center/evidence-board", demo)
 
     def test_rules_name_the_board_the_tile_manifest_and_the_pill(self) -> None:
         rules = (PLUGIN_DIR / "rules" / "AGENTS.md").read_text("utf-8")
         # Glossary terms are bolded in the rules; compare the plain text.
         section = rules.replace("**", "").split("\n## 6. Evidence Board\n", 1)[1]
+        section = section.split("\n## ", 1)[0]
 
         self.assertIn("sidecars/evidence-board/tiles.json", section)
         self.assertIn("Tile manifest", section)
-        self.assertIn(
-            "[Evidence Board](sidecar://ds-command-center/evidence-board/)", section
-        )
+        self.assertIn(f"[Evidence Board](sidecar://{SIDECAR_ID}/)", section)
+        self.assertNotIn("ds-command-center/evidence-board", section)
 
 
 if __name__ == "__main__":

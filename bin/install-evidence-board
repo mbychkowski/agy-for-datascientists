@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# Evidence Board: install the Antigravity UI sidecar (pre-stage, Window 2)
+# Evidence Board: install the Antigravity UI sidecar (once per machine, Window 2)
 #
 # Antigravity discovers sidecars only under its global directories, never in a
 # repo's .agents/plugins/, so this copies (not symlinks) the repo-owned sidecar
-# into ~/.gemini/config/plugins/ds-command-center/sidecars/evidence-board/:
+# into ~/.gemini/config/sidecars/evidence-board/ as the standalone sidecar
+# `evidence-board`. It never creates a global ds-command-center plugin folder,
+# which would share its name (and the plugins enable toggle keyed by folder
+# name) with the workspace plugin of the same name:
 #   - Builds the frontend bundle first (make build-frontend: npm ci + vite build;
 #     skip with --no-build).
 #   - Records the Python interpreter (${PYTHON:-python3}) and the workspace
@@ -31,10 +34,9 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 # shellcheck source=lib/pinning.sh
 source "${SCRIPT_DIR}/lib/pinning.sh"
 
-PLUGIN_NAME="ds-command-center"
 SIDECAR_NAME="evidence-board"
-SIDECAR_ID="${PLUGIN_NAME}/${SIDECAR_NAME}"
-BOARD_DIR="${REPO_ROOT}/.agents/plugins/${PLUGIN_NAME}/sidecars/${SIDECAR_NAME}"
+SIDECAR_ID="${SIDECAR_NAME}"
+BOARD_DIR="${REPO_ROOT}/.agents/plugins/ds-command-center/sidecars/${SIDECAR_NAME}"
 
 HOME_DIR="${HOME}"
 WORKSPACE="${REPO_ROOT}"
@@ -120,7 +122,7 @@ if [[ ! -f "${BOARD_DIR}/frontend/dist/index.html" ]]; then
 fi
 
 GEMINI_CONFIG_DIR="${HOME_DIR}/.gemini/config"
-SIDECARS_DIR="${GEMINI_CONFIG_DIR}/plugins/${PLUGIN_NAME}/sidecars"
+SIDECARS_DIR="${GEMINI_CONFIG_DIR}/sidecars"
 DEST_DIR="${SIDECARS_DIR}/${SIDECAR_NAME}"
 
 if ! mkdir -p "${SIDECARS_DIR}"; then
