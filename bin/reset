@@ -54,7 +54,7 @@ usage() {
     echo "  -d, --dataset-dir <path>  Path or gs:// URI to dataset root (default: DATASET_LOCATION or fixtures/mock_dataset)"
     echo "  -y, --yes                 Skip interactive confirmation prompt"
     echo "  -s, --stage-clone <path>  Stage-clone workspace whose Evidence Board is reset; repeatable"
-    echo "                            (default: ~/demo-stage/agy-ws1 and ~/demo-stage/agy-ws2)"
+    echo "                            (default: agy-ws1 and agy-ws2 under \${DEMO_STAGE_DIR:-~/demo-stage})"
     echo "  -h, --help                Show this help message"
 }
 
@@ -157,7 +157,7 @@ record_board_reset() {
             continue
         fi
         log="${clone}/.evidence-board/events.jsonl"
-        if mkdir -p "${clone}/.evidence-board" 2>/dev/null \
+        if mkdir -p "${log%/*}" 2>/dev/null \
             && printf '{"ts":"%s","phase":"reset","tool":"reset","summary":"reset %s"}\n' \
                 "${ts}" "${TARGET}" 2>/dev/null >>"${log}"; then
             echo "Evidence Board reset recorded in ${log}"

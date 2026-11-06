@@ -17,11 +17,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tests.helpers import RESET_BIN, WORKTREE_ROOT, setup_preflight_test_env
+from tests.helpers import (
+    PLUGIN_DIR,
+    RESET_BIN,
+    WORKTREE_ROOT,
+    setup_preflight_test_env,
+)
 
-BOARD_DIR = (
-    WORKTREE_ROOT / ".agents" / "plugins" / "ds-command-center" / "sidecars"
-) / "evidence-board"
+BOARD_DIR = PLUGIN_DIR / "sidecars" / "evidence-board"
 MANIFEST_PATH = BOARD_DIR / "tiles.json"
 MOCK_DATASET_DIR = WORKTREE_ROOT / "fixtures" / "mock_dataset"
 
